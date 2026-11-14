@@ -46,7 +46,6 @@ import contextlib
 import logging
 import os
 import secrets
-import shutil
 import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -57,10 +56,18 @@ from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 
 from .._feature_usage import FeatureIndex
+from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._policy import ShellPolicy, ShellRequest
+from ._resolve import require_full_path
 from ._session import ShellSession
-from ._truncate import truncate_head_tail as _truncate_bytes
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,68 +79,31 @@ DEFAULT_MEMORY = "512m"
 DEFAULT_PIDS_LIMIT = 256
 DEFAULT_WORKDIR = "/workspace"
 
-# Docker run flags that would silently dismantle the isolation defaults
-# (--cap-drop ALL, --security-opt no-new-privileges, --network none,
-# --read-only root, pids/memory caps) if spliced in via ``extra_run_args``.
-# These are rejected at construction time so the failure surfaces loudly
-# rather than as a silently-unsandboxed container at runtime.
-_BLOCKED_EXTRA_RUN_FLAGS: tuple[str, ...] = (
-    "--privileged",
-    "--cap-add",
-    "--security-opt",
-    "--network",
-    "--net",
-    "--volume",
-    "-v",
-    "--mount",
-    "--device",
-    "--device-cgroup-rule",
-    "--pid",
-    "--ipc",
-    "--userns",
-    "--user",
-    "--cgroupns",
-    "--add-host",
-    "--gpus",
-    "--read-only",
-    "--tmpfs",
-)
 
-
-def _validate_extra_run_args(args: Sequence[str]) -> None:
-    """Reject extra ``docker run`` args that would break the isolation contract.
-
-    A caller can otherwise pass ``["--privileged"]``, ``["--network=host"]``,
-    ``["-v", "/:/host:rw"]``, etc. and silently undo every isolation flag
-    this tool sets. The blocklist covers the obvious offenders; operators
-    that genuinely need one of these flags should subclass the tool or
-    build their own argv rather than slip past the check.
-    """
-    bad: list[str] = []
-    for raw in args:
-        if not raw.startswith("-"):
-            continue
-        # Split off any "=value" tail so "--network=host" matches "--network".
-        flag = raw.split("=", 1)[0]
-        if flag in _BLOCKED_EXTRA_RUN_FLAGS:
-            bad.append(raw)
-    if bad:
-        raise ValueError(
-            "extra_run_args contains flags that would dismantle DockerShellTool's "
-            f"isolation defaults: {bad}. Override these via dedicated constructor "
-            "arguments (network, host_workdir, mount_readonly, read_only_root, "
-            "memory, pids_limit, user) or subclass the tool if you really need "
-            "to relax the sandbox."
-        )
+def _validate_unsafe_extra_run_args(args: Sequence[str]) -> None:
+    """Validate the shape of trusted ``docker run`` extensions."""
+    for index, raw in enumerate(args):
+        if not isinstance(raw, str):
+            raise ValueError(f"unsafe_extra_run_args contains a non-string token at index {index}: {raw!r}")
 
 
 class DockerNotAvailableError(RuntimeError):
     """Raised when the configured docker binary cannot be reached."""
 
 
-def is_docker_available(binary: str = "docker") -> bool:
-    """Return ``True`` if ``binary`` is on PATH and the daemon responds."""
-    if shutil.which(binary) is None:
+def is_docker_available(binary: str) -> bool:
+    """Return ``True`` if the container runtime at ``binary`` exists and its daemon responds.
+
+    Args:
+        binary: Full path to the ``docker`` (or compatible, such as ``podman``) executable. On
+            Windows it must include the file extension. A short name or relative path returns
+            ``False`` because it could be resolved from the current directory.
+    """
+    try:
+        require_full_path(binary, source="binary")
+    except ValueError:
+        return False
+    if not os.path.isfile(binary):
         return False
     try:
         out = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]  # nosec B603 - argv is built from trusted binary name
@@ -271,6 +241,12 @@ class DockerShellTool:
     docstring for more.
 
     Args:
+        docker_binary: Required full path to the ``docker`` (or compatible,
+            such as ``podman``) executable, for example ``"/usr/bin/docker"``.
+            On Windows it must also include the file extension (``.exe``).
+            Short names and relative paths are rejected because they could be
+            resolved from the current directory. A path shows only that the
+            file is there, not that it can be trusted.
         image: OCI image to run. Defaults to a small Microsoft-maintained
             base image. Override with anything that includes ``bash`` and
             (for persistent mode) ``sleep``.
@@ -289,22 +265,14 @@ class DockerShellTool:
         pids_limit: Max processes inside the container.
         user: ``UID:GID`` to run as. Default ``65534:65534`` (nobody).
         read_only_root: Mount the root filesystem read-only. Default ``True``.
-        extra_run_args: Additional args appended to ``docker run``.
-
-            .. warning::
-               This parameter can dismantle the tool's isolation
-               contract. Flags that would undo the default sandbox
-               (``--privileged``, ``--cap-add``, ``--security-opt``,
-               ``--network``/``--net``, ``-v``/``--volume``,
-               ``--mount``, ``--device``, ``--pid``, ``--ipc``,
-               ``--userns``, ``--user``, ``--read-only``,
-               ``--tmpfs``, ``--add-host``, ``--gpus``, ``--cgroupns``,
-               ``--device-cgroup-rule``) are rejected at construction
-               time. Override the corresponding dedicated argument
-               (``network``, ``host_workdir``, ``mount_readonly``,
-               ``read_only_root``, ``user``, etc.) instead. If you
-               genuinely need to relax the sandbox further, subclass
-               the tool — don't slip past this check.
+        unsafe_extra_run_args: Trusted application-supplied Docker options
+            appended verbatim to ``docker run``. Set this only from
+            developer-controlled configuration; never use values from users,
+            model output, or other untrusted sources. These options can weaken
+            or completely remove container isolation. Review every option
+            carefully. In particular, avoid options such as ``--privileged``,
+            ``--network=host``, host-path volume mounts, and added capabilities
+            unless the application explicitly requires and secures them.
         env: Environment variables to set inside the container. These are
             passed via ``-e`` and apply to every command.
         policy: Optional :class:`ShellPolicy`. Less critical than for
@@ -313,14 +281,19 @@ class DockerShellTool:
             logging). Defaults to an empty policy; supply patterns
             explicitly to enable filtering.
         timeout: Per-command timeout in seconds.
-        max_output_bytes: Combined stdout/stderr byte cap before truncation.
+        max_stdout_bytes: Positive retained byte allowance for normal output.
+            Default 64 KiB, plus bounded capture overhead.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+        max_stderr_bytes: Positive retained byte allowance for error output.
+            Default 64 KiB, independent of ``max_stdout_bytes``.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+            Container memory limits do not cover host-side capture buffers.
         approval_mode: Controls the FunctionTool approval gate. Unlike
             ``LocalShellTool``, ``"never_require"`` is permitted without
             ``acknowledge_unsafe`` because the container — when launched
             with the default isolation flags and a trusted runtime — is
             the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
-        docker_binary: Override (e.g. ``"podman"``).
         shell: Shell binary to invoke inside the container. Defaults to
             ``"bash"``; pass ``"sh"`` for minimal images such as Alpine
             that don't ship bash. Anything else must be present on
@@ -330,6 +303,7 @@ class DockerShellTool:
     def __init__(
         self,
         *,
+        docker_binary: str,
         image: str = DEFAULT_IMAGE,
         container_name: str | None = None,
         mode: ShellMode = "persistent",
@@ -341,19 +315,22 @@ class DockerShellTool:
         pids_limit: int = DEFAULT_PIDS_LIMIT,
         user: str = DEFAULT_CONTAINER_USER,
         read_only_root: bool = True,
-        extra_run_args: Sequence[str] | None = None,
+        unsafe_extra_run_args: Sequence[str] | None = None,
         env: Mapping[str, str] | None = None,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
-        max_output_bytes: int = 64 * 1024,
+        max_stdout_bytes: int = 64 * 1024,
+        max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         on_command: Callable[[str], None] | None = None,
-        docker_binary: str = "docker",
         shell: str = "bash",
     ) -> None:
+        _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+        _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
-        _validate_extra_run_args(tuple(extra_run_args or ()))
+        unsafe_extra_run_args_snapshot = tuple(unsafe_extra_run_args or ())
+        _validate_unsafe_extra_run_args(unsafe_extra_run_args_snapshot)
         self._image = image
         self._container_name = container_name or f"af-shell-{secrets.token_hex(6)}"
         self._mode: ShellMode = mode
@@ -365,14 +342,15 @@ class DockerShellTool:
         self._pids_limit = pids_limit
         self._user = user
         self._read_only_root = read_only_root
-        self._extra_run_args = tuple(extra_run_args or ())
+        self._unsafe_extra_run_args = unsafe_extra_run_args_snapshot
         self._env = dict(env or {})
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
-        self._max_output_bytes = max_output_bytes
+        self._max_stdout_bytes = max_stdout_bytes
+        self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
-        self._binary = docker_binary
+        self._binary = require_full_path(docker_binary, source="docker_binary")
         self._shell = shell
 
         self._session: ShellSession | None = None
@@ -387,7 +365,11 @@ class DockerShellTool:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        """Pull/start the container and (if persistent) the inner shell session."""
+        """Pull/start the container and (if persistent) the inner shell session.
+
+        Raises:
+            FileNotFoundError: If the container runtime executable does not exist.
+        """
         # Stateless mode never uses the long-lived container — every call goes
         # through ``docker run --rm`` — so start()/close() are no-ops.
         if self._mode == "stateless":
@@ -409,7 +391,8 @@ class DockerShellTool:
                 argv,
                 workdir=None,  # workdir is set on the container itself
                 env=None,
-                max_output_bytes=self._max_output_bytes,
+                max_stdout_bytes=self._max_stdout_bytes,
+                max_stderr_bytes=self._max_stderr_bytes,
             )
             await self._session.start()
 
@@ -505,90 +488,34 @@ class DockerShellTool:
             argv.extend(["-v", f"{self._host_workdir}:{self._workdir}:{ro}"])
         for k, v in self._env.items():
             argv.extend(["-e", f"{k}={v}"])
-        argv.extend(self._extra_run_args)
+        argv.extend(self._unsafe_extra_run_args)
         argv.extend([self._image, self._shell, "-c", command])
 
         started = time.monotonic()
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         timed_out = False
+        output = _ProcessOutput(proc, max_stdout_bytes=self._max_stdout_bytes, max_stderr_bytes=self._max_stderr_bytes)
         try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            timed_out = True
-            # Kill the container by name. ``--rm`` reaps it on a clean
-            # exit; if ``docker kill`` itself hangs or returns non-zero
-            # (daemon stuck, container with unkillable kernel task) the
-            # ``--rm`` reaper never fires and the container is leaked,
-            # so we explicitly fall back to ``docker rm -f``.
-            killer = await asyncio.create_subprocess_exec(
-                self._binary,
-                "kill",
-                "--signal",
-                "KILL",
-                per_call_name,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            kill_ok = False
             try:
-                rc = await asyncio.wait_for(killer.wait(), timeout=5.0)
-                kill_ok = rc == 0
-            except asyncio.TimeoutError:
-                killer.kill()
-                with contextlib.suppress(Exception):
-                    await killer.wait()
-            if not kill_ok:
-                logger.warning(
-                    "docker kill of stateless container %s did not succeed; "
-                    "attempting docker rm -f to avoid a container leak",
-                    per_call_name,
-                )
-                reaper = await asyncio.create_subprocess_exec(
-                    self._binary,
-                    "rm",
-                    "-f",
-                    per_call_name,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                try:
-                    _, rerr = await asyncio.wait_for(reaper.communicate(), timeout=5.0)
-                    if reaper.returncode != 0:
-                        logger.error(
-                            "docker rm -f %s failed (rc=%s, err=%s); container may be leaked",
-                            per_call_name,
-                            reaper.returncode,
-                            rerr.decode("utf-8", errors="replace").strip(),
-                        )
-                except asyncio.TimeoutError:
-                    reaper.kill()
-                    with contextlib.suppress(Exception):
-                        await reaper.wait()
-                    logger.error(
-                        "docker rm -f %s timed out; container may be leaked",
-                        per_call_name,
-                    )
-            try:
-                stdout_bytes, stderr_bytes = await proc.communicate()
-            except Exception:
-                # Pipe/socket failures after kill leave us with no captured
-                # output. Log so operators can correlate empty results with
-                # the timeout teardown (otherwise the model just sees
-                # exit_code=-1 with no stdout/stderr).
-                logger.warning(
-                    "failed to drain stdout/stderr after killing stateless container %s",
-                    per_call_name,
-                    exc_info=True,
-                )
-                stdout_bytes, stderr_bytes = b"", b""
+                await output.wait(timeout)
+            except TimeoutError:
+                timed_out = True
+                await self._terminate_stateless(proc, per_call_name)
+                await output.finish()
+            except BaseException:
+                await self._terminate_stateless(proc, per_call_name)
+                raise
+        finally:
+            await output.close()
 
         duration_ms = int((time.monotonic() - started) * 1000)
-        stdout_str, stdout_truncated = _truncate_bytes(stdout_bytes or b"", self._max_output_bytes)
-        stderr_str, stderr_truncated = _truncate_bytes(stderr_bytes or b"", self._max_output_bytes)
+        stdout_str, stdout_truncated = output.stdout.format()
+        stderr_str, stderr_truncated = output.stderr.format()
         return ShellResult(
             stdout=stdout_str,
             stderr=stderr_str,
@@ -597,6 +524,66 @@ class DockerShellTool:
             truncated=stdout_truncated or stderr_truncated,
             timed_out=timed_out,
         )
+
+    async def _terminate_stateless(self, proc: asyncio.subprocess.Process, name: str) -> None:
+        # Stopping the local client alone does not stop its container.
+        try:
+            killer = await asyncio.create_subprocess_exec(
+                self._binary,
+                "kill",
+                "--signal",
+                "KILL",
+                name,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            kill_ok = False
+            try:
+                try:
+                    kill_ok = await asyncio.wait_for(killer.wait(), timeout=5.0) == 0
+                except TimeoutError:
+                    killer.kill()
+                    try:
+                        await asyncio.wait_for(killer.wait(), timeout=5.0)
+                    except TimeoutError:
+                        logger.warning("docker kill client for %s did not exit after termination", name)
+            finally:
+                if killer.returncode is None:
+                    killer.kill()
+            if not kill_ok:
+                logger.warning("docker kill of %s did not succeed; attempting docker rm -f", name)
+                reaper = await asyncio.create_subprocess_exec(
+                    self._binary,
+                    "rm",
+                    "-f",
+                    name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                diagnostic = _ProcessOutput(reaper, max_stdout_bytes=4096, max_stderr_bytes=4096)
+                try:
+                    try:
+                        await diagnostic.wait(5.0)
+                    except TimeoutError:
+                        reaper.kill()
+                        await diagnostic.finish()
+                        logger.error("docker rm -f %s timed out; container may be leaked", name)
+                    else:
+                        if reaper.returncode != 0:
+                            error, _ = diagnostic.stderr.format()
+                            logger.error(
+                                "docker rm -f %s failed (rc=%s, err=%s); container may be leaked",
+                                name,
+                                reaper.returncode,
+                                error.strip(),
+                            )
+                finally:
+                    if reaper.returncode is None:
+                        reaper.kill()
+                    await diagnostic.close()
+        finally:
+            if proc.returncode is None:
+                proc.kill()
 
     # ------------------------------------------------------------------ container ops
 
@@ -614,7 +601,7 @@ class DockerShellTool:
             mount_readonly=self._mount_readonly,
             read_only_root=self._read_only_root,
             extra_env=self._env,
-            extra_args=self._extra_run_args,
+            extra_args=self._unsafe_extra_run_args,
         )
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -648,7 +635,7 @@ class DockerShellTool:
             try:
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 return proc.returncode, err.decode("utf-8", errors="replace").strip()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 with contextlib.suppress(Exception):
                     await proc.wait()
@@ -706,7 +693,7 @@ class DockerShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -716,4 +703,5 @@ class DockerShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )

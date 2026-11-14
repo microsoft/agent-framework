@@ -153,14 +153,24 @@ class TestMultimodalWorkflowInput:
         result = executor._convert_input_to_chat_message(openai_input)
 
         assert result.contents[0].media_type == "image/jpeg"
+        assert result.contents[0].additional_properties["openai"] == {
+            "content_type": "input_image",
+            "image_detail": "low",
+        }
         assert result.contents[0].additional_properties["detail"] == "low"
         assert result.contents[1].type == "hosted_file"
         assert result.contents[1].file_id == "file_image"
+        assert result.contents[1].additional_properties["openai"] == {
+            "content_type": "input_image",
+            "image_detail": "high",
+        }
         assert result.contents[1].additional_properties["openai_content_type"] == "input_image"
         assert result.contents[1].additional_properties["detail"] == "high"
         assert result.contents[2].type == "hosted_file"
         assert result.contents[2].file_id == "file_audio"
+        assert result.contents[2].additional_properties["openai"]["content_type"] == "input_file"
         assert result.contents[2].media_type == "audio/mpeg"
+        assert result.contents[3].additional_properties["openai"]["content_type"] == "input_file"
         assert result.contents[3].media_type == "audio/mp4"
 
     def test_convert_openai_input_rejects_unsupported_only_content(self):

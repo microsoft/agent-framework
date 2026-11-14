@@ -16,6 +16,10 @@ using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// This local sample does not authenticate callers. Multi-user hosts must authenticate and authorize
+// requests and bind session lookups to trusted caller identity. Registering an isolation provider alone
+// does not wrap the manually created store below. See the shared hosting guide and this sample's README.
+
 // Configuration via environment variables (never hardcode secrets).
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -109,7 +113,7 @@ app.MapPost("/responses", async (JsonElement body, HttpContext http, Cancellatio
 });
 
 // Bind to a fixed local URL so the paired client sample has a deterministic default.
-// Override with the ASPNETCORE_URLS environment variable when needed.
+// To use a different address, change the URL below and set RESPONSES_SERVER_URL in the client.
 app.Run("http://localhost:5000");
 
 // Application-owned trust decision. Replace with real authentication + authorization: verify the caller,

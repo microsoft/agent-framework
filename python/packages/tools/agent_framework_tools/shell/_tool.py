@@ -17,9 +17,16 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from .._feature_usage import FeatureIndex
 from ._executor import run_stateless
 from ._policy import ShellPolicy, ShellRequest
-from ._resolve import is_powershell, resolve_shell
+from ._resolve import is_powershell, resolve_shell, restrict_executable_search
 from ._session import ShellSession
-from ._types import ShellCommandError, ShellMode, ShellResult
+from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
+from ._types import (
+    ShellCommandError,
+    ShellMode,
+    ShellResult,
+    _parse_shell_result,  # pyright: ignore[reportPrivateUsage]
+    _shell_result_to_text,  # pyright: ignore[reportPrivateUsage]
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +105,11 @@ class LocalShellTool:
         shell: Optional shell argv override. String values are tokenised.
             When omitted, the platform default is used (``pwsh`` or
             ``powershell`` on Windows, ``bash`` or ``sh`` on Unix). May also
-            be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var.
+            be overridden via the ``AGENT_FRAMEWORK_SHELL`` env var. On
+            Windows, a bare executable name (the default or an override) is
+            looked up only in the fully qualified entries of ``PATH``; the
+            current directory is never searched. Pass an absolute path to
+            select a specific executable.
         workdir: Working directory for commands. Defaults to the current
             working directory. In persistent mode, each command is
             re-anchored to this directory when ``confine_workdir=True`` —
@@ -108,13 +119,25 @@ class LocalShellTool:
             ``cd``-wandering in one call does not leak to the next. This is
             a **re-anchor**, not a hard confinement — a command that does
             ``cd /tmp && rm -rf .`` in one call can still touch ``/tmp``.
-            Use :class:`ShellPolicy` or a sandboxed executor for true
-            confinement.
+            :class:`ShellPolicy` only filters command text; it does not
+            restrict file access. Use an executor with separately enforced
+            isolation and restricted permissions to limit access.
         env: Seed environment. In stateless mode this replaces the child's
             environment unless ``clean_env=False``. In persistent mode the
             variables are exported before the session is used.
         clean_env: When ``True``, do **not** inherit ``os.environ``; only
             the variables supplied in ``env`` are visible to commands.
+
+            In every case, empty and relative ``PATH`` entries are removed
+            from the shell's environment so commands are never looked up in
+            the current directory. On Windows
+            ``NoDefaultCurrentDirectoryInExePath=1`` is also set, so
+            ``cmd.exe`` runs a program from the working directory only when
+            the command includes its relative path. On Linux and macOS a
+            :class:`ValueError` is raised when no full directory path is left
+            in ``PATH`` (for example ``clean_env=True`` without a ``PATH`` in
+            ``env``), because an empty or missing ``PATH`` would search the
+            current directory.
         policy: Policy applied before approval. Defaults to an empty
             :class:`ShellPolicy()` which allows every command; supply
             explicit ``denylist``/``allowlist`` patterns to filter. The
@@ -122,8 +145,12 @@ class LocalShellTool:
             gating + sandbox tier are the real defenses.
         timeout: Per-command timeout in seconds. ``None`` disables. Default
             30 s.
-        max_output_bytes: Combined stdout/stderr byte cap before truncation.
-            Default 64 KiB.
+        max_stdout_bytes: Positive retained byte allowance for normal output.
+            Default 64 KiB, plus bounded capture overhead.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
+        max_stderr_bytes: Positive retained byte allowance for error output.
+            Default 64 KiB, independent of ``max_stdout_bytes``.
+            Truncation notices and UTF-8 replacement may enlarge returned text.
         approval_mode: ``"always_require"`` (default) or ``"never_require"``.
             Controls the ``FunctionTool.approval_mode`` on the returned
             function, which the framework uses to gate execution via
@@ -149,11 +176,14 @@ class LocalShellTool:
         clean_env: bool = False,
         policy: ShellPolicy | None = None,
         timeout: float | None = 30.0,
-        max_output_bytes: int = 64 * 1024,
+        max_stdout_bytes: int = 64 * 1024,
+        max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         acknowledge_unsafe: bool = False,
         on_command: Callable[[str], None] | None = None,
     ) -> None:
+        _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
+        _validate_output_limit(max_stderr_bytes, name="max_stderr_bytes")
         if mode not in ("persistent", "stateless"):
             raise ValueError(f"mode must be 'persistent' or 'stateless', got {mode!r}")
         if approval_mode == "never_require" and not acknowledge_unsafe:
@@ -171,18 +201,16 @@ class LocalShellTool:
         self._confine_workdir = confine_workdir
         self._policy = policy or ShellPolicy()
         self._timeout = timeout
-        self._max_output_bytes = max_output_bytes
+        self._max_stdout_bytes = max_stdout_bytes
+        self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
 
-        merged_env: dict[str, str] | None
-        if env is None and not clean_env:
-            merged_env = None  # inherit
-        elif clean_env:
-            merged_env = dict(env) if env is not None else {}
-        else:
-            merged_env = {**os.environ, **dict(env or {})}
-        self._env = merged_env
+        self._env_overrides = dict(env or {})
+        self._clean_env = clean_env
+        # Check PATH now so a bad configuration fails here; the environment used to start a shell is
+        # rebuilt at launch so later changes to os.environ are still inherited.
+        self._launch_env()
 
         self._interactive_argv = resolve_shell(self._shell_override, interactive=True)
         self._stateless_argv = resolve_shell(self._shell_override, interactive=False)
@@ -197,6 +225,11 @@ class LocalShellTool:
 
     # ------------------------------------------------------------------ lifecycle
 
+    def _launch_env(self) -> dict[str, str]:
+        """Build the environment for a new shell process, with ``PATH`` restricted to full directory paths."""
+        base = {} if self._clean_env else dict(os.environ)
+        return restrict_executable_search({**base, **self._env_overrides})
+
     async def start(self) -> None:
         """Eagerly spawn the persistent session (no-op in stateless mode)."""
         if self._mode != "persistent":
@@ -206,8 +239,9 @@ class LocalShellTool:
                 self._session = ShellSession(
                     self._interactive_argv,
                     workdir=self._workdir,
-                    env=self._env,
-                    max_output_bytes=self._max_output_bytes,
+                    env=self._launch_env(),
+                    max_stdout_bytes=self._max_stdout_bytes,
+                    max_stderr_bytes=self._max_stderr_bytes,
                 )
             await self._session.start()
 
@@ -271,9 +305,10 @@ class LocalShellTool:
             self._stateless_argv,
             command,
             workdir=self._workdir,
-            env=self._env,
+            env=self._launch_env(),
             timeout=effective_timeout,
-            max_output_bytes=self._max_output_bytes,
+            max_stdout_bytes=self._max_stdout_bytes,
+            max_stderr_bytes=self._max_stderr_bytes,
         )
 
     # ------------------------------------------------------------------ AF wiring
@@ -310,7 +345,7 @@ class LocalShellTool:
                 result = await self.run(command)
             except ShellCommandError as exc:
                 return str(exc)
-            return result.format_for_model()
+            return _shell_result_to_text(result)
 
         effective_description = description or _default_description(self._mode)
         _run_shell.__doc__ = effective_description
@@ -320,6 +355,7 @@ class LocalShellTool:
             description=effective_description,
             approval_mode=self._approval_mode,
             kind=SHELL_TOOL_KIND_VALUE,
+            result_parser=_parse_shell_result,
         )
 
     # ------------------------------------------------------------------ helpers

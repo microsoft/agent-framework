@@ -9,7 +9,13 @@ namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses;
 /// </summary>
 /// <param name="idGenerator">The ID generator.</param>
 /// <param name="jsonSerializerOptions">The JSON serializer options. If not provided, default options will be used.</param>
-internal sealed class AgentInvocationContext(IdGenerator idGenerator, JsonSerializerOptions? jsonSerializerOptions = null)
+/// <param name="isolationKey">
+/// The trusted caller isolation key captured while the originating request context was available.
+/// </param>
+internal sealed class AgentInvocationContext(
+    IdGenerator idGenerator,
+    JsonSerializerOptions? jsonSerializerOptions = null,
+    string? isolationKey = null)
 {
     /// <summary>
     /// Gets the ID generator for this context.
@@ -25,6 +31,11 @@ internal sealed class AgentInvocationContext(IdGenerator idGenerator, JsonSerial
     /// Gets the conversation ID.
     /// </summary>
     public string ConversationId => this.IdGenerator.ConversationId;
+
+    /// <summary>
+    /// Gets the trusted caller isolation key captured before background execution detached from the request.
+    /// </summary>
+    public string? IsolationKey { get; } = isolationKey;
 
     /// <summary>
     /// Gets the JSON serializer options.

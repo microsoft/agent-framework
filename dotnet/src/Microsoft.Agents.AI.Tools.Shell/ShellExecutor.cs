@@ -14,8 +14,10 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <para>
 /// <see cref="LocalShellExecutor"/> runs commands directly on the host (no
 /// isolation; approval-in-the-loop is the security boundary).
-/// <see cref="DockerShellExecutor"/> runs them inside a container with resource
-/// limits, network isolation, and a non-root user.
+/// <see cref="DockerShellExecutor"/> runs them inside a configured container;
+/// its default profile applies resource limits, network isolation, and a
+/// non-root user, but effective isolation depends on the complete application
+/// configuration.
 /// </para>
 /// <para>
 /// This is an abstract class rather than an interface so the surface can be

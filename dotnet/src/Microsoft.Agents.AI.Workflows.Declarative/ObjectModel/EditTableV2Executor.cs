@@ -25,6 +25,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
         {
             throw this.Exception($"Require '{this.Model.ItemsVariable.Path}' to be a table, not: '{table.GetType().Name}'.");
         }
+        SensitivityLevel tableSensitivity = this.GetSensitivity(this.Model.ItemsVariable);
 
         EditTableOperation? changeType = this.Model.ChangeType;
         if (changeType is AddItemOperation addItemOperation)
@@ -32,6 +33,7 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             ValueExpression addItemValue = Throw.IfNull(addItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(addItemValue);
             FormulaValue addValue = expressionResult.Value.ToFormula();
+            SensitivityLevel mutationSensitivity = MaxSensitivity(tableSensitivity, expressionResult.Sensitivity);
             RecordType recordType = tableValue.Type.ToRecord();
             TableValue resultTable;
             if (!recordType.FieldNames.Any() && !tableValue.Rows.Any())
@@ -45,21 +47,22 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
                 await tableValue.AppendAsync(newRecord, cancellationToken).ConfigureAwait(false);
                 resultTable = tableValue;
             }
-            await this.AssignAsync(this.Model.ItemsVariable, resultTable, context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, resultTable, context, mutationSensitivity).ConfigureAwait(false);
         }
         else if (changeType is ClearItemsOperation)
         {
             await tableValue.ClearAsync(cancellationToken).ConfigureAwait(false);
-            await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
+            await this.AssignAsync(this.Model.ItemsVariable, tableValue, context, tableSensitivity).ConfigureAwait(false);
         }
         else if (changeType is RemoveItemOperation removeItemOperation)
         {
             ValueExpression removeItemValue = Throw.IfNull(removeItemOperation.Value, $"{nameof(this.Model)}.{nameof(this.Model.ChangeType)}");
             EvaluationResult<DataValue> expressionResult = this.Evaluator.GetValue(removeItemValue);
+            SensitivityLevel mutationSensitivity = MaxSensitivity(tableSensitivity, expressionResult.Sensitivity);
             if (expressionResult.Value.ToFormula() is TableValue removeItemTable)
             {
                 await tableValue.RemoveAsync(removeItemTable.Rows.Select(row => row.Value), all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context, mutationSensitivity).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeLastItemOperation takeLastOperation)
@@ -68,12 +71,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             if (lastRow is not null)
             {
                 await tableValue.RemoveAsync([lastRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
-                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, lastRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context, tableSensitivity).ConfigureAwait(false);
+                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, lastRow, context, tableSensitivity).ConfigureAwait(false);
             }
             else
             {
-                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+                await this.AssignAsync(takeLastOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context, tableSensitivity).ConfigureAwait(false);
             }
         }
         else if (changeType is TakeFirstItemOperation takeFirstOperation)
@@ -82,12 +85,12 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             if (firstRow is not null)
             {
                 await tableValue.RemoveAsync([firstRow], all: true, cancellationToken).ConfigureAwait(false);
-                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context).ConfigureAwait(false);
-                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, firstRow, context).ConfigureAwait(false);
+                await this.AssignAsync(this.Model.ItemsVariable, tableValue, context, tableSensitivity).ConfigureAwait(false);
+                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, firstRow, context, tableSensitivity).ConfigureAwait(false);
             }
             else
             {
-                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context).ConfigureAwait(false);
+                await this.AssignAsync(takeFirstOperation.ResultVariable?.Path, FormulaValue.NewBlank(), context, tableSensitivity).ConfigureAwait(false);
             }
         }
 
@@ -118,4 +121,10 @@ internal sealed class EditTableV2Executor(EditTableV2 model, WorkflowFormulaStat
             }
         }
     }
+
+    private SensitivityLevel GetSensitivity(PropertyPath? path) =>
+        path?.VariableName is string variableName ? this.State.GetSensitivity(variableName, path.NamespaceAlias) : SensitivityLevel.None;
+
+    private static SensitivityLevel MaxSensitivity(SensitivityLevel left, SensitivityLevel right) =>
+        left == SensitivityLevel.Sensitive || right == SensitivityLevel.Sensitive ? SensitivityLevel.Sensitive : SensitivityLevel.None;
 }

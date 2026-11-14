@@ -28,6 +28,10 @@ namespace Microsoft.Agents.AI;
 [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
 public abstract class AgentFileStore
 {
+    private static readonly TimeSpan s_regexMatchTimeout = TimeSpan.FromSeconds(5);
+
+    internal static TimeSpan SearchTimeout { get; } = TimeSpan.FromSeconds(10);
+
     /// <summary>
     /// Writes content to a file, creating or overwriting it.
     /// </summary>
@@ -100,7 +104,7 @@ public abstract class AgentFileStore
     /// Implementers overriding this method must report <see cref="FileSearchMatch.LineNumber"/> as a
     /// 1-based coordinate into <see cref="SplitLines"/> of the same content <see cref="ReadAsync"/>
     /// returns, and should report <see cref="FileSearchMatch.Line"/> verbatim, terminator included.
-    /// <see cref="ScanContent"/> produces both correctly and is the recommended way to build results.
+    /// <see cref="ScanContent(string, string, Regex, CancellationToken)"/> produces both correctly and is the recommended way to build results.
     /// </para>
     /// <para>
     /// Numbering against anything else — a different split rule, or content this store does not serve
@@ -111,39 +115,49 @@ public abstract class AgentFileStore
     /// </remarks>
     public virtual async Task<IReadOnlyList<FileSearchResult>> SearchAsync(string directory, string regexPattern, string? globPattern = null, bool recursive = false, CancellationToken cancellationToken = default)
     {
-        // Compile with a match timeout to guard against catastrophic backtracking (ReDoS).
-        var regex = new Regex(regexPattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(5));
-        IReadOnlyList<string> names = await this.FindMatchingFilesAsync(directory, regexPattern, globPattern, recursive, cancellationToken).ConfigureAwait(false);
-        Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
-        var results = new List<FileSearchResult>();
+        var regex = CreateSearchRegex(regexPattern);
+        using var timeout = new MultiStepOperationTimeout(SearchTimeout, cancellationToken);
 
-        foreach (string name in names)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            IReadOnlyList<string> names = await timeout.RunStepAsync(
+                token => this.FindMatchingFilesAsync(directory, regexPattern, globPattern, recursive, token)).ConfigureAwait(false);
+            Matcher? matcher = globPattern is not null ? StorePaths.CreateGlobMatcher(globPattern) : null;
+            var results = new List<FileSearchResult>();
 
-            // Re-apply the caller's scope: FindMatchingFilesAsync is explicitly allowed to
-            // over-return, and must not be able to widen what the caller asked for.
-            if (!StorePaths.MatchesGlob(name, matcher) ||
-                (!recursive && name.IndexOf("/", StringComparison.Ordinal) >= 0))
+            foreach (string name in names)
             {
-                continue;
+                timeout.ThrowIfCancellationRequested();
+
+                // Re-apply the caller's scope: FindMatchingFilesAsync is explicitly allowed to
+                // over-return, and must not be able to widen what the caller asked for.
+                if (!StorePaths.MatchesGlob(name, matcher) ||
+                    (!recursive && name.IndexOf("/", StringComparison.Ordinal) >= 0))
+                {
+                    continue;
+                }
+
+                string path = string.IsNullOrEmpty(directory) ? name : $"{directory.TrimEnd('/')}/{name}";
+                string? content = await timeout.RunStepAsync(token => this.ReadAsync(path, token)).ConfigureAwait(false);
+                if (content is null)
+                {
+                    continue; // Deleted between enumeration and read.
+                }
+
+                FileSearchResult? result = timeout.RunStep(token => ScanContent(name, content, regex, token));
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
             }
 
-            string path = string.IsNullOrEmpty(directory) ? name : $"{directory.TrimEnd('/')}/{name}";
-            string? content = await this.ReadAsync(path, cancellationToken).ConfigureAwait(false);
-            if (content is null)
-            {
-                continue; // Deleted between enumeration and read.
-            }
-
-            FileSearchResult? result = ScanContent(name, content, regex);
-            if (result is not null)
-            {
-                results.Add(result);
-            }
+            timeout.ThrowIfCancellationRequested();
+            return results;
         }
-
-        return results;
+        catch (TimeoutException) when (timeout.Token.IsCancellationRequested)
+        {
+            throw CreateSearchTimeoutException(regexPattern);
+        }
     }
 
     /// <summary>
@@ -248,8 +262,8 @@ public abstract class AgentFileStore
     public static IReadOnlyList<string> SplitLines(string content) => FileEditor.SplitLinesKeepEnds(Throw.IfNull(content));
 
     /// <summary>
-    /// Finds every line of <paramref name="content"/> matching <paramref name="regex"/>, numbered by
-    /// <see cref="SplitLines"/>.
+    /// Finds every line of <paramref name="content"/> matching <paramref name="regex"/>, allowing
+    /// cancellation between lines and after each regex match.
     /// </summary>
     /// <remarks>
     /// This is the numbering primitive <see cref="SearchAsync"/> uses, published so a store that
@@ -260,12 +274,23 @@ public abstract class AgentFileStore
     /// <param name="fileName">The name recorded on the result, relative to the searched directory.</param>
     /// <param name="content">The file's full text.</param>
     /// <param name="regex">A compiled pattern, normally from the same source string passed to <see cref="SearchAsync"/>.</param>
+    /// <param name="cancellationToken">A token to cancel content scanning.</param>
     /// <returns>The match metadata, or <see langword="null"/> when no line matches.</returns>
-    public static FileSearchResult? ScanContent(string fileName, string content, Regex regex)
+    /// <exception cref="OperationCanceledException">The cancellation token was cancelled.</exception>
+    public static FileSearchResult? ScanContent(string fileName, string content, Regex regex, CancellationToken cancellationToken = default)
     {
         _ = Throw.IfNull(fileName);
         _ = Throw.IfNull(content);
         _ = Throw.IfNull(regex);
+
+        return ScanContent(fileName, content, (line, length) => regex.Match(line, 0, length), cancellationToken);
+    }
+
+    private static FileSearchResult? ScanContent(string fileName, string content, Func<string, int, Match> matchLine, CancellationToken cancellationToken)
+    {
+        _ = Throw.IfNull(fileName);
+        _ = Throw.IfNull(content);
+        _ = Throw.IfNull(matchLine);
 
         IReadOnlyList<string> lines = SplitLines(content);
         var matchingLines = new List<FileSearchMatch>();
@@ -274,8 +299,11 @@ public abstract class AgentFileStore
 
         for (int i = 0; i < lines.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             // Match over the line's text only, without copying it out of the line.
-            Match match = regex.Match(lines[i], 0, FileEditor.LineContentLength(lines[i]));
+            Match match = matchLine(lines[i], FileEditor.LineContentLength(lines[i]));
+            cancellationToken.ThrowIfCancellationRequested();
             if (match.Success)
             {
                 matchingLines.Add(new FileSearchMatch { LineNumber = i + 1, Line = lines[i] });
@@ -298,6 +326,11 @@ public abstract class AgentFileStore
             ? null
             : new FileSearchResult { FileName = fileName, Snippet = firstSnippet!, MatchingLines = matchingLines };
     }
+
+    internal static Regex CreateSearchRegex(string pattern) => new(pattern, RegexOptions.IgnoreCase, s_regexMatchTimeout);
+
+    internal static RegexMatchTimeoutException CreateSearchTimeoutException(string pattern) =>
+        new(string.Empty, pattern, SearchTimeout);
 
     /// <summary>
     /// Ensures a directory exists, creating it if necessary.

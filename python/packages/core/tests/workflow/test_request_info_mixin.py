@@ -621,6 +621,31 @@ class TestRequestInfoMixin:
         # Should return False when _response_handlers attribute doesn't exist
         assert executor.is_request_supported(str, int) is False
         assert executor.is_request_supported(dict[str, Any], bool) is False
+        assert executor.input_types == []
+        assert executor.output_types == []
+        assert executor.workflow_output_types == []
+
+    def test_executor_output_types_before_discovery(self):
+        """Test that output_types and workflow_output_types return empty lists before discovery."""
+
+        class DeferredExecutor(Executor):
+            def __init__(self):
+                super().__init__(id="deferred_executor", defer_discovery=True)
+
+            @handler
+            async def handle_str(self, message: str, ctx: WorkflowContext[int, float]) -> None:
+                pass
+
+        executor = DeferredExecutor()
+        assert executor.input_types == []
+        assert executor.output_types == []
+        assert executor.workflow_output_types == []
+
+        # After discovering handlers, types should be populated
+        executor._discover_handlers()
+        assert executor.input_types == [str]
+        assert executor.output_types == [int]
+        assert executor.workflow_output_types == [float]
 
     def test_is_request_supported_with_compatible_types(self):
         """Test is_request_supported with type-compatible scenarios."""

@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
@@ -10,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Shared.DiagnosticIds;
 using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI;
@@ -35,9 +37,38 @@ namespace Microsoft.Agents.AI;
 /// Developers should validate and sanitize LLM output before rendering it in HTML, executing it as code, using it in database queries,
 /// or passing it to any security-sensitive context. Apply defense-in-depth by combining tool approval requirements with output validation.
 /// </para>
+/// <para>
+/// <strong>Changing tools while approvals are outstanding:</strong> an approval request can outlive the deployment that issued it.
+/// A pending request records the call the model asked for, including its arguments, and waits for a human — who may not be available
+/// for some time, with the session suspended in the meantime. If the agent is upgraded while a request is outstanding and the tool it
+/// refers to has changed shape, then when the session is reloaded and the user approves, the stored arguments no longer match the tool
+/// and the call fails. The model is generally able to recover by calling the tool again in its new form, so this is not usually fatal,
+/// but developers making breaking changes to an <see cref="ApprovalRequiredAIFunction"/> — renaming or removing parameters, or changing
+/// their types — should expect it. Replacing a tool's implementation is a normal part of developing an agent and is not by itself a
+/// problem.
+/// </para>
+/// <para>
+/// <strong>Tools that become approval-required mid-flow:</strong> when a tool needs no approval, the framework answers on the caller's
+/// behalf, and it may carry that answer to the following turn. Because approval requirements are re-checked on each turn, a tool that
+/// has become an <see cref="ApprovalRequiredAIFunction"/> in the meantime does not inherit the earlier answer: the pending call is
+/// rejected rather than executed, so it never runs without a human being asked. The model is normally able to recover by issuing the
+/// call again, at which point it is surfaced for approval in the ordinary way. Applications that vary their tool set between turns
+/// should therefore expect an occasional extra round-trip while a change takes effect.
+/// </para>
 /// </remarks>
 public sealed partial class ChatClientAgent : AIAgent
 {
+    /// <summary>
+    /// The key of the <see cref="ChatMessage.AdditionalProperties"/> entry that marks a response message persisted
+    /// from a streaming run that was cancelled before completion.
+    /// </summary>
+    /// <remarks>
+    /// This marker is only added when <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/> or
+    /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> is enabled. Its value is <see langword="true"/>.
+    /// </remarks>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public const string PartialResponseMessageMarkerKey = "agent_framework.partial_response_message";
+
     private readonly ChatClientAgentOptions? _agentOptions;
     private readonly HashSet<string> _aiContextProviderStateKeys;
     private readonly AIAgentMetadata _agentMetadata;
@@ -351,6 +382,11 @@ public sealed partial class ChatClientAgent : AIAgent
                 // Ensure we start the streaming request
                 hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
             }
+            catch (Exception ex) when (this.ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(ex, safeSession, chatOptions, options, continuationToken, responseUpdates, cancellationToken))
+            {
+                await this.NotifyProvidersOfPartialMessagesOnCancellationAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), responseUpdates, chatOptions).ConfigureAwait(false);
+                throw;
+            }
             catch (Exception ex)
             {
                 await this.NotifyProvidersOfFailureAtEndOfRunAsync(safeSession, ex, GetInputMessages(inputMessagesForChatClient, continuationToken), chatOptions, cancellationToken).ConfigureAwait(false);
@@ -380,6 +416,11 @@ public sealed partial class ChatClientAgent : AIAgent
                     // null session) after each yield, so we must re-establish it for the decorator.
                     EnsureRunContextHasSession(safeSession);
                     hasUpdates = await responseUpdatesEnumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex) when (this.ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(ex, safeSession, chatOptions, options, continuationToken, responseUpdates, cancellationToken))
+                {
+                    await this.NotifyProvidersOfPartialMessagesOnCancellationAsync(safeSession, GetInputMessages(inputMessagesForChatClient, continuationToken), responseUpdates, chatOptions).ConfigureAwait(false);
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -922,6 +963,160 @@ public sealed partial class ChatClientAgent : AIAgent
         }
 
         return this.NotifyProvidersOfFailureAsync(session, ex, requestMessages, chatOptions, cancellationToken);
+    }
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages of a cancelled streaming run at the end of the run,
+    /// instead of being notified of a failure.
+    /// </summary>
+    /// <remarks>
+    /// This method is evaluated in an exception filter, so it must not have side effects.
+    /// It returns <see langword="false"/> when per-service-call persistence is active (the
+    /// <see cref="PerServiceCallChatHistoryPersistingChatClient"/> handles the notification), when chat history is
+    /// managed by the service, or when the run involves background responses or continuation tokens, either supplied by
+    /// the caller or received in the response updates. In the latter case, the caller can resume the run with the received
+    /// token, and the resumed run persists the request and the updates received so far, so persisting them here would
+    /// duplicate them in the chat history.
+    /// </remarks>
+    private bool ShouldNotifyProvidersOfPartialMessagesAtEndOfRun(
+        Exception ex,
+        ChatClientAgentSession session,
+        ChatOptions? chatOptions,
+        AgentRunOptions? runOptions,
+        ChatClientAgentContinuationToken? continuationToken,
+        List<ChatResponseUpdate> responseUpdates,
+        CancellationToken cancellationToken) =>
+        !this.RequiresPerServiceCallChatHistoryPersistence
+        && continuationToken is null
+        && chatOptions?.AllowBackgroundResponses is not true
+        && string.IsNullOrWhiteSpace(chatOptions?.ConversationId)
+        && string.IsNullOrWhiteSpace(session.ConversationId)
+        && !responseUpdates.Any(update => !string.IsNullOrWhiteSpace(update.ConversationId) || update.ContinuationToken is not null)
+        && this.ShouldNotifyProvidersOfPartialMessagesOnCancellation(ex, runOptions, cancellationToken);
+
+    /// <summary>
+    /// Determines whether providers should be notified of the partial messages received before a cancellation.
+    /// </summary>
+    /// <remarks>
+    /// Returns <see langword="true"/> only when <paramref name="ex"/> is an <see cref="OperationCanceledException"/> caused by
+    /// the caller's <paramref name="cancellationToken"/>, and partial persistence on cancellation is enabled either per run via
+    /// <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/> or at agent level via
+    /// <see cref="ChatClientAgentOptions.PersistPartialMessagesOnCancellation"/>.
+    /// This method is evaluated in exception filters, so it must not have side effects.
+    /// It is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/>.
+    /// </remarks>
+    internal bool ShouldNotifyProvidersOfPartialMessagesOnCancellation(Exception ex, AgentRunOptions? runOptions, CancellationToken cancellationToken) =>
+        ex is OperationCanceledException
+        && cancellationToken.IsCancellationRequested
+        && ((runOptions as ChatClientAgentRunOptions)?.PersistPartialMessagesOnCancellation
+            ?? this._agentOptions?.PersistPartialMessagesOnCancellation
+            ?? false);
+
+    /// <summary>
+    /// Notifies the <see cref="ChatHistoryProvider"/> and all <see cref="AIContextProviders"/> of the request messages and the
+    /// sanitized partial response of a cancelled streaming run, through the same channel used for successfully completed messages.
+    /// </summary>
+    /// <remarks>
+    /// The notification is best effort: it uses <see cref="CancellationToken.None"/> because the caller's token is already
+    /// cancelled, and any failure is logged and swallowed so that the original <see cref="OperationCanceledException"/>
+    /// is not masked. This method is also called by <see cref="PerServiceCallChatHistoryPersistingChatClient"/>.
+    /// When the notification succeeds, the tool approval state kept in the session for calls whose results are now in the
+    /// chat history is consumed, as it would be at the end of a completed run, while the state of unfinished calls is kept.
+    /// </remarks>
+    /// <param name="session">The session of the cancelled run.</param>
+    /// <param name="requestMessages">The request messages to persist.</param>
+    /// <param name="responseUpdates">The response updates received before the cancellation.</param>
+    /// <param name="chatOptions">The chat options of the cancelled run.</param>
+    /// <param name="historyMessages">
+    /// The messages known to be stored in the chat history, including <paramref name="requestMessages"/>, used to find
+    /// the tool calls that are settled. When <see langword="null"/>, only <paramref name="requestMessages"/> are used.
+    /// </param>
+    internal async Task NotifyProvidersOfPartialMessagesOnCancellationAsync(
+        ChatClientAgentSession session,
+        IEnumerable<ChatMessage> requestMessages,
+        IEnumerable<ChatResponseUpdate> responseUpdates,
+        ChatOptions? chatOptions,
+        IEnumerable<ChatMessage>? historyMessages = null)
+    {
+        try
+        {
+            var requestMessagesList = requestMessages as IReadOnlyCollection<ChatMessage> ?? requestMessages.ToList();
+            var partialResponseMessages = CreatePartialResponseMessages(responseUpdates);
+
+            await this.NotifyProvidersOfNewMessagesAsync(session, requestMessagesList, partialResponseMessages, chatOptions, CancellationToken.None).ConfigureAwait(false);
+
+            RemoveSettledToolApprovalState(session, (historyMessages ?? requestMessagesList).Concat(partialResponseMessages));
+        }
+        catch (Exception notifyException)
+        {
+            this._logger.LogAgentChatClientPartialMessagesNotificationFailed(this.Id, this.GetLoggingAgentName(), notifyException);
+        }
+    }
+
+    /// <summary>
+    /// Removes the tool approval state kept in the session for the tool calls whose results are contained in the
+    /// specified messages, which must all be stored in the chat history.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ApprovalResponseBindingChatClient"/> and <see cref="ApprovalNotRequiredFunctionBypassingChatClient"/>
+    /// keep their state when a streaming run does not complete, so that it can be retried. Once the results of those calls
+    /// are persisted, the state must be consumed, otherwise the next run would settle or execute the same calls again.
+    /// </remarks>
+    private static void RemoveSettledToolApprovalState(ChatClientAgentSession session, IEnumerable<ChatMessage> persistedMessages)
+    {
+        HashSet<string> settledCallIds = new(
+            persistedMessages.SelectMany(message => message.Contents).OfType<ToolResultContent>().Select(result => result.CallId),
+            StringComparer.Ordinal);
+
+        if (settledCallIds.Count == 0)
+        {
+            return;
+        }
+
+        ApprovalResponseBindingChatClient.RemoveSettledPendingApprovalRequests(session, settledCallIds);
+        ApprovalNotRequiredFunctionBypassingChatClient.RemoveSettledAutoApprovals(session, settledCallIds);
+    }
+
+    /// <summary>
+    /// Builds the response messages to persist for a cancelled streaming run from the updates received so far.
+    /// </summary>
+    /// <remarks>
+    /// Only the tool calls without a matching tool result in the partial response are removed, so that the stored
+    /// history remains valid for the next service call; all other content is kept as received.
+    /// Tool calls are only matched within the partial response, because the request messages are expected
+    /// to contain settled history only, so the response never contains results for tool calls from the request.
+    /// Messages left without content after removing their unsettled tool calls are dropped, and every remaining
+    /// message is marked with <see cref="PartialResponseMessageMarkerKey"/>.
+    /// </remarks>
+    internal static List<ChatMessage> CreatePartialResponseMessages(IEnumerable<ChatResponseUpdate> responseUpdates)
+    {
+        IList<ChatMessage> responseMessages = responseUpdates.ToChatResponse().Messages;
+
+        HashSet<string> toolResultIds = new(
+            responseMessages.SelectMany(m => m.Contents).OfType<ToolResultContent>().Select(toolResult => toolResult.CallId),
+            StringComparer.Ordinal);
+
+        List<ChatMessage> partialMessages = [];
+        foreach (var message in responseMessages)
+        {
+            List<AIContent> contents = message.Contents
+                .Where(content => content is not ToolCallContent toolCall || toolResultIds.Contains(toolCall.CallId))
+                .ToList();
+
+            if (contents.Count == 0 && message.Contents.Count > 0)
+            {
+                // The message only contained unsettled tool calls, so it is dropped. Messages that were already empty
+                // are kept, because they may still carry other valuable data.
+                continue;
+            }
+
+            message.Contents = contents;
+            message.AdditionalProperties ??= new();
+            message.AdditionalProperties[PartialResponseMessageMarkerKey] = true;
+            partialMessages.Add(message);
+        }
+
+        return partialMessages;
     }
 
     /// <summary>

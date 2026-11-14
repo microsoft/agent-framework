@@ -3,12 +3,15 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Events;
+using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
@@ -16,6 +19,7 @@ using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
 using Microsoft.PowerFx.Types;
 using Moq;
+using Xunit.Sdk;
 using ApprovalSnapshot = Microsoft.Agents.AI.Workflows.Declarative.ObjectModel.InvokeFunctionToolExecutor.ApprovalSnapshot;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests.ObjectModel;
@@ -94,6 +98,103 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(null, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(null, true, true)]
+    [InlineData(null, false, true)]
+    public async Task InvokeFunctionToolHonorsRegisteredFunctionApprovalAsync(
+        bool? requireApproval, bool approved, bool wrapFunction = false)
+    {
+        // Arrange
+        const string FunctionName = "get_status";
+        int invocationCount = 0;
+        AIFunction function = new ApprovalRequiredAIFunction(
+            AIFunctionFactory.Create(() =>
+            {
+                invocationCount++;
+                return "ready";
+            }, name: FunctionName));
+        TestFunctionAgentProvider agentProvider = wrapFunction
+            ? new([function])
+            : new([]) { Functions = [function] };
+        this.State.InitializeSystem();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolHonorsRegisteredFunctionApprovalAsync),
+            functionName: FunctionName,
+            requireApproval: requireApproval,
+            outputResultVariable: "Result");
+        InvokeFunctionToolExecutor action = new(model, agentProvider, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        // Assert
+        ExternalInputRequest request = Assert.Single(emittedRequests);
+        ToolApprovalRequestContent approvalRequest = Assert.Single(
+            request.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>());
+        Assert.Equal(FunctionName, Assert.IsType<FunctionCallContent>(approvalRequest.ToolCall).Name);
+        Assert.Equal(0, invocationCount);
+
+        // Act
+        await action.CaptureResponseAsync(
+            mockContext.Object,
+            CreateApprovalResponseFor(emittedRequests, approved),
+            CancellationToken.None);
+
+        // Assert
+        Assert.Equal(approved ? 1 : 0, invocationCount);
+        Assert.Contains(mockContext.Invocations, invocation =>
+            invocation.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && invocation.Arguments[1] is StringValue value
+            && string.Equals(
+                value.Value,
+                approved ? "ready" : "Error: Function invocation was not approved by user.",
+                StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvokeFunctionToolUnmarkedRegisteredFunctionUsesNodeApprovalAsync(bool? requireApproval)
+    {
+        // Arrange
+        const string FunctionName = "get_status";
+        TestFunctionAgentProvider agentProvider = new([])
+        {
+            Functions =
+            [
+                AIFunctionFactory.Create(() => "ready", name: FunctionName),
+                new ApprovalRequiredAIFunction(AIFunctionFactory.Create(() => "other", name: "other_function")),
+            ],
+        };
+        this.State.InitializeSystem();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolUnmarkedRegisteredFunctionUsesNodeApprovalAsync),
+            functionName: FunctionName,
+            requireApproval: requireApproval);
+        InvokeFunctionToolExecutor action = new(model, agentProvider, this.State);
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        // Act
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        // Assert
+        ExternalInputRequest request = Assert.Single(emittedRequests);
+        Assert.Equal(FunctionName, GetFunctionCall(request).Name);
+        Assert.Equal(
+            requireApproval == true ? 1 : 0,
+            request.AgentResponse.Messages.SelectMany(message => message.Contents).OfType<ToolApprovalRequestContent>().Count());
+    }
+
     [Fact]
     public async Task InvokeFunctionToolExecuteWithEmptyConversationIdAsync()
     {
@@ -150,9 +251,360 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         await this.ExecuteTestAsync(model);
     }
 
+    [Theory]
+    [InlineData(false, ProtectedInvocationValueLocation.FunctionName)]
+    [InlineData(true, ProtectedInvocationValueLocation.FunctionName)]
+    [InlineData(false, ProtectedInvocationValueLocation.Argument)]
+    [InlineData(true, ProtectedInvocationValueLocation.Argument)]
+    public async Task InvokeFunctionToolWithProtectedValueThrowsBeforeSendingAsync(
+        bool requireApproval,
+        ProtectedInvocationValueLocation location)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        InvokeFunctionTool model = this.CreateModelWithProtectedExpression(
+            nameof(InvokeFunctionToolWithProtectedValueThrowsBeforeSendingAsync),
+            requireApproval,
+            location);
+        InvokeFunctionToolExecutor action = new(model, new MockAgentProvider().Object, this.State);
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+
+        // Act
+        ValueTask ExecuteAsync() => action.HandleAsync(
+            new ActionExecutorResult(action.Id),
+            mockContext.Object,
+            CancellationToken.None);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(
+            async () => await ExecuteAsync());
+        Assert.Contains("Cannot use a protected value in function invocation", exception.Message);
+        mockContext.Verify(
+            c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionToolWithProtectedConversationIdThrowsBeforeSendingAsync()
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set(
+            "PROTECTED_SETTING",
+            FormulaValue.New("protected-value"),
+            VariableScopeNames.Environment,
+            SensitivityLevel.Sensitive);
+        this.State.Bind();
+
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(InvokeFunctionToolWithProtectedConversationIdThrowsBeforeSendingAsync)),
+            FunctionName = new StringExpression.Builder(StringExpression.Literal("test_function")),
+            ConversationId = new StringExpression.Builder(StringExpression.Expression("Env.PROTECTED_SETTING")),
+        };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext();
+
+        // Act
+        ValueTask ExecuteAsync() => action.CaptureResponseAsync(
+            mockContext.Object,
+            new ExternalInputResponse([]),
+            CancellationToken.None);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(
+            async () => await ExecuteAsync());
+        Assert.Contains("conversation ID", exception.Message);
+        mockAgentProvider.Verify(
+            provider => provider.CreateMessageAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatMessage>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     #endregion
 
     #region CaptureResponseAsync Tests
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AutoSendIsValidatedBeforeFunctionDispatchAsync(bool requireApproval)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendIsValidatedBeforeFunctionDispatchAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), new MockAgentProvider().Object, this.State);
+        List<ExternalInputRequest> requests = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext(requests);
+
+        // Act
+        Task ExecuteAsync() => action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None).AsTask();
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("auto send", exception.Message);
+        Assert.Empty(requests);
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, true)]
+    public async Task AutoSendUsesFunctionInvocationSnapshotAsync(bool requireApproval, bool autoSend, bool restore)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendUsesFunctionInvocationSnapshotAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => "result", name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(model, provider, this.State);
+        List<ExternalInputRequest> requests = [];
+        List<WorkflowEvent> events = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(emittedRequests: requests);
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((e, _) => events.Add(e))
+            .Returns(default(ValueTask));
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        ExternalInputResponse response;
+        if (requireApproval)
+        {
+            response = CreateApprovalResponseFor(requests, approved: true);
+        }
+        else
+        {
+            FunctionCallContent call = Assert.Single(Assert.Single(requests).AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+            response = new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(call.CallId, "result")]));
+        }
+        if (restore)
+        {
+            await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+            action = new InvokeFunctionToolExecutor(model, provider, this.State);
+            await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        }
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task AutoSendSnapshotSurvivesJsonCheckpointAsync(bool requireApproval, bool autoSend)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendSnapshotSurvivesJsonCheckpointAsync), "test_function", requireApproval).ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        InvokeFunctionTool model = AssignParent<InvokeFunctionTool>(builder);
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => "result", name: "test_function")]);
+        List<WorkflowEvent> events = [];
+        DirectoryInfo checkpointFolder = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), $"af-function-{Guid.NewGuid():N}"));
+        try
+        {
+            using FileSystemJsonCheckpointStore store = new(checkpointFolder);
+            CheckpointManager checkpointManager = CheckpointManager.CreateJson(store, DeclarativeWorkflowJsonOptions.Default);
+            (RequestInfoEvent? request, CheckpointInfo? checkpoint) = await WatchAsync(
+                await InProcessExecution.RunStreamingAsync(BuildWorkflow(this.State), this.State, checkpointManager));
+            Assert.NotNull(request);
+            Assert.NotNull(checkpoint);
+            ExternalInputRequest input = Assert.IsType<ExternalInputRequest>(request.Request.Data.As<ExternalInputRequest>());
+            ExternalInputResponse response;
+            if (requireApproval)
+            {
+                response = CreateApprovalResponseForRequest(input, approved: true);
+            }
+            else
+            {
+                FunctionCallContent call = Assert.Single(input.AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+                response = new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(call.CallId, "result")]));
+            }
+            WorkflowFormulaState restoredState = new(RecalcEngineFactory.Create());
+
+            // Act
+            (RequestInfoEvent? remainingRequest, _) = await WatchAsync(
+                await InProcessExecution.ResumeStreamingAsync(BuildWorkflow(restoredState), checkpoint, checkpointManager),
+                request.Request.CreateResponse(response));
+
+            // Assert
+            Assert.Null(remainingRequest);
+            Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+            Assert.Equal(!autoSend, Assert.IsType<BooleanValue>(restoredState.Get("Control")).Value);
+        }
+        finally
+        {
+            checkpointFolder.Delete(recursive: true);
+        }
+
+        Workflow BuildWorkflow(WorkflowFormulaState state)
+        {
+            TestWorkflowExecutor root = new();
+            InvokeFunctionToolExecutor action = new(model, provider, state);
+            RequestPort port = RequestPort.Create<ExternalInputRequest, ExternalInputResponse>(
+                InvokeFunctionToolExecutor.Steps.ExternalInput(action.Id));
+            DelegateActionExecutor<ExternalInputResponse> resume = new(
+                InvokeFunctionToolExecutor.Steps.Resume(action.Id), state,
+                (context, response, cancellationToken) =>
+                {
+                    state.Set("Control", FormulaValue.New(!autoSend));
+                    state.Bind();
+                    return action.CaptureResponseAsync(context, response, cancellationToken);
+                });
+            return new WorkflowBuilder(root)
+                .AddEdge(root, action)
+                .AddEdge(action, port)
+                .AddEdge(port, resume)
+                .Build();
+        }
+
+        async Task<(RequestInfoEvent? Request, CheckpointInfo? Checkpoint)> WatchAsync(StreamingRun run, ExternalResponse? response = null)
+        {
+            await using StreamingRun ownedRun = run;
+            if (response is not null)
+            {
+                await run.SendResponseAsync(response);
+            }
+
+            RequestInfoEvent? request = null;
+            CheckpointInfo? checkpoint = null;
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync(blockOnPendingRequest: false))
+            {
+                events.Add(workflowEvent);
+                switch (workflowEvent)
+                {
+                    case RequestInfoEvent requestEvent when requestEvent.Request.RequestId != response?.RequestId:
+                        request = requestEvent;
+                        break;
+                    case SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } completedCheckpoint }:
+                        checkpoint = completedCheckpoint;
+                        break;
+                    case WorkflowErrorEvent errorEvent:
+                        throw errorEvent.Data as Exception ?? new XunitException("Unexpected workflow failure.");
+                }
+            }
+            return (request, checkpoint);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AutoSendUsesMatchingSnapshotForMixedResponsesAsync(bool autoSend)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Approve", FormulaValue.New(true));
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(AutoSendUsesMatchingSnapshotForMixedResponsesAsync), "test_function", requireApproval: true).ToBuilder();
+        builder.RequireApproval = BoolExpression.Expression("Local.Approve").ToBuilder();
+        builder.Output = new InvokeToolOutput.Builder { AutoSend = BoolExpression.Expression("Local.Control").ToBuilder() };
+        int invocationCount = 0;
+        TestFunctionAgentProvider provider = new([AIFunctionFactory.Create(() => ++invocationCount, name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), provider, this.State);
+        List<ExternalInputRequest> requests = [];
+        List<WorkflowEvent> events = [];
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(emittedRequests: requests);
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((e, _) => events.Add(e))
+            .Returns(default(ValueTask));
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        ToolApprovalResponseContent approval = GetApprovalRequest(Assert.Single(requests)).CreateResponse(approved: true);
+        this.State.Set("Approve", FormulaValue.New(false));
+        this.State.Set("Control", FormulaValue.New(autoSend));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None);
+        FunctionCallContent call = Assert.Single(requests[1].AgentResponse.Messages.SelectMany(m => m.Contents).OfType<FunctionCallContent>());
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [approval, new FunctionResultContent(call.CallId, "result")]));
+        this.State.Set("Control", FormulaValue.New(!autoSend));
+        this.State.Bind();
+
+        // Act
+        await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(autoSend ? 1 : 0, events.OfType<AgentResponseEvent>().Count());
+        Assert.Equal(0, invocationCount);
+        await action.CaptureResponseAsync(context.Object, CreateApprovalResponseForRequest(requests[0], approved: true), CancellationToken.None);
+        Assert.Single(events.OfType<AgentResponseEvent>());
+        Assert.Equal(1, invocationCount);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task InvokeFunctionToolRejectsSensitiveControlValueAsync(bool approval, bool value)
+    {
+        // Arrange
+        this.State.InitializeSystem();
+        this.State.Set("Control", FormulaValue.New(value), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(InvokeFunctionToolRejectsSensitiveControlValueAsync), "test_function").ToBuilder();
+        BoolExpression.Builder expression = BoolExpression.Expression("Local.Control").ToBuilder();
+        if (approval)
+        {
+            builder.RequireApproval = expression;
+        }
+        else
+        {
+            builder.Output = new InvokeToolOutput.Builder { AutoSend = expression };
+        }
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), new MockAgentProvider().Object, this.State);
+        Mock<IWorkflowContext> context = CreateMockWorkflowContext();
+
+        // Act
+        ValueTask ExecuteAsync() => approval
+            ? action.HandleAsync(new ActionExecutorResult(action.Id), context.Object, CancellationToken.None)
+            : action.CaptureResponseAsync(
+                context.Object,
+                new ExternalInputResponse(new ChatMessage(ChatRole.Tool, [new FunctionResultContent(action.Id, "result")])),
+                CancellationToken.None);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(async () => await ExecuteAsync());
+        Assert.Contains(approval ? "require approval" : "auto send", exception.Message);
+        context.Verify(
+            c => c.SendMessageAsync(It.IsAny<object>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
 
     [Fact]
     public async Task InvokeFunctionToolCaptureResponseWithNoOutputConfiguredAsync()
@@ -199,27 +651,48 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     [Fact]
-    public async Task InvokeFunctionToolCaptureResponseWithConversationIdAsync()
+    public async Task InvokeFunctionToolCaptureResponsePersistsResultAsUserTextAsync()
     {
         // Arrange
         this.State.InitializeSystem();
+        this.State.Bind();
         const string ConversationId = "TestConversationId";
+        const string ResultVariable = "Result";
+        const string FunctionResult = "Result for conversation";
         InvokeFunctionTool model = this.CreateModel(
-            displayName: nameof(InvokeFunctionToolCaptureResponseWithConversationIdAsync),
+            displayName: nameof(InvokeFunctionToolCaptureResponsePersistsResultAsUserTextAsync),
             functionName: "test_function",
-            conversationId: ConversationId);
+            conversationId: ConversationId,
+            outputResultVariable: ResultVariable);
         MockAgentProvider mockAgentProvider = new();
+        mockAgentProvider.TestMessages.Clear();
         InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
 
-        FunctionResultContent functionResult = new(action.Id, "Result for conversation");
-        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [functionResult]));
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
 
         // Act
-        WorkflowEvent[] events = await this.ExecuteCaptureResponseTestAsync(action, response);
+        ExternalInputRequest request = Assert.Single(emittedRequests);
+        FunctionCallContent functionCall = GetFunctionCall(request);
+        ExternalInputResponse response = CreateFunctionResultResponse(
+            request,
+            expectedRequestId: functionCall.CallId,
+            callId: functionCall.CallId,
+            result: FunctionResult);
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
 
         // Assert
-        VerifyModel(model, action);
-        Assert.NotEmpty(events);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == FunctionResult);
+        ChatMessage persistedMessage = Assert.Single(mockAgentProvider.TestMessages);
+        Assert.Equal(ChatRole.User, persistedMessage.Role);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is FunctionResultContent);
+        TextContent textContent = Assert.Single(persistedMessage.Contents.OfType<TextContent>());
+        Assert.Contains(FunctionResult, textContent.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -473,6 +946,59 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// Completed approval-required invocations must not leave per-request tombstones in
+    /// checkpoint state.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolCheckpointAfterCompletedApprovalsPersistsBoundedApprovalStateAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolCheckpointAfterCompletedApprovalsPersistsBoundedApprovalStateAsync),
+            functionName: FunctionName,
+            requireApproval: true);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => "result", name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<string> completedRequestIds = [];
+        Dictionary<string, object?> stateStore = [];
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContextWithStateStore(stateStore, emittedRequests);
+
+        // Act - complete multiple approval-required invocations through the same executor.
+        for (int i = 0; i < 3; i++)
+        {
+            emittedRequests.Clear();
+            await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+            ToolApprovalRequestContent approvalRequest = GetApprovalRequest(emittedRequests);
+            completedRequestIds.Add(approvalRequest.RequestId);
+            await action.CaptureResponseAsync(mockContext.Object, CreateApprovalResponseFor(emittedRequests, approved: true), CancellationToken.None);
+        }
+
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", mockContext.Object, CancellationToken.None);
+
+        // Assert - checkpoint state stores one approval-history flag, not completed request ids.
+        bool hasApprovalRequiredInvocation = Assert.IsType<bool>(stateStore["_hasApprovalRequiredInvocation"]);
+        Assert.True(hasApprovalRequiredInvocation);
+
+        Dictionary<string, ApprovalSnapshot> persistedSnapshots = Assert.IsType<Dictionary<string, ApprovalSnapshot>>(stateStore["_approvalSnapshots"]);
+        Assert.Empty(persistedSnapshots);
+
+        List<string> persistedPendingNonApprovalIds = Assert.IsType<List<string>>(stateStore["_pendingNonApprovalCallIds"]);
+        Assert.Empty(persistedPendingNonApprovalIds);
+
+        Assert.DoesNotContain(stateStore.Values.OfType<List<string>>(), persistedIds => completedRequestIds.Any(persistedIds.Contains));
+    }
+
+    /// <summary>
     /// Each ExecuteAsync invocation must produce a unique per-invocation request id on
     /// both the FunctionCallContent.CallId and the ToolApprovalRequestContent.RequestId.
     /// </summary>
@@ -644,6 +1170,119 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// A non-approval function result must not satisfy a concurrent approval-required
+    /// invocation just because its call id is pending on the same executor.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolApprovalResponseRejectsConcurrentNonApprovalResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string RequireApprovalVariable = "NeedsApproval";
+        const string ResultVariable = "Result";
+        const string CrossModeResult = "cross-mode-result";
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(false));
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModelWithVariableRequireApproval(
+            displayName: nameof(InvokeFunctionToolApprovalResponseRejectsConcurrentNonApprovalResultAsync),
+            functionName: FunctionName,
+            requireApprovalVariableName: RequireApprovalVariable,
+            outputResultVariable: ResultVariable);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => "registered-result", name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        string nonApprovalCallId = GetFunctionCall(emittedRequests[0]).CallId;
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(true));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        string approvalRequestId = GetApprovalRequest(emittedRequests[1]).RequestId;
+
+        ExternalInputResponse crossModeResponse = CreateFunctionResultResponse(
+            request: emittedRequests[1],
+            expectedRequestId: approvalRequestId,
+            callId: nonApprovalCallId,
+            result: CrossModeResult);
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, crossModeResponse, CancellationToken.None);
+
+        // Assert
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == CrossModeResult);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value.Contains("No pending approval"));
+    }
+
+    /// <summary>
+    /// A non-approval result remains valid while an approval-required invocation is pending
+    /// when the response is correlated to the non-approval request that emitted it.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolConcurrentNonApprovalResultIsAcceptedForItsOwnRequestAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string RequireApprovalVariable = "NeedsApproval";
+        const string ResultVariable = "Result";
+        const string NonApprovalResult = "non-approval-result";
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(false));
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModelWithVariableRequireApproval(
+            displayName: nameof(InvokeFunctionToolConcurrentNonApprovalResultIsAcceptedForItsOwnRequestAsync),
+            functionName: FunctionName,
+            requireApprovalVariableName: RequireApprovalVariable,
+            outputResultVariable: ResultVariable);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => "registered-result", name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        string nonApprovalCallId = GetFunctionCall(emittedRequests[0]).CallId;
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(true));
+        this.State.Bind();
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+        Assert.NotNull(GetApprovalRequest(emittedRequests[1]));
+
+        ExternalInputResponse nonApprovalResponse = CreateFunctionResultResponse(
+            request: emittedRequests[0],
+            expectedRequestId: nonApprovalCallId,
+            callId: nonApprovalCallId,
+            result: NonApprovalResult);
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, nonApprovalResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == NonApprovalResult);
+    }
+
+    /// <summary>
     /// A snapshot persisted at the legacy <c>"_approvalSnapshot"</c> key must be migrated
     /// under <c>this.Id</c> after restore so an approval response carrying
     /// <c>RequestId == this.Id</c> resumes with the snapshot's arguments.
@@ -697,6 +1336,74 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         // Assert - the function was invoked with the snapshot arguments.
         Assert.NotNull(capturedArguments);
         Assert.Equal(LegacyApprovedArg, capturedArguments[ArgumentKey]?.ToString());
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task LegacyApprovalResponseValidatesAutoSendOnlyWhenApprovedAsync(bool singleSnapshot, bool approved)
+    {
+        // Arrange
+        InvokeFunctionTool.Builder builder = this.CreateModel(
+            nameof(LegacyApprovalResponseValidatesAutoSendOnlyWhenApprovedAsync),
+            "test_function", requireApproval: true, outputResultVariable: "Result").ToBuilder();
+        InvokeToolOutput.Builder? output = builder.Output;
+        Assert.NotNull(output);
+        output.AutoSend = BoolExpression.Expression("Local.Control").ToBuilder();
+        bool functionWasInvoked = false;
+        TestFunctionAgentProvider provider = new(
+            [AIFunctionFactory.Create(() => { functionWasInvoked = true; return "result"; }, name: "test_function")]);
+        InvokeFunctionToolExecutor action = new(AssignParent<InvokeFunctionTool>(builder), provider, this.State);
+        ApprovalSnapshot snapshot = new("test_function", null);
+        Dictionary<string, object?> stateStore = singleSnapshot
+            ? new() { ["_approvalSnapshot"] = snapshot }
+            : new() { ["_approvalSnapshots"] = new Dictionary<string, ApprovalSnapshot> { [action.Id] = snapshot } };
+        Mock<IWorkflowContext> context = CreateMockWorkflowContextWithStateStore(stateStore);
+        List<WorkflowEvent> events = [];
+        context.Setup(c => c.AddEventAsync(It.IsAny<WorkflowEvent>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkflowEvent, CancellationToken>((workflowEvent, _) => events.Add(workflowEvent))
+            .Returns(default(ValueTask));
+        await InvokeProtectedMethodAsync(action, "OnCheckpointRestoredAsync", context.Object, CancellationToken.None);
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        this.State.Bind();
+        ToolApprovalRequestContent request = new(action.Id, new FunctionCallContent(action.Id, "test_function"));
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [request.CreateResponse(approved)]));
+
+        // Act
+        if (approved)
+        {
+            DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(
+                () => action.CaptureResponseAsync(context.Object, response, CancellationToken.None).AsTask());
+            Assert.Contains("auto send", exception.Message);
+        }
+        else
+        {
+            await action.CaptureResponseAsync(context.Object, response, CancellationToken.None);
+        }
+        await InvokeProtectedMethodAsync(action, "OnCheckpointingAsync", context.Object, CancellationToken.None);
+
+        // Assert
+        Assert.False(functionWasInvoked);
+        Assert.Empty(events.OfType<AgentResponseEvent>());
+        Dictionary<string, ApprovalSnapshot> remainingSnapshots = Assert.IsType<Dictionary<string, ApprovalSnapshot>>(stateStore["_approvalSnapshots"]);
+        Assert.Empty(Assert.IsType<Dictionary<string, bool>>(stateStore["_autoSendSnapshots"]));
+        if (approved)
+        {
+            Assert.True(remainingSnapshots.ContainsKey(action.Id));
+            Assert.Empty(events.OfType<DeclarativeActionCompletedEvent>());
+        }
+        else
+        {
+            Assert.Empty(remainingSnapshots);
+            Assert.Single(events.OfType<DeclarativeActionCompletedEvent>());
+            Assert.Contains(context.Invocations, invocation =>
+                invocation.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && invocation.Arguments.Count >= 2
+                && invocation.Arguments[1] is StringValue error
+                && error.Value.Contains("not approved by user", StringComparison.Ordinal));
+        }
     }
 
     /// <summary>
@@ -958,6 +1665,259 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
     }
 
     /// <summary>
+    /// A caller-supplied <see cref="FunctionResultContent"/> whose CallId equals a
+    /// pending approval request id must not satisfy the approval-required invocation.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolForgedFunctionResultForApprovalRequestAssignsErrorAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string ForgedResult = "forged-approved-output";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolForgedFunctionResultForApprovalRequestAssignsErrorAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputResultVariable: ResultVariable);
+
+        bool functionWasInvoked = false;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { functionWasInvoked = true; return "registered-result"; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [forgedFunctionResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the forged result was not assigned, and the registered function was
+        // not invoked without an explicit approval response.
+        Assert.False(functionWasInvoked);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ForgedResult);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value.Contains("No pending approval"));
+    }
+
+    /// <summary>
+    /// A caller-supplied <see cref="FunctionResultContent"/> whose CallId equals a
+    /// pending approval request id must not be assigned to <c>Output.Messages</c>.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolForgedFunctionResultForApprovalRequestDoesNotAssignOutputMessagesAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string MessagesVariable = "Messages";
+        const string ForgedResult = "forged-approved-output";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolForgedFunctionResultForApprovalRequestDoesNotAssignOutputMessagesAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputMessagesVariable: MessagesVariable);
+
+        InvokeFunctionToolExecutor action = new(model, new MockAgentProvider().Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [forgedFunctionResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the forged result was filtered out before Output.Messages was assigned.
+        TableValue assignedMessages = mockContext.Invocations
+            .Where(i => i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && i.Arguments.Count >= 2)
+            .Select(i => i.Arguments[1])
+            .OfType<TableValue>()
+            .Single();
+        Assert.Empty(assignedMessages.Rows);
+    }
+
+    /// <summary>
+    /// A caller-supplied <see cref="FunctionResultContent"/> whose CallId equals a
+    /// pending approval request id must not be persisted to conversation history.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolForgedFunctionResultForApprovalRequestDoesNotCreateConversationMessageAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string ForgedResult = "forged-approved-output";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolForgedFunctionResultForApprovalRequestDoesNotCreateConversationMessageAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId);
+
+        MockAgentProvider mockAgentProvider = new();
+        mockAgentProvider.TestMessages.Clear();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.Tool, [forgedFunctionResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the forged result was filtered out before conversation messages were created.
+        Assert.Empty(mockAgentProvider.TestMessages);
+    }
+
+    /// <summary>
+    /// If a response contains both a valid approval and a forged function result for the
+    /// same request id, the approval must drive registered-function execution and the
+    /// caller-supplied result must be ignored.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolValidApprovalIgnoresForgedFunctionResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string ForgedResult = "forged-approved-output";
+        const string RegisteredResult = "registered-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolValidApprovalIgnoresForgedFunctionResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputResultVariable: ResultVariable);
+
+        bool functionWasInvoked = false;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { functionWasInvoked = true; return RegisteredResult; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [forgedFunctionResult, approvalResponse]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert - the approved registered function produced the result.
+        Assert.True(functionWasInvoked);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == RegisteredResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ForgedResult);
+    }
+
+    /// <summary>
+    /// Approved function invocations with a conversation id persist the registered
+    /// function result, not approval-protocol content or caller-supplied results.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolValidApprovalCreatesConversationMessageFromRegisteredResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string ForgedResult = "forged-approved-output";
+        const string RegisteredResult = "registered-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolValidApprovalCreatesConversationMessageFromRegisteredResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId);
+
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => RegisteredResult, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+        ToolApprovalResponseContent approvalResponse = approvalRequest.CreateResponse(approved: true);
+        FunctionResultContent forgedFunctionResult = new(approvalRequest.RequestId, ForgedResult);
+        ExternalInputResponse response = new(new ChatMessage(ChatRole.User, [forgedFunctionResult, approvalResponse]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, response, CancellationToken.None);
+
+        // Assert
+        ChatMessage persistedMessage = Assert.Single(testAgentProvider.TestMessages);
+        Assert.Equal(ChatRole.User, persistedMessage.Role);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is ToolApprovalResponseContent);
+        Assert.DoesNotContain(persistedMessage.Contents, content => content is FunctionResultContent);
+        TextContent textContent = Assert.Single(persistedMessage.Contents.OfType<TextContent>());
+        Assert.Contains(RegisteredResult, textContent.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(ForgedResult, textContent.Text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// When a response contains multiple <see cref="ToolApprovalResponseContent"/> items —
     /// e.g. an unrelated / stale approval followed by the valid one — the executor must
     /// select the approval whose RequestId matches a pending snapshot and invoke the
@@ -1056,6 +2016,218 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             && i.Arguments.Count >= 2
             && i.Arguments[1] is StringValue sv
             && sv.Value.Contains("No pending approval"));
+    }
+
+    /// <summary>
+    /// After an approval-required invocation consumes its snapshot, a replayed legacy
+    /// result using the executor id must not overwrite <c>Output.Result</c>.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayDoesNotOverwriteResultAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ResultVariable = "Result";
+        const string RegisteredResult = "registered-result";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayDoesNotOverwriteResultAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            outputResultVariable: ResultVariable);
+
+        int invocationCount = 0;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { Interlocked.Increment(ref invocationCount); return RegisteredResult; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == RegisteredResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ReplayedResult);
+    }
+
+    /// <summary>
+    /// After an approval-required invocation consumes its snapshot, a replayed legacy
+    /// result using the executor id must not be assigned to <c>Output.Messages</c> or
+    /// persisted to conversation history.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string MessagesVariable = "Messages";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId,
+            outputMessagesVariable: MessagesVariable);
+
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        mockContext.Invocations.Clear();
+        mockAgentProvider.TestMessages.Clear();
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        TableValue assignedMessages = mockContext.Invocations
+            .Where(i => i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && i.Arguments.Count >= 2)
+            .Select(i => i.Arguments[1])
+            .OfType<TableValue>()
+            .Single();
+        Assert.Empty(assignedMessages.Rows);
+        Assert.Empty(mockAgentProvider.TestMessages);
+    }
+
+    /// <summary>
+    /// After an approval-required invocation is rejected and consumes its snapshot, a replayed
+    /// result using the approval request id must not be assigned to <c>Output.Messages</c> or
+    /// persisted to conversation history.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostRejectionReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string ConversationId = "TestConversationId";
+        const string MessagesVariable = "Messages";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModel(
+            displayName: nameof(InvokeFunctionToolPostRejectionReplayDoesNotAssignOutputMessagesOrCreateConversationMessageAsync),
+            functionName: FunctionName,
+            requireApproval: true,
+            conversationId: ConversationId,
+            outputMessagesVariable: MessagesVariable);
+
+        MockAgentProvider mockAgentProvider = new();
+        InvokeFunctionToolExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        ToolApprovalRequestContent approvalRequest = GetApprovalRequest(emittedRequests);
+        ExternalInputResponse rejectionResponse = CreateApprovalResponseFor(emittedRequests, approved: false);
+        FunctionResultContent replayedApprovalResult = new(approvalRequest.RequestId, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedApprovalResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, rejectionResponse, CancellationToken.None);
+        mockContext.Invocations.Clear();
+        mockAgentProvider.TestMessages.Clear();
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        TableValue assignedMessages = mockContext.Invocations
+            .Where(i => i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+                && i.Arguments.Count >= 2)
+            .Select(i => i.Arguments[1])
+            .OfType<TableValue>()
+            .Single();
+        Assert.Empty(assignedMessages.Rows);
+        Assert.Empty(mockAgentProvider.TestMessages);
+    }
+
+    /// <summary>
+    /// The approval mode captured at emit time must gate legacy replay matching even if
+    /// the mutable <c>RequireApproval</c> expression evaluates to false after approval.
+    /// </summary>
+    [Fact]
+    public async Task InvokeFunctionToolPostApprovalLegacyReplayUsesEmittedApprovalModeAsync()
+    {
+        // Arrange
+        const string FunctionName = "any_function";
+        const string RequireApprovalVariable = "NeedsApproval";
+        const string ResultVariable = "Result";
+        const string RegisteredResult = "registered-result";
+        const string ReplayedResult = "replayed-result";
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(true));
+        this.State.InitializeSystem();
+        this.State.Bind();
+        InvokeFunctionTool model = this.CreateModelWithVariableRequireApproval(
+            displayName: nameof(InvokeFunctionToolPostApprovalLegacyReplayUsesEmittedApprovalModeAsync),
+            functionName: FunctionName,
+            requireApprovalVariableName: RequireApprovalVariable,
+            outputResultVariable: ResultVariable);
+
+        int invocationCount = 0;
+        TestFunctionAgentProvider testAgentProvider = new(
+            [AIFunctionFactory.Create(() => { Interlocked.Increment(ref invocationCount); return RegisteredResult; }, name: FunctionName)]);
+        InvokeFunctionToolExecutor action = new(model, testAgentProvider, this.State);
+
+        List<ExternalInputRequest> emittedRequests = [];
+        Mock<IWorkflowContext> mockContext = CreateMockWorkflowContext(emittedRequests);
+        await action.HandleAsync(new ActionExecutorResult(action.Id), mockContext.Object, CancellationToken.None);
+
+        this.State.Set(RequireApprovalVariable, FormulaValue.New(false));
+        this.State.Bind();
+
+        ExternalInputResponse approvalResponse = CreateApprovalResponseFor(emittedRequests, approved: true);
+        FunctionResultContent replayedLegacyResult = new(action.Id, ReplayedResult);
+        ExternalInputResponse replayResponse = new(new ChatMessage(ChatRole.Tool, [replayedLegacyResult]));
+
+        // Act
+        await action.CaptureResponseAsync(mockContext.Object, approvalResponse, CancellationToken.None);
+        await action.CaptureResponseAsync(mockContext.Object, replayResponse, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(1, invocationCount);
+        Assert.Contains(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == RegisteredResult);
+        Assert.DoesNotContain(mockContext.Invocations, i =>
+            i.Method.Name == nameof(IWorkflowContext.QueueStateUpdateAsync)
+            && i.Arguments.Count >= 2
+            && i.Arguments[1] is StringValue sv
+            && sv.Value == ReplayedResult);
     }
 
     /// <summary>
@@ -1170,6 +2342,45 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         return CreateApprovalResponseForRequest(emitted, approved);
     }
 
+    private static ToolApprovalRequestContent GetApprovalRequest(IReadOnlyList<ExternalInputRequest> emittedRequests)
+    {
+        return Assert.Single(emittedRequests)
+            .AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+    }
+
+    private static ToolApprovalRequestContent GetApprovalRequest(ExternalInputRequest emittedRequest)
+    {
+        return emittedRequest.AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<ToolApprovalRequestContent>()
+            .Single();
+    }
+
+    private static FunctionCallContent GetFunctionCall(ExternalInputRequest emittedRequest)
+    {
+        return emittedRequest.AgentResponse.Messages
+            .SelectMany(m => m.Contents)
+            .OfType<FunctionCallContent>()
+            .Single();
+    }
+
+    private static ExternalInputResponse CreateFunctionResultResponse(
+        ExternalInputRequest request,
+        string expectedRequestId,
+        string callId,
+        string result)
+    {
+        object response = ((IExternalRequestEnvelope)request).CreateResponse(
+            [new ChatMessage(ChatRole.Tool, [new FunctionResultContent(callId, result)])]);
+
+        ExternalInputResponse correlatedResponse = Assert.IsType<ExternalInputResponse>(response);
+        Assert.Equal(expectedRequestId, correlatedResponse.RequestId);
+        return correlatedResponse;
+    }
+
     private static Mock<IWorkflowContext> CreateMockWorkflowContext(List<ExternalInputRequest>? emittedRequests = null)
     {
         Mock<IWorkflowContext> mockContext = new();
@@ -1208,6 +2419,12 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<List<string>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, List<string>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
             .Returns(default(ValueTask));
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<Dictionary<string, bool>>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, Dictionary<string, bool>, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
+            .Returns(default(ValueTask));
+        mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, bool, string?, CancellationToken>((key, value, _, _) => stateStore[key] = value)
+            .Returns(default(ValueTask));
         mockContext.Setup(c => c.QueueStateUpdateAsync(It.IsAny<string>(), It.IsAny<ApprovalSnapshot?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Callback<string, ApprovalSnapshot?, string?, CancellationToken>((key, value, _, _) =>
             {
@@ -1236,6 +2453,12 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         mockContext.Setup(c => c.ReadStateAsync<List<string>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<List<string>?>(stateStore.TryGetValue(key, out object? val) ? val as List<string> : null));
+        mockContext.Setup(c => c.ReadStateAsync<Dictionary<string, bool>>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<Dictionary<string, bool>?>(stateStore.TryGetValue(key, out object? val) ? val as Dictionary<string, bool> : null));
+        mockContext.Setup(c => c.ReadStateAsync<bool>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, CancellationToken>((key, _, _) =>
+                new ValueTask<bool>(stateStore.TryGetValue(key, out object? val) && val is bool boolValue && boolValue));
         mockContext.Setup(c => c.ReadStateAsync<ApprovalSnapshot>(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .Returns<string, string?, CancellationToken>((key, _, _) =>
                 new ValueTask<ApprovalSnapshot?>(stateStore.TryGetValue(key, out object? val) ? val as ApprovalSnapshot : null));
@@ -1265,6 +2488,8 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         private readonly Action<string>? _onInvoke;
         private readonly Action<AIFunctionArguments>? _onInvokeArguments;
 
+        public List<ChatMessage> TestMessages { get; } = [];
+
         public TestFunctionAgentProvider(
             IEnumerable<AIFunction> functions,
             Action<string>? onInvoke = null,
@@ -1287,8 +2512,11 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         public override Task<string> CreateConversationAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
-        public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public override Task<ChatMessage> CreateMessageAsync(string conversationId, ChatMessage conversationMessage, CancellationToken cancellationToken = default)
+        {
+            this.TestMessages.Add(conversationMessage);
+            return Task.FromResult(conversationMessage);
+        }
 
         public override Task<ChatMessage> GetMessageAsync(string conversationId, string messageId, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
@@ -1309,6 +2537,9 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             public override string Name => inner.Name;
             public override string Description => inner.Description;
             public override JsonElement JsonSchema => inner.JsonSchema;
+
+            public override object? GetService(Type serviceType, object? serviceKey = null) =>
+                base.GetService(serviceType, serviceKey) ?? inner.GetService(serviceType, serviceKey);
 
             protected override ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
             {
@@ -1355,7 +2586,8 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         string? conversationId = null,
         string? argumentKey = null,
         string? argumentValue = null,
-        string? outputResultVariable = null)
+        string? outputResultVariable = null,
+        string? outputMessagesVariable = null)
     {
         InvokeFunctionTool.Builder builder = new()
         {
@@ -1375,11 +2607,12 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
             builder.Arguments.Add(argumentKey, ValueExpression.Literal(new StringDataValue(argumentValue)));
         }
 
-        if (outputResultVariable is not null)
+        if (outputResultVariable is not null || outputMessagesVariable is not null)
         {
             builder.Output = new InvokeToolOutput.Builder
             {
-                Result = new InitializablePropertyPath(PropertyPath.TopicVariable(outputResultVariable), isInitializer: false),
+                Result = outputResultVariable is not null ? new InitializablePropertyPath(PropertyPath.TopicVariable(outputResultVariable), isInitializer: false) : null,
+                Messages = outputMessagesVariable is not null ? new InitializablePropertyPath(PropertyPath.TopicVariable(outputMessagesVariable), isInitializer: false) : null,
             };
         }
 
@@ -1412,6 +2645,57 @@ public sealed class InvokeFunctionToolExecutorTest(ITestOutputHelper output) : W
         builder.Arguments.Add(argumentKey,
             ValueExpression.Variable(PropertyPath.TopicVariable(variableName)));
         return AssignParent<InvokeFunctionTool>(builder);
+    }
+
+    private InvokeFunctionTool CreateModelWithProtectedExpression(
+        string displayName,
+        bool requireApproval,
+        ProtectedInvocationValueLocation location)
+    {
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName($"{displayName}_{requireApproval}_{location}"),
+            FunctionName = new StringExpression.Builder(
+                location == ProtectedInvocationValueLocation.FunctionName
+                    ? StringExpression.Expression("""Concatenate("prefix-", Env.PROTECTED_SETTING)""")
+                    : StringExpression.Literal("test_function")),
+            RequireApproval = new BoolExpression.Builder(BoolExpression.Literal(requireApproval)),
+        };
+
+        if (location == ProtectedInvocationValueLocation.Argument)
+        {
+            builder.Arguments.Add(
+                "input",
+                new ValueExpression.Builder(
+                    ValueExpression.Expression("""{ Visible: "value", Protected: Env.PROTECTED_SETTING }""")));
+        }
+
+        return AssignParent<InvokeFunctionTool>(builder);
+    }
+
+    private InvokeFunctionTool CreateModelWithVariableRequireApproval(
+        string displayName, string functionName, string requireApprovalVariableName, string outputResultVariable)
+    {
+        InvokeFunctionTool.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(displayName),
+            FunctionName = new StringExpression.Builder(StringExpression.Literal(functionName)),
+            RequireApproval = new BoolExpression.Builder(
+                BoolExpression.Variable(PropertyPath.TopicVariable(requireApprovalVariableName))),
+            Output = new InvokeToolOutput.Builder
+            {
+                Result = new InitializablePropertyPath(PropertyPath.TopicVariable(outputResultVariable), isInitializer: false),
+            },
+        };
+        return AssignParent<InvokeFunctionTool>(builder);
+    }
+
+    public enum ProtectedInvocationValueLocation
+    {
+        FunctionName,
+        Argument,
     }
 
     #endregion

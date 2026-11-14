@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import copy
 import json
 import logging
 import sys
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, Literal, TypedDict
 from uuid import uuid4
 
@@ -28,10 +30,12 @@ from agent_framework import (
     Message,
     ResponseStream,
     UsageDetails,
+    get_namespaced_value,
     validate_tool_mode,
 )
 from agent_framework._settings import SecretString, load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
+from agent_framework._types import _get_data_bytes
 from agent_framework.exceptions import ChatClientInvalidResponseException
 from agent_framework.observability import ChatTelemetryLayer
 from boto3.session import Session as Boto3Session
@@ -50,12 +54,22 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 logger = logging.getLogger("agent_framework.bedrock")
+
+# Marks text_reasoning content whose protected_data is base64 of a Bedrock ``redactedContent`` blob,
+# as opposed to the signature of a ``reasoningText`` block.
+_BEDROCK_ADDITIONAL_PROPS_NAMESPACE = "bedrock"
+_REDACTED_REASONING_KEY = "redacted_reasoning"
+_LEGACY_REDACTED_REASONING_KEY = "bedrock.redacted_reasoning"
+
+
+@dataclass
+class _StreamedReasoningBlock:
+    """State for one reasoning content block while its ConverseStream deltas arrive."""
+
+    id: str
+    redacted: bytes = b""
 
 
 __all__ = [
@@ -136,9 +150,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
         user: Not supported.
         store: Not supported.
         logit_bias: Not supported.
-        metadata: Not supported (use additional_properties for additionalModelRequestFields).
+        metadata: Not supported (use requestMetadata).
 
         # Bedrock-specific options:
+        additionalModelRequestFields: Model-specific request fields not covered by the Converse API.
         guardrailConfig: Guardrails configuration for content filtering.
         performanceConfig: Performance optimization settings.
         requestMetadata: Key-value metadata for the request.
@@ -146,6 +161,10 @@ class BedrockChatOptions(ChatOptions[ResponseModelT], Generic[ResponseModelT], t
     """
 
     # Bedrock-specific options
+    additionalModelRequestFields: dict[str, Any]
+    """Model-specific request fields passed through as ``additionalModelRequestFields``
+    (e.g. ``{"reasoning": {"effort": "low"}}``)."""
+
     guardrailConfig: BedrockGuardrailConfig
     """Guardrails configuration for content filtering and safety."""
 
@@ -254,7 +273,8 @@ class BedrockChatClient(
         """Create a Bedrock chat client and load AWS credentials.
 
         Args:
-            region: Region to send Bedrock requests to; falls back to BEDROCK_REGION.
+            region: Region to send Bedrock requests to; falls back to the region of ``boto3_session``,
+                then to BEDROCK_REGION, then to us-east-1. A supplied ``client`` keeps its own region.
             model: Default model identifier; falls back to BEDROCK_CHAT_MODEL.
             access_key: Optional AWS access key for manual credential injection.
             secret_key: Optional AWS secret key paired with ``access_key``.
@@ -298,10 +318,17 @@ class BedrockChatClient(
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
-        region = settings.get("region") or DEFAULT_REGION
+        if client is not None:
+            client_region = getattr(getattr(client, "meta", None), "region_name", None)
+            region = client_region if isinstance(client_region, str) else (settings.get("region") or DEFAULT_REGION)
+        else:
+            session_region = boto3_session.region_name if boto3_session else None
+            region = region or session_region or settings.get("region") or DEFAULT_REGION
         chat_model = settings.get("chat_model")
 
-        if client:
+        self._owns_client = client is None
+        self._client_closed = False
+        if client is not None:
             self._bedrock_client = client
         else:
             session = boto3_session or self._create_session(settings)
@@ -319,6 +346,13 @@ class BedrockChatClient(
         self.model = chat_model
         self.region = region
 
+    @override
+    async def close(self) -> None:
+        """Close the owned runtime connection without closing caller-owned sessions."""
+        if self._owns_client and not self._client_closed:
+            await asyncio.to_thread(self._bedrock_client.close)
+            self._client_closed = True
+
     @staticmethod
     def _create_session(settings: BedrockSettings) -> Boto3Session:
         session_kwargs: dict[str, Any] = {"region_name": settings.get("region") or DEFAULT_REGION}
@@ -332,10 +366,11 @@ class BedrockChatClient(
             session_kwargs["aws_session_token"] = session_token.get_secret_value()
         return Boto3Session(**session_kwargs)
 
-    def _invoke_converse(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def _invoke_converse(self, request: Mapping[str, Any], stream: bool = False) -> dict[str, Any]:
         mark_feature_used(FeatureIndex.BEDROCK)
         try:
-            response = self._bedrock_client.converse(**request)
+            invoke = self._bedrock_client.converse_stream if stream else self._bedrock_client.converse
+            response = invoke(**request)
             if not isinstance(response, Mapping):
                 raise ChatClientInvalidResponseException("Bedrock converse response must be a mapping.")
             return response
@@ -369,31 +404,32 @@ class BedrockChatClient(
         request = self._prepare_options(messages, options, **kwargs)
 
         if stream:
-            # Streaming mode - simulate streaming by yielding a single update
+            # Streaming mode - yield an update per ConverseStream event
             async def _stream() -> AsyncIterable[ChatResponseUpdate]:
-                response = await asyncio.to_thread(self._invoke_converse, request)
-                parsed_response = self._process_converse_response(response, options)
-                contents = list(parsed_response.messages[0].contents if parsed_response.messages else [])
-                if parsed_response.usage_details:
-                    contents.append(Content.from_usage(usage_details=parsed_response.usage_details))
-                raw_finish_reason = (
-                    parsed_response.finish_reason if isinstance(parsed_response.finish_reason, str) else None
-                )
-                finish_reason = self._map_finish_reason(raw_finish_reason)
-                yield ChatResponseUpdate(
-                    response_id=parsed_response.response_id,
-                    contents=contents,
-                    model=parsed_response.model,
-                    finish_reason=finish_reason,
-                    raw_representation=parsed_response.raw_representation,
-                )
+                response = await asyncio.to_thread(self._invoke_converse, request, True)
+                events = response["stream"]
+                event_iterator = iter(events)
+                tool_call_ids: dict[int, str] = {}
+                reasoning_blocks: dict[int, _StreamedReasoningBlock] = {}
+                try:
+                    while (event := await asyncio.to_thread(next, event_iterator, None)) is not None:
+                        if update := self._process_converse_stream_event(
+                            event, request["modelId"], tool_call_ids, reasoning_blocks
+                        ):
+                            yield update
+                finally:
+                    events.close()
 
             return self._build_response_stream(_stream(), response_format=options.get("response_format"))
 
         # Non-streaming mode
+        if guardrail_config := request.get("guardrailConfig"):
+            # streamProcessingMode is only valid for ConverseStream; Converse rejects requests that include it.
+            request["guardrailConfig"] = {k: v for k, v in guardrail_config.items() if k != "streamProcessingMode"}
+
         async def _get_response() -> ChatResponse:
             raw_response = await asyncio.to_thread(self._invoke_converse, request)
-            return self._process_converse_response(raw_response, options)
+            return self._process_converse_response(raw_response, options, model=request["modelId"])
 
         return _get_response()
 
@@ -429,7 +465,8 @@ class BedrockChatClient(
         if (top_p := options.get("top_p")) is not None:
             run_options["inferenceConfig"]["topP"] = top_p
         if (stop := options.get("stop")) is not None:
-            run_options["inferenceConfig"]["stopSequences"] = stop
+            # ChatOptions allows a single stop string; stopSequences takes a list.
+            run_options["inferenceConfig"]["stopSequences"] = [stop] if isinstance(stop, str) else stop
 
         tool_config = self._prepare_tools(options.get("tools"))
         if tool_mode := validate_tool_mode(options.get("tool_choice")):
@@ -461,6 +498,34 @@ class BedrockChatClient(
         if output_config := self._prepare_output_config(options.get("response_format")):
             run_options["outputConfig"] = output_config
 
+        for key in (
+            "additionalModelRequestFields",
+            "guardrailConfig",
+            "performanceConfig",
+            "requestMetadata",
+            "promptVariables",
+        ):
+            if (value := options.get(key)) is not None:
+                run_options[key] = value
+        # Per-call client kwargs (for example Bedrock-native fields passed through
+        # client_kwargs) join the request before the prompt-ARN cleanup so that
+        # branch still strips fields Converse rejects, mirroring the other clients.
+        run_options.update(kwargs)
+        if ":prompt/" in run_options["modelId"]:
+            # A Prompt Management ARN takes these fields from the prompt, and Converse rejects requests that set them.
+            if run_options["inferenceConfig"] == {"maxTokens": DEFAULT_MAX_TOKENS}:
+                del run_options["inferenceConfig"]  # only the client default, nothing the caller asked for
+            if omitted := [
+                key
+                for key in ("inferenceConfig", "system", "toolConfig", "additionalModelRequestFields")
+                if run_options.pop(key, None) is not None
+            ]:
+                logger.warning(
+                    "Converse does not accept %s with a Prompt Management prompt; they are omitted from the request. "
+                    "Define them on the prompt in Prompt Management instead.",
+                    ", ".join(omitted),
+                )
+
         return run_options
 
     def _prepare_bedrock_messages(
@@ -489,8 +554,11 @@ class BedrockChatClient(
                 )
             elif message.role == "tool":
                 content_blocks = self._align_tool_results_with_pending(content_blocks, pending_tool_use_ids)
-                pending_tool_use_ids.clear()
                 if not content_blocks:
+                    continue
+                # Merge consecutive tool messages into a single user message
+                if conversation and conversation[-1]["role"] == "user":
+                    conversation[-1]["content"].extend(content_blocks)
                     continue
             else:
                 pending_tool_use_ids.clear()
@@ -511,7 +579,6 @@ class BedrockChatClient(
             ]
 
         aligned_blocks: list[dict[str, Any]] = []
-        pending = deque(pending_tool_use_ids)
         for block in content_blocks:
             if not isinstance(block, MutableMapping):
                 aligned_blocks.append(block)
@@ -520,18 +587,18 @@ class BedrockChatClient(
             if not tool_result:
                 aligned_blocks.append(block)
                 continue
-            if not pending:
+            if not pending_tool_use_ids:
                 logger.debug("Dropping extra tool result block due to missing pending tool uses: %s", block)
                 continue
             tool_use_id = tool_result.get("toolUseId")
             if tool_use_id:
                 try:
-                    pending.remove(tool_use_id)
+                    pending_tool_use_ids.remove(tool_use_id)
                 except ValueError:
                     logger.debug("Tool result references unknown toolUseId '%s'. Dropping block.", tool_use_id)
                     continue
             else:
-                tool_result["toolUseId"] = pending.popleft()
+                tool_result["toolUseId"] = pending_tool_use_ids.popleft()
             aligned_blocks.append(block)
 
         return aligned_blocks
@@ -540,7 +607,11 @@ class BedrockChatClient(
         blocks: list[dict[str, Any]] = []
         for content in message.contents:
             block = self._convert_content_to_bedrock_block(content)
-            if block is None:
+            if (
+                block is None
+                or ("image" in block and message.role != "user")
+                or ("reasoningContent" in block and message.role != "assistant")
+            ):
                 logger.debug("Skipping unsupported content type for Bedrock: %s", type(content))
                 continue
             blocks.append(block)
@@ -550,6 +621,32 @@ class BedrockChatClient(
         match content.type:
             case "text":
                 return {"text": content.text}
+            case "data" if content.has_top_level_media_type("image"):
+                image_format = content.media_type.partition("/")[2].lower()
+                image_format = "jpeg" if image_format == "jpg" else image_format
+                if image_format not in ("gif", "jpeg", "png", "webp"):
+                    logger.warning("Skipping %s image: Bedrock accepts gif, jpeg, png or webp.", content.media_type)
+                    return None
+                return {"image": {"format": image_format, "source": {"bytes": _get_data_bytes(content)}}}
+            case "text_reasoning":
+                # Extended thinking with tool use requires reasoning blocks to be sent back unchanged.
+                if get_namespaced_value(
+                    content.additional_properties,
+                    _BEDROCK_ADDITIONAL_PROPS_NAMESPACE,
+                    _REDACTED_REASONING_KEY,
+                ) or content.additional_properties.get(_LEGACY_REDACTED_REASONING_KEY):
+                    try:
+                        redacted = base64.b64decode(content.protected_data or "", validate=True)
+                    except ValueError:
+                        logger.warning("Skipping redacted reasoning for Bedrock: protected_data is not valid base64")
+                        return None
+                    return {"reasoningContent": {"redactedContent": redacted}} if redacted else None
+                if content.text is None:
+                    return None
+                reasoning_text: dict[str, Any] = {"text": content.text}
+                if content.protected_data:
+                    reasoning_text["signature"] = content.protected_data
+                return {"reasoningContent": {"reasoningText": reasoning_text}}
             case "function_call":
                 arguments = content.parse_arguments() or {}
                 return {
@@ -648,10 +745,36 @@ class BedrockChatClient(
     def _generate_tool_call_id() -> str:
         return f"tool-call-{uuid4().hex}"
 
+    @staticmethod
+    def _generate_reasoning_id() -> str:
+        return f"reasoning-{uuid4().hex}"
+
+    @staticmethod
+    def _redacted_reasoning_content(
+        redacted: bytes,
+        *,
+        id: str,
+        raw_representation: Any,
+        merge_mode: Literal["append", "replace"] | None = None,
+    ) -> Content:
+        return Content.from_text_reasoning(
+            id=id,
+            protected_data=base64.b64encode(redacted).decode("utf-8"),
+            merge_mode=merge_mode,
+            additional_properties={
+                _BEDROCK_ADDITIONAL_PROPS_NAMESPACE: {_REDACTED_REASONING_KEY: True},
+                _LEGACY_REDACTED_REASONING_KEY: True,
+            },
+            raw_representation=raw_representation,
+        )
+
     def _process_converse_response(
-        self, response: dict[str, Any], options: Mapping[str, Any] | None = None
+        self, response: dict[str, Any], options: Mapping[str, Any] | None = None, *, model: str | None = None
     ) -> ChatResponse:
-        """Convert Bedrock Converse API response to ChatResponse."""
+        """Convert Bedrock Converse API response to ChatResponse.
+
+        Converse does not return the model id, so ``model`` should be the ``modelId`` the request was sent with.
+        """
         output = response.get("output") or {}
         message = output.get("message") or {}
         content_blocks = message.get("content") or []
@@ -661,7 +784,7 @@ class BedrockChatClient(
         usage_details = self._parse_usage(usage_source)
         finish_reason = self._map_finish_reason(output.get("completionReason") or response.get("stopReason"))
         response_id = response.get("responseId") or message.get("id")
-        model = response.get("modelId") or output.get("modelId") or self.model
+        model = response.get("modelId") or output.get("modelId") or model or self.model
         return ChatResponse(
             response_id=response_id,
             messages=[chat_message],
@@ -672,21 +795,106 @@ class BedrockChatClient(
             raw_representation=response,
         )
 
+    def _process_converse_stream_event(
+        self,
+        event: Mapping[str, Any],
+        model: str,
+        tool_call_ids: dict[int, str],
+        reasoning_blocks: dict[int, _StreamedReasoningBlock],
+    ) -> ChatResponseUpdate | None:
+        """Convert a single Bedrock ConverseStream event to a ChatResponseUpdate."""
+        contents: list[Content] = []
+        finish_reason = None
+        if block_start := event.get("contentBlockStart"):
+            if tool_use := block_start.get("start", {}).get("toolUse"):
+                tool_call_ids[block_start.get("contentBlockIndex", 0)] = tool_use["toolUseId"]
+                contents.append(
+                    Content.from_function_call(
+                        call_id=tool_use["toolUseId"],
+                        name=tool_use["name"],
+                        arguments="",
+                        merge_mode="append",
+                    )
+                )
+        elif block_delta := event.get("contentBlockDelta"):
+            delta = block_delta.get("delta", {})
+            if text_value := delta.get("text"):
+                contents.append(Content.from_text(text=text_value, merge_mode="append", raw_representation=delta))
+            elif tool_use_delta := delta.get("toolUse"):
+                contents.append(
+                    Content.from_function_call(
+                        call_id=tool_call_ids.get(block_delta.get("contentBlockIndex", 0), ""),
+                        name="",
+                        arguments=tool_use_delta.get("input", ""),
+                        merge_mode="append",
+                    )
+                )
+            elif reasoning_delta := delta.get("reasoningContent"):
+                # The deltas of one reasoning block share an id, so they merge into a single text_reasoning
+                # content in the final response while consecutive blocks keep their own text and signature.
+                block = reasoning_blocks.setdefault(
+                    block_delta.get("contentBlockIndex", 0),
+                    _StreamedReasoningBlock(id=self._generate_reasoning_id()),
+                )
+                if isinstance(redacted := reasoning_delta.get("redactedContent"), (bytes, bytearray)):
+                    # Merging keeps only the latest protected_data, so send everything received so far.
+                    block.redacted += bytes(redacted)
+                    contents.append(
+                        self._redacted_reasoning_content(
+                            block.redacted,
+                            id=block.id,
+                            raw_representation=delta,
+                            merge_mode="replace",
+                        )
+                    )
+                elif "text" in reasoning_delta or "signature" in reasoning_delta:
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=block.id,
+                            # "" rather than None, so a signed block without text is still replayed.
+                            text=reasoning_delta.get("text") or "",
+                            protected_data=reasoning_delta.get("signature"),
+                            merge_mode="append",
+                            raw_representation=delta,
+                        )
+                    )
+        elif message_stop := event.get("messageStop"):
+            finish_reason = self._map_finish_reason(message_stop.get("stopReason"))
+        elif (metadata := event.get("metadata")) and (usage_details := self._parse_usage(metadata.get("usage"))):
+            contents.append(Content.from_usage(usage_details=usage_details, merge_mode="replace"))
+        if not contents and finish_reason is None:
+            return None
+        return ChatResponseUpdate(
+            role="assistant", contents=contents, model=model, finish_reason=finish_reason, raw_representation=event
+        )
+
     def _parse_usage(self, usage: dict[str, Any] | None) -> UsageDetails | None:
         if not usage:
             return None
         details: UsageDetails = {}
-        if (input_tokens := usage.get("inputTokens")) is not None:
-            details["input_token_count"] = input_tokens
-        if (output_tokens := usage.get("outputTokens")) is not None:
+        input_tokens = usage.get("inputTokens")
+        output_tokens = usage.get("outputTokens")
+        cache_read = usage.get("cacheReadInputTokens")
+        cache_write = usage.get("cacheWriteInputTokens")
+        # Bedrock Converse reports these when prompt caching is active.
+        if cache_read is not None:
+            details["cache_read_input_token_count"] = cache_read
+        if cache_write is not None:
+            details["cache_creation_input_token_count"] = cache_write
+        # inputTokens covers only the uncached part when prompt caching is active;
+        # total input (and gen_ai.usage.input_tokens) must include cache tokens,
+        # matching other connectors and the GenAI semconv.
+        input_total = input_tokens
+        if cache_read is not None:
+            input_total = cache_read if input_total is None else input_total + cache_read
+        if cache_write is not None:
+            input_total = cache_write if input_total is None else input_total + cache_write
+        if input_total is not None:
+            details["input_token_count"] = input_total
+        if output_tokens is not None:
             details["output_token_count"] = output_tokens
         if (total_tokens := usage.get("totalTokens")) is not None:
             details["total_token_count"] = total_tokens
-        # Bedrock Converse reports these when prompt caching is active.
-        if (cache_read := usage.get("cacheReadInputTokens")) is not None:
-            details["cache_read_input_token_count"] = cache_read
-        if (cache_write := usage.get("cacheWriteInputTokens")) is not None:
-            details["cache_creation_input_token_count"] = cache_write
         return details or None
 
     def _parse_message_contents(self, content_blocks: Sequence[dict[str, Any]]) -> list[Any]:
@@ -699,6 +907,26 @@ class BedrockChatClient(
                 contents.append(
                     Content.from_text(text=json.dumps(json_value, ensure_ascii=False), raw_representation=block)
                 )
+                continue
+            if isinstance(reasoning := block.get("reasoningContent"), Mapping):
+                # Each block gets its own id so consecutive reasoning blocks are never merged into one.
+                if isinstance(reasoning_text := reasoning.get("reasoningText"), Mapping):
+                    contents.append(
+                        Content.from_text_reasoning(
+                            id=self._generate_reasoning_id(),
+                            text=reasoning_text.get("text") or "",
+                            protected_data=reasoning_text.get("signature"),
+                            raw_representation=block,
+                        )
+                    )
+                elif isinstance(redacted := reasoning.get("redactedContent"), (bytes, bytearray)):
+                    contents.append(
+                        self._redacted_reasoning_content(
+                            bytes(redacted), id=self._generate_reasoning_id(), raw_representation=block
+                        )
+                    )
+                else:
+                    logger.debug("Ignoring unsupported Bedrock reasoning block: %s", block)
                 continue
             tool_use_value = block.get("toolUse")
             tool_use = (

@@ -2,6 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using HyperlightSandbox.Api;
 using Microsoft.Agents.AI.Hyperlight.Internal;
 using Microsoft.Extensions.AI;
@@ -10,6 +13,204 @@ namespace Microsoft.Agents.AI.Hyperlight.UnitTests;
 
 public sealed class SandboxExecutorTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(250)]
+    [InlineData(4_294_967_294L)]
+    public void RunSnapshot_CapturesExecutionTimeout(long milliseconds)
+    {
+        // Arrange
+        var timeout = TimeSpan.FromMilliseconds(milliseconds);
+        var options = new HyperlightCodeActProviderOptions { ExecutionTimeout = timeout };
+
+        // Act
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        options.ExecutionTimeout = TimeSpan.FromSeconds(30);
+
+        // Assert
+        Assert.Equal(timeout, snapshot.ExecutionTimeout);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_InitializationFailureObeysPolicyAndReleasesLockAsync(bool includeDetailedErrors)
+    {
+        // Arrange
+        const string Detail = "synthetic-backend-diagnostic";
+        var options = new HyperlightCodeActProviderOptions
+        {
+            HeapSize = Detail,
+            IncludeDetailedErrors = includeDetailedErrors,
+        };
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act
+        var first = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+        var second = await executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token);
+
+        // Assert
+        foreach (var result in new[] { first, second })
+        {
+            using var json = JsonDocument.Parse(result);
+            Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(-1, json.RootElement.GetProperty("exit_code").GetInt32());
+            var error = json.RootElement.GetProperty("stderr").GetString()!;
+            Assert.Equal(includeDetailedErrors, error.Contains(Detail, StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains("   at ", StringComparison.Ordinal));
+            Assert.Equal(includeDetailedErrors, error.Contains(nameof(SandboxExecutor.ExecuteAsync), StringComparison.Ordinal));
+            if (!includeDetailedErrors)
+            {
+                Assert.Equal("Code execution failed.", error);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PreservesCancellationAsync()
+    {
+        // Arrange
+        var snapshot = new SandboxExecutor.RunSnapshot([], [], [], new HyperlightCodeActProviderOptions());
+        using var executor = new SandboxExecutor();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync(snapshot, "void 0;", cancellation.Token));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CancellationDuringGuestExecutionReleasesLockAsync()
+    {
+        // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
+        using var cancellation = new CancellationTokenSource();
+        var cancelRun = AIFunctionFactory.Create(() =>
+        {
+            cancellation.Cancel();
+            return "cancelled";
+        }, name: "cancel_run");
+        var snapshot = new SandboxExecutor.RunSnapshot(
+            [cancelRun], [], [], new HyperlightCodeActProviderOptions { IncludeDetailedErrors = true });
+        using var executor = new SandboxExecutor();
+        var warmup = await executor.ExecuteAsync(snapshot, "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => executor.ExecuteAsync(snapshot, "call_tool('cancel_run', {});", cancellation.Token));
+
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_DefaultTimeoutInterruptsGuestAndAllowsReuseAsync()
+    {
+        // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
+        var snapshot = new SandboxExecutor.RunSnapshot(
+            [], [], [], new HyperlightCodeActProviderOptions { IncludeDetailedErrors = true });
+        using var executor = new SandboxExecutor();
+        var warmup = await executor.ExecuteAsync(snapshot, "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        var result = await executor.ExecuteAsync(snapshot, """
+            const end = Date.now() + 32000;
+            while (Date.now() < end) {}
+            console.log('finished');
+            """, CancellationToken.None);
+
+        // Assert
+        using var json = JsonDocument.Parse(result);
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("Code execution exceeded its time limit.", json.RootElement.GetProperty("stderr").GetString());
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(31), "The default execution timeout was not enforced.");
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(snapshot, "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_ConfiguredTimeoutUsesSnapshotAndAllowsReuseAsync(bool useWasm)
+    {
+        // Arrange
+        Assert.SkipUnless(
+            string.Equals(Environment.GetEnvironmentVariable("HYPERLIGHT_RUN_GUEST_TESTS"), "true", StringComparison.OrdinalIgnoreCase),
+            "Requires explicit Hyperlight KVM guest-test configuration.");
+        var options = useWasm
+            ? HyperlightCodeActProviderOptions.CreateForWasm(
+                Assert.IsType<string>(Environment.GetEnvironmentVariable("HYPERLIGHT_PYTHON_GUEST_PATH")))
+            : new HyperlightCodeActProviderOptions();
+        using var executor = new SandboxExecutor();
+        var warmSnapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        var warmup = await executor.ExecuteAsync(warmSnapshot, useWasm ? "print('ready')" : "console.log('ready');", CancellationToken.None);
+        using var warmupJson = JsonDocument.Parse(warmup);
+        Assert.True(
+            warmupJson.RootElement.GetProperty("success").GetBoolean(),
+            warmupJson.RootElement.GetProperty("stderr").GetString());
+        options.ExecutionTimeout = TimeSpan.FromSeconds(1);
+        var limitedSnapshot = new SandboxExecutor.RunSnapshot([], [], [], options);
+        options.ExecutionTimeout = TimeSpan.FromSeconds(30);
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+
+        // Act
+        var result = await executor.ExecuteAsync(limitedSnapshot, useWasm ? """
+            import time
+            end = time.monotonic() + 5
+            while time.monotonic() < end:
+                pass
+            print('finished')
+            """ : """
+            const end = Date.now() + 5000;
+            while (Date.now() < end) {}
+            console.log('finished');
+            """, CancellationToken.None);
+
+        // Assert
+        using var json = JsonDocument.Parse(result);
+        Assert.False(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("Code execution exceeded its time limit.", json.RootElement.GetProperty("stderr").GetString());
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(2), "The captured execution timeout was not enforced.");
+        using var recoveryCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var recovered = await executor.ExecuteAsync(
+            warmSnapshot, useWasm ? "print('recovered')" : "console.log('recovered');", recoveryCancellation.Token)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        using var recoveredJson = JsonDocument.Parse(recovered);
+        Assert.True(
+            recoveredJson.RootElement.GetProperty("success").GetBoolean(),
+            recoveredJson.RootElement.GetProperty("stderr").GetString());
+        Assert.Contains("recovered", recoveredJson.RootElement.GetProperty("stdout").GetString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Fingerprint_DifferentToolSets_DifferentFingerprints()
     {
@@ -254,12 +455,15 @@ public sealed class SandboxExecutorTests
             [], [], [], hostInputDirectory: null, heapSize: "20Mi");
         var differentStack = SandboxExecutor.RunSnapshot.ComputeFingerprint(
             [], [], [], hostInputDirectory: null, stackSize: "10Mi");
+        var detailedErrors = SandboxExecutor.RunSnapshot.ComputeFingerprint(
+            [], [], [], hostInputDirectory: null, includeDetailedErrors: true);
 
         // Assert
         Assert.NotEqual(baseline, differentBackend);
         Assert.NotEqual(baseline, differentModule);
         Assert.NotEqual(baseline, differentHeap);
         Assert.NotEqual(baseline, differentStack);
+        Assert.NotEqual(baseline, detailedErrors);
     }
 
     [Fact]
@@ -285,6 +489,7 @@ public sealed class SandboxExecutorTests
             HeapSize = "10Mi",
             StackSize = "5Mi",
             HostInputDirectory = "/host/input",
+            IncludeDetailedErrors = true,
         };
 
         // Act
@@ -296,6 +501,7 @@ public sealed class SandboxExecutorTests
         options.HeapSize = "20Mi";
         options.StackSize = "10Mi";
         options.HostInputDirectory = "/host/other";
+        options.IncludeDetailedErrors = false;
 
         // Assert
         Assert.Single(snapshot.Tools);
@@ -305,6 +511,7 @@ public sealed class SandboxExecutorTests
         Assert.Equal("10Mi", snapshot.HeapSize);
         Assert.Equal("5Mi", snapshot.StackSize);
         Assert.Equal("/host/input", snapshot.HostInputDirectory);
+        Assert.True(snapshot.IncludeDetailedErrors);
     }
 
     [Fact]

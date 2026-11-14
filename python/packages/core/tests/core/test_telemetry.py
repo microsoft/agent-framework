@@ -202,7 +202,11 @@ def test_declared_feature_indexes_match_registry() -> None:
 
     declaration_files = [
         repository_root / "python" / "packages" / "core" / "agent_framework" / "_telemetry.py",
-        *repository_root.glob("python/packages/**/_feature_usage.py"),
+        *(
+            path
+            for path in repository_root.glob("python/packages/**/_feature_usage.py")
+            if "site-packages" not in path.relative_to(repository_root).parts
+        ),
     ]
     external_package_roots: dict[Path, Path] = {}
     # Their stable registry rows stay in this repository, but their declarations moved to the durable extension.
@@ -257,7 +261,8 @@ def test_declared_feature_indexes_match_registry() -> None:
         _, member_name = pair
         referenced = False
         for source_file in package_root.rglob("*.py"):
-            if source_file == declaration_file or "tests" in source_file.parts:
+            relative_parts = source_file.relative_to(package_root).parts
+            if source_file == declaration_file or "tests" in relative_parts or "site-packages" in relative_parts:
                 continue
             source_tree = ast.parse(source_file.read_text(encoding="utf-8"))
             if any(
@@ -341,6 +346,47 @@ def test_modifies_original_dict():
 
     assert result is headers  # Same object
     assert "User-Agent" in headers
+
+
+def test_prepend_to_lowercase_user_agent():
+    """Test prepending to an existing lowercase user-agent entry.
+
+    HTTP header names are case-insensitive, so callers may pass
+    ``user-agent`` instead of ``User-Agent``. The framework value must be
+    prepended to the existing entry rather than adding a second
+    User-Agent header alongside it.
+    """
+    headers = {"user-agent": "existing-agent/1.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+
+    user_agent_values = [value for key, value in result.items() if key.lower() == "user-agent"]
+    assert len(user_agent_values) == 1
+    assert user_agent_values[0].startswith("agent-framework-python/")
+    assert "existing-agent/1.0" in user_agent_values[0]
+
+
+def test_prepend_to_uppercase_user_agent():
+    """Test prepending to an all-caps USER-AGENT entry."""
+    headers = {"USER-AGENT": "existing-agent/2.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+
+    user_agent_values = [value for key, value in result.items() if key.lower() == "user-agent"]
+    assert len(user_agent_values) == 1
+    assert user_agent_values[0].startswith("agent-framework-python/")
+    assert "existing-agent/2.0" in user_agent_values[0]
+
+
+def test_no_duplicate_user_agent_after_prepend(monkeypatch):
+    """Test httpx sees a single User-Agent header after the prepend."""
+    import httpx
+
+    headers = {"user-agent": "existing-agent/1.0"}
+    result = prepend_agent_framework_to_user_agent(headers)
+    request = httpx.Request("GET", "https://example.com", headers=result)
+    raw_values = [value for name, value in request.headers.raw if name.lower() == b"user-agent"]
+
+    assert len(raw_values) == 1
+    assert raw_values[0].startswith(b"agent-framework-python/")
 
 
 # region Test _add_user_agent_prefix

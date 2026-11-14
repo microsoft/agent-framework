@@ -1,0 +1,16 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "process",
+			"command": "dotnet",
+			"group": "build",
+			"problemMatcher": [],
+			"label": "dotnet: build source and test solution filter",
+			"args": ["build", "agent-framework-src-and-tests.slnf"],
+			"options": {
+				"cwd": "${workspaceFolder}/dotnet"
+			}
+		}
+	]
+}

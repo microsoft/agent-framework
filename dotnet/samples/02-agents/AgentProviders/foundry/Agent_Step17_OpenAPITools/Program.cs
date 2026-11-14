@@ -2,8 +2,8 @@
 
 // This sample shows how to use OpenAPI Tools with AI Agents.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
-using Azure.AI.Projects.Agents;
 using Azure.Identity;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Foundry;
@@ -91,7 +91,7 @@ OpenApiFunctionDefinition CreateOpenAPIFunctionDefinition()
     return new(
         "get_exchange_rates",
         BinaryData.FromString(FrankfurterOpenApiSpec),
-        new OpenAPIAnonymousAuthenticationDetails())
+        new OpenApiAnonymousAuthenticationDetails())
     {
         Description = "Get live currency exchange rates from the European Central Bank via Frankfurter"
     };

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
-from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
 from functools import partial
@@ -18,6 +18,8 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
+    TypedDict,
     cast,
     overload,
     runtime_checkable,
@@ -46,36 +48,45 @@ from ._sessions import (
     SessionContext,
     _adopt_run_persistence_gate_claim,  # pyright: ignore[reportPrivateUsage]
     _defer_run_persistence,  # pyright: ignore[reportPrivateUsage]
+    _normalize_service_continuation,  # pyright: ignore[reportPrivateUsage]
     _run_identity_scope,  # pyright: ignore[reportPrivateUsage]
+    _set_service_continuation,  # pyright: ignore[reportPrivateUsage]
     is_local_history_conversation_id,
 )
 from ._telemetry import FeatureIndex, mark_feature_used
 from ._types import (
+    _EVALUATION_TOOLS_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentResponse,
     AgentResponseUpdate,
     AgentRunInputs,
     ChatResponse,
     ChatResponseUpdate,
+    ContinuationToken,
     Message,
     ResponseStream,
     _append_instructions,  # pyright: ignore[reportPrivateUsage]
     _build_agent_response_from_chat_response,  # pyright: ignore[reportPrivateUsage]
+    _capture_evaluation_tools,  # pyright: ignore[reportPrivateUsage]
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     map_chat_to_agent_update,
     normalize_messages,
 )
-from .exceptions import AgentInvalidRequestException, AgentInvalidResponseException, UserInputRequiredException
+from .exceptions import (
+    AgentInvalidRequestException,
+    AgentInvalidResponseException,
+    ToolExecutionException,
+    UserInputRequiredException,
+)
 from .observability import AgentTelemetryLayer
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import Self, TypedDict  # pragma: no cover
-else:
-    from typing_extensions import Self, TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
+    from collections.abc import Collection
+
     from mcp import types
     from mcp.server.lowlevel import Server
     from pydantic import BaseModel
@@ -95,6 +106,52 @@ logger = logging.getLogger("agent_framework")
 # nested ``agent.run()`` (fresh options, its own session) keeps its own turn,
 # and nothing leaks into the caller's context while a stream is paused.
 _LOOP_ITERATION_TOKEN_KEY = "_agent_loop_iteration"  # nosec B105 - a context-options key, not a credential  # ruff: ignore[hardcoded-password-string]
+_DELEGATED_STATE_MISSING = object()
+_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY = "_agent_framework_prepared_per_service_call_history"
+
+
+def _tool_approval_source_ids(middleware: Sequence[MiddlewareTypes] | None) -> frozenset[str]:
+    """Return session-state keys owned by ToolApprovalMiddleware instances."""
+    if not middleware:
+        return frozenset()
+
+    from ._harness._tool_approval import ToolApprovalMiddleware
+
+    return frozenset(item.source_id for item in middleware if isinstance(item, ToolApprovalMiddleware))
+
+
+def _provider_service_session_state_keys(agent: object) -> frozenset[str]:
+    """Return provider-owned session-state keys declared by an agent or its client."""
+    keys: set[str] = set()
+    # A generic Agent can use a provider client that persists its own continuation state.
+    for owner in (agent, getattr(agent, "client", None)):
+        declared = getattr(owner, "service_session_state_keys", ())
+        if isinstance(declared, (list, tuple, set, frozenset)):
+            keys.update(key for key in cast("Collection[Any]", declared) if isinstance(key, str))
+    return frozenset(keys)
+
+
+def _merge_delegated_session_state(
+    parent_state: MutableMapping[str, Any],
+    initial_child_state: Mapping[str, Any],
+    final_child_state: Mapping[str, Any],
+    *,
+    excluded_keys: frozenset[str],
+) -> None:
+    """Merge child application-state changes without copying framework continuation state."""
+    for key, initial_value in initial_child_state.items():
+        if key in excluded_keys or key in final_child_state:
+            continue
+        if parent_state.get(key, _DELEGATED_STATE_MISSING) is initial_value:
+            parent_state.pop(key, None)
+
+    for key, final_value in final_child_state.items():
+        if key in excluded_keys:
+            continue
+        initial_value = initial_child_state.get(key, _DELEGATED_STATE_MISSING)
+        if initial_value is _DELEGATED_STATE_MISSING or final_value is not initial_value:
+            parent_state[key] = final_value
+
 
 if TYPE_CHECKING:
     ResponseModelBoundT = TypeVar("ResponseModelBoundT", bound=BaseModel)
@@ -223,6 +280,7 @@ class _RunContext(TypedDict):
     agent_name: str
     suppress_response_id: bool
     chat_options: MutableMapping[str, Any]
+    evaluation_tools: dict[str, dict[str, Any]]
     compaction_strategy: CompactionStrategy | None
     tokenizer: TokenizerProtocol | None
     client_kwargs: Mapping[str, Any]
@@ -344,7 +402,8 @@ class SupportsAgentRun(Protocol):
             messages: The message(s) to send to the agent.
 
         Keyword Args:
-            stream: Whether to stream the response. Defaults to False.
+            stream: Whether to stream the response. Defaults to False. Streams
+                may include response metadata updates without message contents.
             session: The conversation session associated with the message(s).
             function_invocation_kwargs: Keyword arguments forwarded to tool invocation.
             client_kwargs: Additional client-specific keyword arguments.
@@ -624,11 +683,34 @@ class BaseAgent(SerializationMixin):
             approval_mode: Whether this delegated tool requires approval before execution.
             stream_callback: Optional callback for streaming responses. If provided, uses run(..., stream=True).
             propagate_session: If True, the parent agent's session is forwarded
-                to this sub-agent's ``run()`` call so both agents share the
-                same session. Defaults to False.
+                to this sub-agent's ``run()`` call. Application-state changes
+                propagate back to the parent, while framework approval continuation
+                state and provider-owned service session state remain isolated.
+                Defaults to False. The sub-agent always receives an AgentSession
+                so session-backed middleware can run. When False, that session is
+                private to this invocation.
 
         Returns:
             A FunctionTool that can be used as a tool by other agents.
+
+        Note:
+            Child function approvals are not propagated into the calling agent.
+            Configure ToolApprovalMiddleware with runtime auto-approval rules on
+            the child for immediate policy decisions. Use a workflow when approval
+            is interactive, delayed, or durable.
+
+            When parent and child both use ToolApprovalMiddleware with
+            ``propagate_session=True``, configure distinct middleware ``source_id``
+            values, whether the parent middleware is set on the agent or passed to a
+            single run. The delegated call raises ToolExecutionException before running
+            the child when their shared session-state keys overlap.
+
+            Direct or custom-loop invocation with ``propagate_session=True`` must set
+            :attr:`FunctionInvocationContext.parent_service_session_state_keys` when
+            the parent session is non-empty. Automatic function calling supplies it.
+
+            ``WorkflowAgent.as_tool()`` is not supported, because every caller of
+            the tool would share the state of one workflow.
 
         Examples:
             .. code-block:: python
@@ -676,39 +758,132 @@ class BaseAgent(SerializationMixin):
                 ctx: the function invocation context used
                 **kwargs: only used to dynamically load the argument that is defined for this tool.
             """
-            session = ctx.session if propagate_session else None
+            parent_session = ctx.session
+            session = AgentSession()
+            child_approval_source_ids = _tool_approval_source_ids(self.middleware)
+            parent_approval_source_ids: frozenset[str] = frozenset()
+            parent_service_session_state_keys: frozenset[str] = frozenset()
 
-            # Create a child session that shares the parent's state dict but has
-            # an isolated service_session_id. This avoids mutating the parent
-            # session in-place, which would race under concurrent asyncio.gather
-            # tool invocations sharing the same session.
-            if session is not None:
-                child_session = AgentSession(session_id=session.session_id)
-                child_session.state = session.state  # shared by reference
-                child_session.service_session_id = None
-                session = child_session
+            if propagate_session and parent_session is not None:
+                from ._tools import _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY  # pyright: ignore[reportPrivateUsage]
 
-            stream = self.run(
-                str(kwargs.get(arg_name, "")),
-                stream=True,
-                session=session,
-                function_invocation_kwargs=dict(ctx.kwargs),
-            )
-            if stream_callback is not None:
-                # The callback is a host-facing observer: feed it the *released*
-                # updates by consuming the stream, never by registering a transform
-                # hook on it. Hooks can end up applied to buffered content ahead of an
-                # egress gate's verdict (see ResponseStream.buffered_and_gated), so a
-                # hook-registered observer could see denied or unredacted content.
-                async for update in stream:
-                    callback_result = stream_callback(update)
-                    if isawaitable(callback_result):
-                        await callback_result
-            final_response = await stream.get_final_response()
-            if final_response.user_input_requests:
-                raise UserInputRequiredException(contents=final_response.user_input_requests)
-            # TODO(Copilot): update once #4331 merges
-            return final_response.text
+                # A custom loop can bypass the framework seam that identifies the parent provider's state.
+                # Refuse a non-empty shared session rather than guessing which keys are safe to delegate.
+                if ctx.parent_service_session_state_keys is None:
+                    if parent_session.state:
+                        raise ToolExecutionException(
+                            f"Agent tool {tool_name!r} cannot safely propagate a non-empty parent session because "
+                            "the invocation path did not provide parent provider-owned session state keys. "
+                            "Use the automatic function-calling loop, set "
+                            "FunctionInvocationContext.parent_service_session_state_keys in a custom loop, "
+                            "or set propagate_session=False."
+                        )
+                else:
+                    parent_service_session_state_keys = ctx.parent_service_session_state_keys
+                raw_parent_approval_source_ids = ctx.metadata.get(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY)
+                parent_approval_source_ids = (
+                    cast("frozenset[str]", raw_parent_approval_source_ids)
+                    if isinstance(raw_parent_approval_source_ids, frozenset)
+                    else frozenset()
+                )
+                overlapping_source_ids = child_approval_source_ids.intersection(parent_approval_source_ids)
+                if overlapping_source_ids:
+                    formatted_source_ids = ", ".join(repr(source_id) for source_id in sorted(overlapping_source_ids))
+                    raise ToolExecutionException(
+                        f"Agent tool {tool_name!r} cannot share its parent session because parent and child "
+                        f"ToolApprovalMiddleware instances use the same source_id: {formatted_source_ids}. "
+                        "Configure distinct source_id values or set propagate_session=False."
+                    )
+
+            parent_state: MutableMapping[str, Any] | None = None
+            initial_child_state: dict[str, Any] | None = None
+            excluded_state_keys: frozenset[str] = frozenset()
+
+            # Propagate application state through a child-owned copy. Framework
+            # approval continuation state stays isolated so an unresolved child
+            # request can never become pending authority in the parent session.
+            if propagate_session and parent_session is not None:
+                from ._tools import (
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                    _TOOL_APPROVAL_STATE_KEY,  # pyright: ignore[reportPrivateUsage]
+                )
+
+                excluded_state_keys = frozenset({
+                    _TOOL_APPROVAL_STATE_KEY,
+                    _FUNCTION_INVOCATION_BUDGET_STATE_KEY,
+                    _FUNCTION_RESULT_PAYLOAD_BUDGET_STATE_KEY,
+                    # Service handles belong to one agent's remote resources, not shared application state.
+                    # Exclude them in both directions so later children cannot inherit an earlier child's handles.
+                    *_provider_service_session_state_keys(self),
+                    *parent_service_session_state_keys,
+                    *child_approval_source_ids,
+                    *parent_approval_source_ids,
+                })
+                parent_state = parent_session.state
+                child_state = {key: value for key, value in parent_state.items() if key not in excluded_state_keys}
+                initial_child_state = dict(child_state)
+                session = AgentSession(session_id=parent_session.session_id)
+                session.state = child_state
+
+            try:
+                stream = self.run(
+                    str(kwargs.get(arg_name, "")),
+                    stream=True,
+                    session=session,
+                    function_invocation_kwargs=dict(ctx.kwargs),
+                )
+                if stream_callback is not None:
+                    # The callback is a host-facing observer: feed it the *released*
+                    # updates by consuming the stream, never by registering a transform
+                    # hook on it. Hooks can end up applied to buffered content ahead of an
+                    # egress gate's verdict, so a
+                    # hook-registered observer could see denied or unredacted content.
+                    async for update in stream:
+                        callback_result = stream_callback(update)
+                        if isawaitable(callback_result):
+                            await callback_result
+                final_response = await stream.get_final_response()
+                approval_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type == "function_approval_request"
+                ]
+                other_input_requests = [
+                    request
+                    for request in final_response.user_input_requests
+                    if request.type != "function_approval_request"
+                ]
+                if approval_requests:
+                    requested_tools = sorted(
+                        {
+                            request.function_call.name or "<unknown>"
+                            for request in approval_requests
+                            if request.function_call is not None
+                        }
+                        or {"<unknown>"}
+                    )
+                    approval_error = (
+                        f"Agent tool {tool_name!r} cannot continue because its sub-agent requested approval for "
+                        f"{', '.join(requested_tools)}. Configure ToolApprovalMiddleware with auto_approval_rules on "
+                        "the sub-agent for immediate policy decisions. Use a workflow for interactive, delayed, or "
+                        "durable approval."
+                    )
+                    if other_input_requests:
+                        raise UserInputRequiredException(contents=other_input_requests, message=approval_error)
+                    raise ToolExecutionException(approval_error)
+                if other_input_requests:
+                    raise UserInputRequiredException(contents=other_input_requests)
+                # TODO(Copilot): update once #4331 merges
+                return final_response.text
+            finally:
+                if parent_state is not None and initial_child_state is not None:
+                    _merge_delegated_session_state(
+                        parent_state,
+                        initial_child_state,
+                        session.state,
+                        excluded_keys=excluded_state_keys,
+                    )
 
         from ._tools import FunctionTool
 
@@ -718,6 +893,8 @@ class BaseAgent(SerializationMixin):
             func=_agent_wrapper,
             input_model=input_schema,
             approval_mode=approval_mode,
+            # Private link for hosts that must know which agent a tool delegates to. Serialization skips it.
+            _wrapped_agent=self,
         )
 
 
@@ -767,8 +944,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 name="weather-agent",
                 instructions="You are a weather assistant.",
                 tools=get_weather,
-                temperature=0.7,
-                max_tokens=500,
+                default_options={"temperature": 0.7, "max_tokens": 500},
             )
 
             # Use streaming responses
@@ -787,20 +963,30 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             client = OpenAIChatClient(model="gpt-4o")
             agent: Agent[OpenAIChatOptions] = Agent(
                 client=client,
-                name="reasoning-agent",
-                instructions="You are a reasoning assistant.",
-                options={
+                name="typed-agent",
+                instructions="You are a helpful assistant.",
+                default_options={
                     "temperature": 0.7,
                     "max_tokens": 500,
-                    "reasoning_effort": "high",  # OpenAI-specific, IDE will autocomplete!
+                    "include": ["message.output_text.logprobs"],  # OpenAI-specific option
                 },
             )
 
-            # Or pass options at runtime
+            # Or override default options at runtime
             response = await agent.run(
                 "What is 25 * 47?",
-                options={"temperature": 0.0, "logprobs": True},
+                options={"temperature": 0.0},
             )
+
+        Explicit resource management (equivalent to ``async with agent``):
+
+        .. code-block:: python
+
+            await agent.open()
+            try:
+                response = await agent.run("Hello")
+            finally:
+                await agent.close()
     """
 
     AGENT_PROVIDER_NAME: ClassVar[str] = "microsoft.agent_framework"
@@ -822,7 +1008,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance.
+        """Initialize an Agent instance.
 
         Args:
             client: The chat client to use for the agent.
@@ -924,51 +1110,63 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         self._async_exit_stack = AsyncExitStack()
         self._update_agent_name_and_description()
 
-    async def __aenter__(self) -> Self:
-        """Enter the async context manager.
+    async def open(self) -> Self:
+        """Open the client's and configured MCP tools' async contexts.
 
-        If any of the client or local_mcp_tools are context managers,
-        they will be entered into the async exit stack to ensure proper cleanup.
-
-        Note:
-            This list might be extended in the future.
+        Call ``await agent.close()`` when finished, or use ``async with agent``
+        to open and close automatically. Already-entered contexts are closed if
+        a later context fails to open.
 
         Returns:
-            The Agent instance.
+            The agent instance.
         """
-        for context_manager in chain([self.client], self.mcp_tools):
-            if isinstance(context_manager, AbstractAsyncContextManager):
-                await self._async_exit_stack.enter_async_context(context_manager)
+        try:
+            for context_manager in chain([self.client], self.mcp_tools):
+                if isinstance(context_manager, AbstractAsyncContextManager):
+                    await self._async_exit_stack.enter_async_context(context_manager)
+        except BaseException:
+            await self.close()
+            raise
         return self
+
+    async def __aenter__(self) -> Self:
+        """Enter the async context manager by opening managed resources."""
+        return await self.open()
 
     def _get_history_providers(self) -> list[HistoryProvider]:
         return [provider for provider in self.context_providers if isinstance(provider, HistoryProvider)]
 
+    def _service_continuation_option_names(self) -> tuple[str, ...]:
+        """Return the client-declared options that activate service continuation."""
+        declared = getattr(self.client, "SERVICE_CONTINUATION_OPTION_NAMES", ("conversation_id",))
+        if not isinstance(declared, Sequence) or isinstance(declared, (str, bytes, bytearray)):
+            return ("conversation_id",)
+        names = tuple(name for name in cast(Sequence[Any], declared) if isinstance(name, str))
+        return names or ("conversation_id",)
+
     def _resolve_per_service_call_history_providers(
         self,
         *,
-        session: AgentSession | None,
-        conversation_id: str | None,
+        service_continuation_present: bool,
         service_stores_history: bool,
     ) -> list[HistoryProvider]:
         history_providers = self._get_history_providers()
         if not self.require_per_service_call_history_persistence or not history_providers:
             return []
 
-        # A live service-managed session id takes precedence over the resolved conversation id.
-        # Structured values are validated by _get_chat_conversation_id before generic forwarding.
-        session_conversation_id = self._get_chat_conversation_id(session)
-        if session_conversation_id:
-            conversation_id = session_conversation_id
         # Without service-side storage the middleware persists locally and drives the function
         # loop with a local sentinel, which cannot be reconciled with an existing service-managed
         # conversation. When the service stores history, an existing conversation id is expected.
-        if conversation_id is not None and not service_stores_history:
+        if service_continuation_present and not service_stores_history:
             raise AgentInvalidRequestException(
                 "require_per_service_call_history_persistence cannot be used "
                 "with an existing service-managed conversation."
             )
         return history_providers
+
+    async def close(self) -> None:
+        """Close managed client and MCP contexts, including lazily opened MCP tools."""
+        await self._async_exit_stack.aclose()
 
     async def __aexit__(
         self,
@@ -976,16 +1174,8 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
-        """Exit the async context manager.
-
-        Close the async exit stack to ensure all context managers are exited properly.
-
-        Args:
-            exc_type: The exception type if an exception was raised, None otherwise.
-            exc_val: The exception value if an exception was raised, None otherwise.
-            exc_tb: The exception traceback if an exception was raised, None otherwise.
-        """
-        await self._async_exit_stack.aclose()
+        """Exit the async context manager by closing managed resources."""
+        await self.close()
 
     def _update_agent_name_and_description(self) -> None:
         """Update the agent name in the chat client.
@@ -1192,6 +1382,32 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         ):
             session.service_session_id = response.conversation_id
 
+    def _refresh_service_continuation_context(
+        self,
+        context: _RunContext,
+        continuation_token: ContinuationToken | None = None,
+    ) -> None:
+        """Synchronize provider metadata with the continuation used by the completed run."""
+        options = dict(context["chat_options"])
+        session = context["session"]
+        conversation_id = self._get_chat_conversation_id(session)
+        continuation_option_names = self._service_continuation_option_names()
+        if continuation_token is not None and "continuation_token" in continuation_option_names:
+            for option_name in continuation_option_names:
+                options.pop(option_name, None)
+            options["continuation_token"] = continuation_token
+        elif conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    options.pop(option_name, None)
+            options["conversation_id"] = conversation_id
+        session_context = context["session_context"]
+        session_context.service_session_id = session.service_session_id if session is not None else None
+        _set_service_continuation(
+            session_context,
+            _normalize_service_continuation(continuation_option_names, options),
+        )
+
     def _update_session_from_chat_response_update(
         self,
         session: AgentSession | None,
@@ -1225,12 +1441,14 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         session = context["session"]
         self._update_session_from_chat_response(session, response)
+        self._refresh_service_continuation_context(context, response.continuation_token)
 
         agent_response = _build_agent_response_from_chat_response(
             response,
             response_format=context["chat_options"].get("response_format"),
             suppress_response_id=context["suppress_response_id"],
         )
+        agent_response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
         session_context = context["session_context"]
         session_context._response = agent_response  # type: ignore[assignment]
         await self._run_after_providers(session=session, context=session_context)
@@ -1263,10 +1481,12 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 and session.service_session_id != conversation_id
             ):
                 session.service_session_id = conversation_id
+            self._refresh_service_continuation_context(context, response.continuation_token)
 
             session_context = context["session_context"]
             if context["suppress_response_id"]:
                 response.response_id = None
+            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY] = context["evaluation_tools"]
             session_context._response = response  # type: ignore[assignment]
             # Result hooks run during finalization, outside the per-pull identity
             # scope registered below, so re-stamp this run's identity around its
@@ -1307,7 +1527,28 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # carries this run's identity; nested runs re-stamp their own within theirs.
         stream = stream.with_pull_context_manager(partial(_run_identity_scope, run_identity))
 
-        return stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+        stream = stream.with_transform_hook(_propagate_conversation_id).with_result_hook(_post_hook)
+
+        async def _with_evaluation_metadata() -> AsyncIterable[AgentResponseUpdate]:
+            async with stream:
+                async for update in stream:
+                    yield update
+                response = await stream.get_final_response()
+                metadata_update = AgentResponseUpdate(
+                    continuation_token=response.continuation_token,
+                    additional_properties={
+                        _EVALUATION_TOOLS_METADATA_KEY: deepcopy(
+                            response.additional_properties[_EVALUATION_TOOLS_METADATA_KEY]
+                        )
+                    },
+                )
+                _copy_operation_state(response, metadata_update)
+                yield metadata_update
+
+        async def _finalize_with_metadata(updates: Sequence[AgentResponseUpdate]) -> AgentResponse[Any]:
+            return await stream.get_final_response()
+
+        return ResponseStream(_with_evaluation_metadata(), finalizer=_finalize_with_metadata)
 
     def _finalize_response_updates(
         self,
@@ -1316,6 +1557,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         response_format: Any | None = None,
     ) -> AgentResponse[Any]:
         """Finalize response updates into a single AgentResponse."""
+        if isinstance(self.client, BaseChatClient):
+            return self.client._finalize_agent_response_updates(  # pyright: ignore[reportPrivateUsage]
+                updates, response_format=response_format
+            )
         return AgentResponse.from_updates(
             updates,
             output_format_type=response_format,
@@ -1389,8 +1634,33 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         )
         # Resolve conversation_id from the same combined view so an agent-level default is honored
         # when the runtime omits it (a live session id still takes precedence below).
-        effective_conversation_id = effective_options.get("conversation_id")
+        effective_conversation_id = cast(str | None, effective_options.get("conversation_id"))
         session_conversation_id = self._get_chat_conversation_id(session)
+        resolved_conversation_id = (
+            session_conversation_id if session_conversation_id is not None else effective_conversation_id
+        )
+        continuation_option_names = self._service_continuation_option_names()
+        continuation_token_present = (
+            "continuation_token" in continuation_option_names
+            and effective_options.get("continuation_token") is not None
+        )
+        if continuation_token_present:
+            resolved_conversation_id = None
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    effective_options.pop(option_name, None)
+                    opts.pop(option_name, None)
+        elif resolved_conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    effective_options.pop(option_name, None)
+                    opts.pop(option_name, None)
+            effective_options["conversation_id"] = resolved_conversation_id
+        service_continuation = _normalize_service_continuation(
+            continuation_option_names,
+            effective_options,
+        )
+        opts.pop("conversation_id", None)
         # Auto-inject InMemoryHistoryProvider when session is provided, no context providers
         # registered, and no service-side storage indicators
         if (
@@ -1398,11 +1668,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             and not any(
                 provider.load_messages for provider in self.context_providers if isinstance(provider, HistoryProvider)
             )
-            and not session_conversation_id
-            and not effective_conversation_id
+            and not service_continuation[0]
             and not service_stores_history
         ):
-            self.context_providers.append(InMemoryHistoryProvider())
+            self.context_providers.insert(0, InMemoryHistoryProvider())
 
         active_session = session
         framework_created_session = False
@@ -1411,8 +1680,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             framework_created_session = True
 
         per_service_call_history_providers = self._resolve_per_service_call_history_providers(
-            session=active_session,
-            conversation_id=effective_conversation_id,
+            service_continuation_present=service_continuation[0],
             service_stores_history=service_stores_history,
         )
 
@@ -1440,7 +1708,18 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session=active_session,
             input_messages=input_messages,
             options=opts,
+            conversation_id=resolved_conversation_id,
+            service_stores_history=bool(service_stores_history),
+            service_continuation=service_continuation,
         )
+        if continuation_token_present:
+            for option_name in continuation_option_names:
+                if option_name != "continuation_token":
+                    chat_options.pop(option_name, None)
+        elif resolved_conversation_id is not None:
+            for option_name in continuation_option_names:
+                if option_name != "conversation_id":
+                    chat_options.pop(option_name, None)
         default_additional_args = chat_options.pop("additional_function_arguments", None)
         if isinstance(default_additional_args, Mapping):
             existing_additional_args = {
@@ -1450,6 +1729,10 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         agent_name = self._get_agent_name()
         from ._mcp import MCPTool
+        from ._tools import (
+            _PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+            _PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY,  # pyright: ignore[reportPrivateUsage]
+        )
 
         base_tools = _normalize_tools(chat_options.pop("tools", None))
         mcp_duplicate_message = "Tool names must be unique. Consider setting `tool_name_prefix` on the MCPTool."
@@ -1460,6 +1743,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # Extract additional function arguments
         effective_function_invocation_kwargs = (
             dict(function_invocation_kwargs) if function_invocation_kwargs is not None else {}
+        )
+        # Approval middleware that runs for this invocation claims its session-state key here. Keep the claim out of
+        # the kwargs that MCP header providers and tools can read. As for the other readers of this private channel,
+        # only a frozenset is a claim; any other value is no claim.
+        claim = effective_function_invocation_kwargs.pop(_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY, None)
+        claimed_approval_source_ids: frozenset[str] = (
+            cast("frozenset[str]", claim) if isinstance(claim, frozenset) else frozenset()
         )
         additional_function_arguments = {**effective_function_invocation_kwargs, **existing_additional_args}
 
@@ -1494,13 +1784,20 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 duplicate_error_message=mcp_duplicate_message,
             )
 
+        # Claims only add isolated keys; they never remove keys declared by this agent's own middleware.
+        additional_function_arguments[_PARENT_TOOL_APPROVAL_SOURCE_IDS_CONTEXT_KEY] = (
+            _tool_approval_source_ids(self.middleware) | claimed_approval_source_ids
+        )
+        # Recompute ownership for this invoking agent; caller kwargs must not replace its declarations.
+        additional_function_arguments[_PARENT_SERVICE_SESSION_STATE_KEYS_CONTEXT_KEY] = (
+            _provider_service_session_state_keys(self)
+        )
+
         model = opts.pop("model", None)
 
         # Build options dict from run() options merged with provided options
         run_opts: dict[str, Any] = {
-            "conversation_id": self._get_chat_conversation_id(active_session)
-            if active_session
-            else opts.pop("conversation_id", None),
+            "conversation_id": resolved_conversation_id,
             "allow_multiple_tool_calls": opts.pop("allow_multiple_tool_calls", None),
             "frequency_penalty": opts.pop("frequency_penalty", None),
             "logit_bias": opts.pop("logit_bias", None),
@@ -1527,8 +1824,13 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         # scoping, but it is framework-private metadata and must not reach the client.
         co.pop(_LOOP_ITERATION_TOKEN_KEY, None)
 
-        # Build session_messages from session context: context messages + input messages
-        session_messages: list[Message] = session_context.get_messages(include_input=True)
+        # Build the first model input from the exact prepared history snapshot, when present.
+        prepared_history_context = session_context.metadata.get(_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY)
+        session_messages: list[Message] = (
+            prepared_history_context.get_messages(include_input=True)
+            if isinstance(prepared_history_context, SessionContext)
+            else session_context.get_messages(include_input=True)
+        )
 
         effective_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
         from ._tools import _APPROVAL_SESSION_IS_AUTHORITATIVE_KEY  # pyright: ignore[reportPrivateUsage]
@@ -1543,8 +1845,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 agent=self,
                 session=active_session,
                 providers=per_service_call_history_providers,
+                run_context=session_context,
                 service_stores_history=service_stores_history,
+                prepared_context=(
+                    prepared_history_context if isinstance(prepared_history_context, SessionContext) else None
+                ),
+                service_continuation_option_names=continuation_option_names,
             )
+        if per_service_call_history_middleware is not None:
+            existing_middleware = cast(
+                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
+            )
+            effective_client_kwargs["middleware"] = [
+                *_as_middleware_list(existing_middleware),
+                per_service_call_history_middleware,
+            ]
+
         provider_middleware = session_context.get_middleware()
         if provider_middleware:
             # Providers may only contribute chat/function middleware (enforced by
@@ -1564,14 +1880,11 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                     *provider_function_chat_middleware,
                 ]
 
-        if per_service_call_history_middleware is not None:
-            existing_middleware = cast(
-                "MiddlewareTypes | Sequence[MiddlewareTypes] | None", effective_client_kwargs.get("middleware")
-            )
-            effective_client_kwargs["middleware"] = [
-                *_as_middleware_list(existing_middleware),
-                per_service_call_history_middleware,
-            ]
+        evaluation_tools: dict[str, dict[str, Any]] = {}
+        if isinstance(self.client, BaseChatClient):
+            effective_client_kwargs["_evaluation_tool_capture"] = partial(_capture_evaluation_tools, evaluation_tools)
+        else:
+            _capture_evaluation_tools(evaluation_tools, co.get("tools"))
 
         return {
             "session": active_session,
@@ -1581,6 +1894,7 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             "agent_name": agent_name,
             "suppress_response_id": bool(per_service_call_history_providers) and not service_stores_history,
             "chat_options": co,
+            "evaluation_tools": evaluation_tools,
             "compaction_strategy": compaction_strategy or self.compaction_strategy,
             "tokenizer": tokenizer or self.tokenizer,
             "client_kwargs": effective_client_kwargs,
@@ -1593,6 +1907,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         session: AgentSession | None,
         input_messages: list[Message] | None = None,
         options: dict[str, Any] | None = None,
+        conversation_id: str | None = None,
+        service_stores_history: bool = False,
+        service_continuation: tuple[bool, str | None] = (False, None),
     ) -> tuple[SessionContext, dict[str, Any]]:
         """Prepare the session context and messages for agent execution.
 
@@ -1603,6 +1920,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
             session: The conversation session (None for stateless invocation).
             input_messages: Messages to process.
             options: Runtime options dict (already copied, safe to mutate).
+            conversation_id: Effective provider conversation identity after session/default/runtime precedence.
+            service_stores_history: Whether the service owns history for this run.
+            service_continuation: Whether service history is resumed and its normalized identity.
 
         Returns:
             A tuple containing:
@@ -1624,24 +1944,32 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         if provider_session is None and self.context_providers:
             provider_session = AgentSession()
 
+        context_options = dict(options or {})
+        if conversation_id is not None:
+            context_options["conversation_id"] = conversation_id
+        if not service_continuation[0]:
+            service_continuation = _normalize_service_continuation(
+                self._service_continuation_option_names(),
+                _merge_options(self.default_options, context_options),
+            )
         session_context = SessionContext(
             session_id=provider_session.session_id if provider_session else None,
             service_session_id=provider_session.service_session_id if provider_session else None,
             input_messages=input_messages or [],
-            options=options or {},
+            options=context_options,
         )
+        _set_service_continuation(session_context, service_continuation)
 
-        # When per-service-call persistence is enabled, the per-service-call middleware owns
-        # HistoryProvider loading (it loads locally when the service does not store history, or
-        # relies on the service when it does), so skip them on the once-per-run before_run path.
+        # Per-service-call persistence owns later reloads and every write. The first local
+        # snapshot is prepared here; service-owned history is not loaded from local providers.
         per_service_call_history_required = self.require_per_service_call_history_persistence and bool(
             self._get_history_providers()
         )
 
-        # Run before_run providers (forward order, skip HistoryProvider when per-service-call
-        # persistence owns loading)
+        # Run providers in declared order. Service-owned history remains remote; local
+        # per-service-call history is loaded here and reused by the first service call.
         for provider in self.context_providers:
-            if per_service_call_history_required and isinstance(provider, HistoryProvider):
+            if per_service_call_history_required and service_stores_history and isinstance(provider, HistoryProvider):
                 continue
             if isinstance(provider, HistoryProvider) and not provider.load_messages:
                 continue
@@ -1653,6 +1981,23 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 context=session_context,
                 state=provider_session.state.setdefault(provider.source_id, {}),
             )
+
+        if per_service_call_history_required and not service_stores_history:
+            if provider_session is None:
+                raise RuntimeError("Provider session must be available when local history is prepared.")
+            prepared_context = SessionContext(
+                session_id=provider_session.session_id,
+                service_session_id=provider_session.service_session_id,
+                input_messages=session_context.input_messages.copy(),
+                context_messages={
+                    source_id: messages.copy() for source_id, messages in session_context.context_messages.items()
+                },
+                instructions=session_context.instructions.copy(),
+                tools=session_context.tools.copy(),
+                options=session_context.options.copy(),
+                metadata=session_context.metadata,
+            )
+            session_context.metadata[_PREPARED_PER_SERVICE_CALL_HISTORY_CONTEXT_KEY] = prepared_context
 
         # Merge provider-contributed tools into chat_options
         if session_context.tools:
@@ -1694,8 +2039,9 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
         """
         try:
             from mcp import types
+            from mcp.server import ServerRequestContext
             from mcp.server.lowlevel import Server
-            from mcp.shared.exceptions import McpError
+            from mcp.shared.exceptions import MCPError
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "`mcp` is required to use `Agent.as_mcp_server()`. Please install `mcp`."
@@ -1704,55 +2050,57 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
 
         server_args: dict[str, Any] = {
             "name": server_name,
-            "version": version,
             "instructions": instructions,
         }
+
+        if version is not None:
+            server_args["version"] = version
+
         if lifespan:
             server_args["lifespan"] = lifespan
         if kwargs:
             server_args.update(kwargs)
 
-        server: Server[Any] = Server(**server_args)
-
         agent_tool = self.as_tool(name=self._get_agent_name())
 
-        async def _log(level: types.LoggingLevel, data: Any) -> None:
-            """Log a message to the server and logger."""
-            # Log to the local logger
+        async def _log(ctx: ServerRequestContext[dict[str, Any]], level: types.LoggingLevel, data: Any) -> None:
+            """Log locally and forward through the session handling this request."""
             logger.log(LOG_LEVEL_MAPPING[level], data)
-            if server and server.request_context and server.request_context.session:
-                try:
-                    await server.request_context.session.send_log_message(level=level, data=data)
-                except Exception as e:
-                    logger.error("Failed to send log message to server: %s", e)
+            try:
+                await ctx.session.send_log_message(  # pyright: ignore[reportDeprecated]
+                    level=level,
+                    data=data,
+                )
+            except Exception as exc:
+                logger.error("Failed to send log message to MCP client: %s", exc)
 
-        @server.list_tools()
-        async def _list_tools() -> list[types.Tool]:
+        async def _list_tools(
+            ctx: ServerRequestContext[dict[str, Any]], _params: types.PaginatedRequestParams | None
+        ) -> types.ListToolsResult:
             """List all tools in the agent."""
             schema = agent_tool.parameters()
 
             tool = types.Tool(
                 name=agent_tool.name,
                 description=agent_tool.description,
-                inputSchema=schema,
+                input_schema=schema,
             )
 
-            await _log(level="debug", data=f"Agent tool: {agent_tool}")
-            return [tool]
+            await _log(ctx, level="debug", data=f"Agent tool: {agent_tool}")
+            return types.ListToolsResult(tools=[tool])
 
-        @server.call_tool()
         async def _call_tool(
-            name: str, arguments: dict[str, Any]
-        ) -> Sequence[types.TextContent | types.ImageContent | types.AudioContent | types.EmbeddedResource]:
+            ctx: ServerRequestContext[dict[str, Any]], params: types.CallToolRequestParams
+        ) -> types.CallToolResult:
             """Call a tool in the agent."""
-            await _log(level="debug", data=f"Calling tool with args: {arguments}")
+            arguments = params.arguments or {}
+            name = params.name
+            await _log(ctx, level="debug", data=f"Calling tool with args: {arguments}")
 
             if name != agent_tool.name:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Tool {name} not found",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Tool {name} not found",
                 )
 
             # Create an instance of the input model with the arguments
@@ -1762,17 +2110,15 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                 )
                 result = await agent_tool.invoke(arguments=args_instance)
             except Exception as e:
-                raise McpError(
-                    error=types.ErrorData(
-                        code=types.INTERNAL_ERROR,
-                        message=f"Error calling tool {name}: {e}",
-                    ),
+                raise MCPError(
+                    code=types.INTERNAL_ERROR,
+                    message=f"Error calling tool {name}: {e}",
                 ) from e
 
             # Convert result to MCP content.
             # Currently only text items are forwarded over MCP; rich content
             # (images, audio) is not yet supported in the MCP server path.
-            mcp_content: list[types.TextContent | types.ImageContent | types.EmbeddedResource] = []
+            mcp_content: list[types.ContentBlock] = []
             for c in result:
                 if c.type == "text" and c.text:
                     mcp_content.append(types.TextContent(type="text", text=c.text))
@@ -1781,15 +2127,22 @@ class RawAgent(BaseAgent, Generic[OptionsCoT]):
                         "MCP server does not yet forward rich content (images, audio) "
                         "in tool results. Rich content items will be omitted."
                     )
-            return mcp_content or [types.TextContent(type="text", text="")]
+            return types.CallToolResult(content=mcp_content)
 
-        @server.set_logging_level()
-        async def _set_logging_level(level: types.LoggingLevel) -> None:
-            """Set the logging level for the server."""
-            logger.setLevel(LOG_LEVEL_MAPPING[level])
-            # emit this log with the new minimum level
-            await _log(level=level, data=f"Log level set to {level}")
+        async def _set_logging_level(
+            ctx: ServerRequestContext[dict[str, Any]], params: types.SetLevelRequestParams
+        ) -> types.EmptyResult:
+            """Set the local threshold and confirm it through the requesting MCP session."""
+            logger.setLevel(LOG_LEVEL_MAPPING[params.level])
+            await _log(ctx, level=params.level, data=f"Log level set to {params.level}")
+            return types.EmptyResult()
 
+        server: Server[Any] = Server(  # pyright: ignore[reportDeprecated]
+            **server_args,
+            on_list_tools=_list_tools,
+            on_call_tool=_call_tool,
+            on_set_logging_level=_set_logging_level,
+        )
         return server
 
     def _get_agent_name(self) -> str:
@@ -1814,6 +2167,9 @@ class Agent(
     - OpenTelemetry-based telemetry for observability
 
     For a minimal implementation without these features, use :class:`RawAgent`.
+
+    Use ``await agent.open()`` and ``await agent.close()`` for explicit resource
+    management, or ``async with agent`` to close managed resources automatically.
     """
 
     @overload
@@ -1914,7 +2270,7 @@ class Agent(
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: MutableMapping[str, Any] | None = None,
     ) -> None:
-        """Initialize a Agent instance."""
+        """Initialize an Agent instance."""
         super().__init__(
             client=client,
             instructions=instructions,

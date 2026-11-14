@@ -6,9 +6,11 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Azure.Core;
+using ModelContextProtocol.Client;
 using Moq;
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
@@ -28,11 +30,18 @@ public class FoundryToolboxBearerTokenHandlerTests
     private static (FoundryToolboxBearerTokenHandler Handler, CountingHandler Inner) CreateHandlerPair(
         Mock<TokenCredential>? credential = null,
         string? featuresHeader = null,
-        HttpStatusCode statusCode = HttpStatusCode.OK)
+        string tokenScope = FoundryToolboxServiceOptions.DefaultTokenScope,
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        string? callId = null)
     {
         credential ??= CreateMockCredential();
         var inner = new CountingHandler(statusCode);
-        var handler = new FoundryToolboxBearerTokenHandler(credential.Object, featuresHeader)
+        var handler = new FoundryToolboxBearerTokenHandler(
+            credential.Object,
+            tokenScope,
+            featuresHeader,
+            new Uri("https://example.com"),
+            callId)
         {
             InnerHandler = inner
         };
@@ -40,36 +49,32 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_ForwardsCallIdWhenSetAsync()
+    public async Task SendAsync_ForwardsConnectionCallIdAsync()
     {
         // Arrange
-        var (handler, _) = CreateHandlerPair();
+        var (handler, _) = CreateHandlerPair(callId: "call-abc");
         using var invoker = new HttpMessageInvoker(handler);
-        HostedCallContext.CallId = "call-abc";
 
-        try
-        {
-            // Act
-            using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
-            using var response = await invoker.SendAsync(request, CancellationToken.None);
+        // Act: send twice, as an MCP session sends initialize and then tools/call.
+        using var first = new HttpRequestMessage(HttpMethod.Post, "https://example.com/api");
+        using var firstResponse = await invoker.SendAsync(first, CancellationToken.None);
+        using var second = new HttpRequestMessage(HttpMethod.Post, "https://example.com/api");
+        using var secondResponse = await invoker.SendAsync(second, CancellationToken.None);
 
-            // Assert
-            Assert.True(request.Headers.TryGetValues("x-agent-foundry-call-id", out var values));
-            Assert.Equal("call-abc", values!.Single());
-        }
-        finally
-        {
-            HostedCallContext.CallId = null;
-        }
+        // Assert: every request of the connection carries the call id it was created with.
+        Assert.Equal("call-abc", Assert.Single(first.Headers.GetValues("x-agent-foundry-call-id")));
+        Assert.Equal("call-abc", Assert.Single(second.Headers.GetValues("x-agent-foundry-call-id")));
     }
 
-    [Fact]
-    public async Task SendAsync_OmitsCallIdWhenAbsentAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("  ")]
+    public async Task SendAsync_OmitsCallIdWhenAbsentAsync(string? callId)
     {
         // Arrange
-        var (handler, _) = CreateHandlerPair();
+        var (handler, _) = CreateHandlerPair(callId: callId);
         using var invoker = new HttpMessageInvoker(handler);
-        HostedCallContext.CallId = null;
 
         // Act
         using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
@@ -94,7 +99,178 @@ public class FoundryToolboxBearerTokenHandlerTests
     }
 
     [Fact]
-    public async Task SendAsync_UsesAiAzureComScopeAsync()
+    public async Task SendAsync_CrossOriginRequest_DoesNotInjectFoundryHeadersAsync()
+    {
+        // Arrange: the handler is created for a trusted toolbox origin and first sends a
+        // legitimate request there before the transport attempts a different origin.
+        var credential = CreateMockCredential();
+        var handler = new FoundryToolboxBearerTokenHandler(
+            credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
+            null,
+            new Uri("https://trusted.example.com"),
+            callId: "call-abc")
+        {
+            InnerHandler = new CountingHandler(HttpStatusCode.OK)
+        };
+        using var invoker = new HttpMessageInvoker(handler);
+
+        using var trustedRequest = new HttpRequestMessage(HttpMethod.Post, "https://trusted.example.com/mcp");
+        using var trustedResponse = await invoker.SendAsync(trustedRequest, CancellationToken.None);
+        Assert.Equal(FakeToken, trustedRequest.Headers.Authorization?.Parameter);
+        Assert.True(trustedRequest.Headers.Contains("x-agent-foundry-call-id"));
+
+        // Act: legacy MCP SSE can construct a new request from a server-advertised
+        // absolute endpoint, so model that foreign-origin request directly.
+        using var crossOriginRequest = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
+        using var crossOriginResponse = await invoker.SendAsync(crossOriginRequest, CancellationToken.None);
+
+        // Assert: Foundry credentials, internal feature negotiation, and platform call
+        // context must remain on the configured toolbox origin.
+        Assert.Null(crossOriginRequest.Headers.Authorization);
+        Assert.False(crossOriginRequest.Headers.Contains("Foundry-Features"));
+        Assert.False(crossOriginRequest.Headers.Contains("x-agent-foundry-call-id"));
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Theory]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "https://trusted.example.com/other", true)]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "https://TRUSTED.Example.COM/mcp", true)]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "https://trusted.example.com:443/mcp", true)]
+    [InlineData("https://trusted.example.com:443/toolboxes/test/mcp", "https://trusted.example.com/mcp", true)]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "http://trusted.example.com/mcp", false)]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "https://trusted.example.com:8443/mcp", false)]
+    [InlineData("https://trusted.example.com/toolboxes/test/mcp", "https://untrusted.example/mcp", false)]
+    public async Task CreateToolboxHttpMessageHandler_AttachesCredentialsOnlyForSameOriginAsync(
+        string pinnedEndpoint,
+        string requestUri,
+        bool expectedSameOrigin)
+    {
+        // Arrange: origin equality covers scheme, host, and port. Host casing and an explicit
+        // default port are the same origin; a different scheme, port, or host is not.
+        var capture = new HeaderCaptureHandler();
+        using var handler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
+            new Uri(pinnedEndpoint),
+            CreateMockCredential().Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
+            featuresHeader: null,
+            capture);
+        using var invoker = new HttpMessageInvoker(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
+
+        // Act
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert: a same-origin request keeps valid authentication, and any other origin
+        // receives no Foundry credentials.
+        Assert.Equal(
+            expectedSameOrigin,
+        OriginPinningHandler.IsSameOrigin(new Uri(requestUri), new Uri(pinnedEndpoint)));
+        Assert.Equal(expectedSameOrigin, capture.SawAuthorization);
+        Assert.Equal(expectedSameOrigin, capture.SawFoundryFeatures);
+    }
+
+    [Fact]
+    public async Task ToolboxTransport_ServerSelectedCrossOriginEndpoint_DoesNotReceiveBearerTokenAsync()
+    {
+        // Arrange: use OpenToolboxAsync's production factories with a harmless in-memory MCP
+        // peer that would force AutoDetect to legacy SSE and advertise an absolute foreign
+        // endpoint if transport negotiation were ever loosened.
+        var trustedEndpoint = new Uri("https://trusted.example.com/toolboxes/test/mcp");
+        var foreignEndpoint = new Uri("https://untrusted.example/collect");
+        var scriptedHandler = new CrossOriginSseHandler(trustedEndpoint, foreignEndpoint);
+        var credential = CreateMockCredential();
+        var messageHandler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
+            trustedEndpoint,
+            credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
+            featuresHeader: null,
+            scriptedHandler);
+        using var httpClient = new HttpClient(messageHandler);
+        var transportOptions = FoundryToolboxService.CreateToolboxTransportOptions(trustedEndpoint, "test");
+        await using var transport = new HttpClientTransport(transportOptions, httpClient);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        // Act: the trusted endpoint rejects the Streamable HTTP probe. Client creation must
+        // fail there instead of negotiating down to the scripted SSE endpoint.
+        await Assert.ThrowsAnyAsync<Exception>(
+            async () => await McpClient.CreateAsync(transport, cancellationToken: timeout.Token));
+
+        // Assert: Streamable HTTP performs only the configured-origin probe. It cannot
+        // negotiate down to legacy SSE or adopt the server-selected foreign endpoint.
+        Assert.True(scriptedHandler.SawStreamableHttpProbe);
+        Assert.False(scriptedHandler.SawLegacySseFallback);
+        Assert.False(scriptedHandler.SawForeignEndpointRequest);
+        Assert.Null(scriptedHandler.ForeignAuthorization);
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public void CreateToolboxTransportOptions_UsesStreamableHttp()
+    {
+        // Arrange
+        var endpoint = new Uri("https://trusted.example.com/toolboxes/test/mcp");
+
+        // Act
+        var options = FoundryToolboxService.CreateToolboxTransportOptions(endpoint, "test");
+
+        // Assert
+        Assert.Equal(HttpTransportMode.StreamableHttp, options.TransportMode);
+        Assert.Equal(endpoint, options.Endpoint);
+        Assert.False(options.EnableStandaloneGetStream);
+        Assert.True(options.OwnsSession);
+    }
+
+    [Fact]
+    public void CreateToolboxPrimaryHttpMessageHandler_DisablesAmbientCredentialFlow()
+    {
+        // Act
+        using var handler = FoundryToolboxService.CreateToolboxPrimaryHttpMessageHandler();
+
+        // Assert
+        Assert.False(handler.UseCookies);
+        Assert.False(handler.AllowAutoRedirect);
+        Assert.True(handler.CheckCertificateRevocationList);
+    }
+
+    [Fact]
+    public async Task CreateToolboxHttpMessageHandler_CrossOriginRequestStripsCredentialHeadersAsync()
+    {
+        // Arrange: the production pipeline places the bearer handler outside origin
+        // pinning so credentials are removed before the primary handler sees the request.
+        var capture = new HeaderCaptureHandler();
+        var credential = CreateMockCredential();
+        using var handler = FoundryToolboxService.CreateToolboxHttpMessageHandler(
+            new Uri("https://trusted.example.com/toolboxes/test/mcp"),
+            credential.Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
+            featuresHeader: null,
+            capture);
+        using var invoker = new HttpMessageInvoker(handler);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://untrusted.example/collect");
+        request.Headers.TryAddWithoutValidation("Authorization", "Bearer preexisting");
+        request.Headers.TryAddWithoutValidation("Proxy-Authorization", "Basic preexisting");
+        request.Headers.TryAddWithoutValidation("Cookie", "session=preexisting");
+
+        // Act
+        using var response = await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.False(capture.SawAuthorization);
+        Assert.False(capture.SawProxyAuthorization);
+        Assert.False(capture.SawCookie);
+        Assert.False(capture.SawFoundryFeatures);
+        credential.Verify(
+            value => value.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task SendAsync_UsesDefaultPublicCloudScopeAsync()
     {
         // Arrange
         var capturedContexts = new List<TokenRequestContext>();
@@ -113,6 +289,29 @@ public class FoundryToolboxBearerTokenHandlerTests
         // Assert: spec §4 mandates the https://ai.azure.com audience.
         Assert.Single(capturedContexts);
         Assert.Contains("https://ai.azure.com/.default", capturedContexts[0].Scopes);
+    }
+
+    [Fact]
+    public async Task SendAsync_UsesConfiguredTokenScopeAsync()
+    {
+        // Arrange
+        const string TokenScope = "https://ai.contoso.example/.default";
+        var capturedContexts = new List<TokenRequestContext>();
+        var credential = new Mock<TokenCredential>();
+        credential
+            .Setup(c => c.GetTokenAsync(It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()))
+            .Callback<TokenRequestContext, CancellationToken>((ctx, _) => capturedContexts.Add(ctx))
+            .ReturnsAsync(new AccessToken(FakeToken, DateTimeOffset.MaxValue));
+        var (handler, _) = CreateHandlerPair(credential, tokenScope: TokenScope);
+        using var invoker = new HttpMessageInvoker(handler);
+
+        // Act
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://example.com/api");
+        await invoker.SendAsync(request, CancellationToken.None);
+
+        // Assert
+        Assert.Single(capturedContexts);
+        Assert.Equal(TokenScope, Assert.Single(capturedContexts[0].Scopes));
     }
 
     [Fact]
@@ -277,7 +476,11 @@ public class FoundryToolboxBearerTokenHandlerTests
             HttpStatusCode.ServiceUnavailable,
             HttpStatusCode.OK);
 
-        var handler = new FoundryToolboxBearerTokenHandler(CreateMockCredential().Object, null)
+        var handler = new FoundryToolboxBearerTokenHandler(
+            CreateMockCredential().Object,
+            FoundryToolboxServiceOptions.DefaultTokenScope,
+            null,
+            new Uri("https://example.com"))
         {
             InnerHandler = inner
         };
@@ -338,6 +541,76 @@ public class FoundryToolboxBearerTokenHandlerTests
                 ? this._statusCodes[index]
                 : this._statusCodes[^1];
             return Task.FromResult(new HttpResponseMessage(statusCode));
+        }
+    }
+
+    /// <summary>
+    /// Captures whether credential-bearing headers reached the primary network handler.
+    /// </summary>
+    private sealed class HeaderCaptureHandler : HttpMessageHandler
+    {
+        public bool SawAuthorization { get; private set; }
+
+        public bool SawProxyAuthorization { get; private set; }
+
+        public bool SawCookie { get; private set; }
+
+        public bool SawFoundryFeatures { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            this.SawAuthorization = request.Headers.Contains("Authorization");
+            this.SawProxyAuthorization = request.Headers.Contains("Proxy-Authorization");
+            this.SawCookie = request.Headers.Contains("Cookie");
+            this.SawFoundryFeatures = request.Headers.Contains("Foundry-Features");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    /// <summary>
+    /// An in-memory MCP peer that forces AutoDetect to legacy SSE and advertises a
+    /// server-selected endpoint on a different origin.
+    /// </summary>
+    private sealed class CrossOriginSseHandler(Uri trustedEndpoint, Uri foreignEndpoint) : HttpMessageHandler
+    {
+        public bool SawStreamableHttpProbe { get; private set; }
+
+        public bool SawLegacySseFallback { get; private set; }
+
+        public bool SawForeignEndpointRequest { get; private set; }
+
+        public string? ForeignAuthorization { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri == foreignEndpoint)
+            {
+                this.SawForeignEndpointRequest = true;
+                this.ForeignAuthorization = request.Headers.Authorization?.Parameter;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            }
+
+            Assert.Equal(trustedEndpoint, request.RequestUri);
+            if (request.Method == HttpMethod.Post)
+            {
+                this.SawStreamableHttpProbe = true;
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.MethodNotAllowed));
+            }
+
+            Assert.Equal(HttpMethod.Get, request.Method);
+            this.SawLegacySseFallback = true;
+            return Task.FromResult(
+                new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        $"event: endpoint\ndata: {foreignEndpoint.AbsoluteUri}\n\n",
+                        Encoding.UTF8,
+                        "text/event-stream")
+                });
         }
     }
 }

@@ -13,30 +13,157 @@ we've provided a console application that is able to execute any declarative wor
 
 ## Actions
 
+### Control-flow input validation
+
+Control-flow expressions must evaluate to non-sensitive values. This applies to
+conditions, loop items, question prompting and retry settings, approval settings,
+automatic response sending, external-loop conditions, HTTP timeouts,
+conversation-message limits and sort order, and variable-scope selection.
+Invalid inputs raise a `DeclarativeActionException`; literal defaults and
+non-sensitive expressions retain their existing behavior.
+
+Custom executors should use `EvaluateValueAsync<TValue>` for control-flow
+expressions. `EvaluateValueWithSensitivityAsync<TValue>` is intended for
+operations that preserve the returned sensitivity metadata when storing values,
+not for discarding metadata and making decisions using only `Value`.
+
+Tool actions validate automatic-send settings before dispatch and retain the
+evaluated setting for the matching response, including approval and checkpoint
+resumption. Changes to workflow state while a request is pending do not change
+that invocation's automatic-send behavior.
+Replacement MCP approvals after restoration retain the same setting while
+refreshing headers and revalidating connection names.
+For JSON checkpoints, pass `DeclarativeWorkflowJsonOptions.Default` to
+`CheckpointManager.CreateJson`; its source-generated context includes the
+per-invocation automatic-send settings.
+Function approval denials complete without evaluating automatic-send settings.
+Older approved checkpoints without a captured setting still validate the current
+setting before invoking the function.
+
+### Expression result handling
+
+Blank expression results retain their input sensitivity metadata. Evaluation
+errors in sensitive expressions, including record fields and table rows, produce
+a blank result with the same metadata so data assignments can continue.
+Diagnostic warnings identify the referenced variable names, not their values.
+Non-sensitive expression errors retain their existing exception behavior.
+`ParseValue` also assigns a blank result with the input sensitivity metadata when
+conversion of a sensitive value fails. Non-sensitive conversion failures retain
+their existing exception behavior.
+
+### Function tool approval
+
+`InvokeFunctionTool` requests approval when `requireApproval` evaluates to `true`
+or the matching function in `ResponseAgentProvider.Functions` exposes
+`ApprovalRequiredAIFunction`. Omitting `requireApproval` or setting it to `false`
+does not override the registered function's approval requirement. The workflow
+resumes the registered invocation only after a matching approval response.
+
 ### MCP session lifetime
 
-`DefaultMcpToolHandler` caches MCP sessions by server URL, label, connection name,
-and explicit request headers when no custom HTTP client provider is configured.
-Dispose the handler when its owning scope ends.
+`DefaultMcpToolHandler` creates a separate MCP client for every invocation,
+including `tools/list`, and disposes it before completing. The handler retains
+no per-invocation state or shared disposable resources.
 
-When `httpClientProvider` is configured, each invocation (including `tools/list`)
-calls the provider, opens a separate MCP session, and disposes that session before
-completing. This also applies when the provider returns the same `HttpClient` or
-returns `null` for the default transport. Caller-supplied HTTP clients remain
-caller-owned; handler-created fallback clients are disposed with the invocation.
-Handler disposal waits for active provider-backed invocations to finish cleanup.
-Disposal from within an active invocation (including a provider callback or its
-child tasks) throws `InvalidOperationException` without starting shutdown, rather
-than waiting on itself. Dispose the handler from its owning scope.
+Standalone GET/SSE streams for unsolicited server messages are disabled because
+this handler performs request-scoped tool operations, not background subscriptions.
+SSE responses to individual tool requests remain supported.
+
+Each per-invocation HTTP client is disposed with its invocation without disposing
+the pooled handler pipeline. Construct the handler with an application-owned
+`IHttpMessageHandlerFactory` through
+`DefaultMcpToolHandler(IEnumerable<string>, IHttpMessageHandlerFactory, string)`. Supply
+allowed hosts from application configuration, not workflow content. An empty
+list denies all destinations. The former constructor accepting `IHttpClientFactory`
+is removed; migrate to the constructor above with an explicit destination policy.
+Hosts are exact DNS names or IP literals with optional ports; omitted ports
+default to 443. Matching is case-insensitive and normalizes internationalized
+names and trailing DNS dots, without wildcards or implicit subdomains.
+The list is copied and checked before client creation for both tool calls and
+discovery. Workflow-supplied `Host` headers are rejected.
+Both HTTP and HTTPS are supported; enforce HTTPS separately if required.
+Allowing a name trusts the application's DNS and network routing.
+The third argument is a stable named-client configuration, or `string.Empty` for the
+default configuration. HTTP client wrappers are owned by the invocation;
+the factory and its pooled handlers remain application-owned. There is no
+parameterless constructor or internally created HTTP pipeline. Configure handler
+reuse in the factory to avoid connection churn and port exhaustion.
+
+Configure the factory once in the application, not once per invocation. For
+example, with `Microsoft.Extensions.DependencyInjection`:
+
+```csharp
+services.AddHttpClient("workflow-mcp")
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+    {
+        UseCookies = false,
+        AllowAutoRedirect = false,
+        CheckCertificateRevocationList = true
+    })
+    .SetHandlerLifetime(TimeSpan.FromMinutes(2));
+
+services.AddSingleton<IMcpToolHandler>(serviceProvider => new DefaultMcpToolHandler(
+    ["mcp.example.com"], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp"));
+```
+
+The pipeline must terminate in an `HttpClientHandler`, or on .NET a
+`SocketsHttpHandler`, with automatic redirects and cookies disabled. The handler
+rejects unknown transports, incomplete pipelines, or either setting enabled
+before sending. Redirect responses are not followed.
+Application-owned delegating handlers must preserve the validated destination
+and must not follow redirects themselves. Client configuration callbacks
+registered through `IHttpClientFactory`, including default headers, timeout,
+and base address, do not apply. Configure headers and authentication in
+delegating handlers instead.
+Restrict credential-injecting handlers to the configured server origin.
+Do not store per-workflow credentials, cookies, or
+mutable origin policy in pooled handlers. Use a bounded set of configuration
+names, not workflow IDs, credentials, or arbitrary URLs. A finite factory handler
+lifetime lets subsequent invocations refresh connections without interrupting
+active calls. Streamable HTTP remains enforced.
+
+`ProtocolVersion` defaults to `null`, preserving the MCP SDK's automatic protocol
+discovery and legacy fallback. If the server's supported protocol is known, set
+the init-only property when constructing the handler:
+
+```csharp
+DefaultMcpToolHandler handler = new(["mcp.example.com"], httpMessageHandlerFactory, "workflow-mcp")
+{
+    ProtocolVersion = "2025-11-25"
+};
+```
+
+An explicit legacy version skips the discovery probe, including its possible
+timeout, but still initializes and disposes a separate session for every call.
+The server must negotiate that exact legacy version. Explicit newer revisions
+still perform discovery and do not downgrade to a legacy-only server.
+Incompatible selections fail rather than silently reverting to automatic
+negotiation. Use separately configured handlers for differing server protocol
+policies; do not pin a version without knowing the server supports it.
+
+The handler is not disposable. The workflow host owns admission limits,
+invocation deadlines, and shutdown cancellation. Bound concurrent work and pass
+a cancellation token covering the whole invocation; cancel and await those calls
+before disposing the application's HTTP factory infrastructure or service provider.
 Non-cancellation session and transport cleanup failures are reported through
 `System.Diagnostics.Trace` warnings and do not replace a tool result or its
 original error.
 
-Provider-backed calls therefore incur session setup per invocation and do not
-preserve server-side session state between calls. Applications requiring session
-continuity should implement `IMcpToolHandler` with an explicit authentication
-ownership and session lifetime contract, rather than sharing sessions based only
-on the server address.
+Parameterless construction, the callback-based constructor, and handler-level
+`DisposeAsync`/`IAsyncDisposable` are not supported. Migrate default construction
+and callback authentication to an application-owned named message-handler factory
+and origin-bound delegating handlers. The default handler creates a fresh HTTP
+client wrapper per invocation while the factory owns the pooled pipeline.
+Remove handler `await using`/disposal calls and await active invocations in the host.
+
+This also changes the previous default behavior, which retained initialized MCP
+clients across calls. Calls now incur any protocol session setup per invocation
+and do not preserve implicit server-side session state between calls, including
+across approval waits or checkpoint resumes. Keep durable workflow state in
+workflow variables/checkpoints and pass explicit remote state handles as tool
+arguments where supported. Applications requiring session continuity should
+implement `IMcpToolHandler` with an explicit authentication ownership and session
+lifetime contract. HTTP connection pooling does not provide MCP session continuity.
 
 ### ⚙️ Foundry Actions
 
@@ -57,6 +184,10 @@ on the server address.
 |**Question**|Presents a query or prompt requiring human input. Integrates human decision-making into automated processes.
 
 ### 🧩 State Management
+
+Variable names are case-sensitive, matching Power Fx record fields. Differently
+cased names retain independent values and metadata, including after checkpoint
+restoration.
 
 |Action|Description|
 |-|-|

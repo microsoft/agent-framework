@@ -27,6 +27,10 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agentBuilder">The configuration builder for the agent.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AHttpJson(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path)
     {
         ArgumentNullException.ThrowIfNull(agentBuilder);
@@ -43,6 +47,10 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agent">The agent whose name identifies the registered A2A server.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/> for endpoint authorization
+    /// and caller isolation requirements.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AHttpJson(this IEndpointRouteBuilder endpoints, AIAgent agent, string path)
     {
         ArgumentNullException.ThrowIfNull(agent);
@@ -60,6 +68,15 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// This method does not require authorization automatically. Configure authentication and enforce
+    /// endpoint authorization, for example with <c>RequireAuthorization()</c> on the returned builder.
+    /// Multi-user hosts also need an <see cref="AgentIsolationKeyProvider"/> to isolate sessions and tasks;
+    /// task isolation remains necessary without session persistence. For claims-based isolation, register
+    /// <c>AddHttpContextAccessor()</c> and <c>UseClaimsBasedAgentIsolation(...)</c> from
+    /// <c>Microsoft.Agents.AI.Hosting.AspNetCore</c>, using a claim that uniquely identifies the caller.
+    /// Protect each enabled protocol binding, not just one of the HTTP+JSON and JSON-RPC endpoints.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AHttpJson(this IEndpointRouteBuilder endpoints, string agentName, string path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);
@@ -71,13 +88,7 @@ public static class A2AEndpointRouteBuilderExtensions
                 $"No A2AServer is registered for agent '{agentName}'. " +
                 $"Call services.AddA2AServer(\"{agentName}\") or agentBuilder.AddA2AServer() during service registration to register one.");
 
-        // TODO: The stub AgentCard is temporary and will be removed once the A2A SDK either removes the
-        // agentCard parameter of MapHttpA2A or makes it optional. MapHttpA2A exposes the agent card via a
-        // GET {path}/card endpoint that is not part of the A2A spec, so it is not expected to be consumed
-        // by any agent - returning a stub agent card here is safe.
-        var stubAgentCard = new AgentCard { Name = "A2A Agent" };
-
-        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, stubAgentCard, path);
+        IEndpointConventionBuilder endpoint = endpoints.MapHttpA2A(a2aServer, path);
         MarkFeatureUsed();
         return endpoint;
     }
@@ -91,6 +102,10 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agentBuilder">The configuration builder for the agent.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/> for endpoint authorization
+    /// and caller isolation requirements, which also apply to this JSON-RPC binding.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AJsonRpc(this IEndpointRouteBuilder endpoints, IHostedAgentBuilder agentBuilder, string path)
     {
         ArgumentNullException.ThrowIfNull(agentBuilder);
@@ -107,6 +122,10 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agent">The agent whose name identifies the registered A2A server.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/> for endpoint authorization
+    /// and caller isolation requirements, which also apply to this JSON-RPC binding.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AJsonRpc(this IEndpointRouteBuilder endpoints, AIAgent agent, string path)
     {
         ArgumentNullException.ThrowIfNull(agent);
@@ -124,6 +143,10 @@ public static class A2AEndpointRouteBuilderExtensions
     /// <param name="agentName">The name of the agent to use for A2A protocol integration.</param>
     /// <param name="path">The route path prefix for A2A endpoints.</param>
     /// <returns>An <see cref="IEndpointConventionBuilder"/> for further endpoint configuration.</returns>
+    /// <remarks>
+    /// See <see cref="MapA2AHttpJson(IEndpointRouteBuilder, string, string)"/> for endpoint authorization
+    /// and caller isolation requirements, which also apply to this JSON-RPC binding.
+    /// </remarks>
     public static IEndpointConventionBuilder MapA2AJsonRpc(this IEndpointRouteBuilder endpoints, string agentName, string path)
     {
         ArgumentNullException.ThrowIfNull(endpoints);

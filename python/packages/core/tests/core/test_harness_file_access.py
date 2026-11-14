@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import os
 import re
 import stat
+import sys
+import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
+import regex
 
 from agent_framework import (
     Agent,
@@ -20,6 +26,7 @@ from agent_framework import (
     Content,
     ExperimentalFeature,
     FileAccessProvider,
+    FileMemoryProvider,
     FileSearchMatch,
     FileSearchResult,
     FileStoreEntry,
@@ -27,9 +34,13 @@ from agent_framework import (
     FunctionTool,
     InMemoryAgentFileStore,
     Message,
+    SessionContext,
     SupportsChatGetResponse,
 )
-from agent_framework._filesystem import _is_link_or_reparse_point
+from agent_framework._filesystem import (  # pyright: ignore[reportPrivateUsage]
+    _is_link_or_reparse_point,
+    _storage_key_segment,
+)
 from agent_framework._harness import _file_access as _file_access_module
 from agent_framework._harness._file_access import (
     _SEARCH_SNIPPET_RADIUS,
@@ -40,9 +51,11 @@ from agent_framework._harness._file_access import (
     _run_search_with_timeout,
     _slice_lines,
     _split_lines_keepends,
+    _store_write_lock,
 )
 
 from .conftest import create_junction_or_skip
+from .test_filesystem import COLLIDING_IDENTIFIERS
 
 
 async def _list_files(store: AgentFileStore, directory: str = "") -> list[str]:
@@ -168,6 +181,38 @@ async def test_in_memory_store_round_trips_files() -> None:
     assert sorted(await _list_files(store)) == []
 
 
+@pytest.mark.parametrize("directory", ["İstanbul", "i\u0307stanbul", "İSTANBUL/"])
+async def test_in_memory_store_lists_unicode_paths_without_truncation(directory: str) -> None:
+    """Length-changing lowercasing must not alter the displayed path components."""
+    store = InMemoryAgentFileStore()
+    await store.write("İstanbul/Notes.md", "memory")
+    await store.write("İstanbul/İzmir/plan.md", "nested memory")
+    await store.write("i\u0307stanbul/i\u0307zmir/other.md", "another memory")
+
+    assert await _list_dirs(store) == ["İstanbul"]
+    assert await _list_files(store, directory) == ["Notes.md"]
+    assert await _list_dirs(store, directory) == ["İzmir"]
+    assert sorted(await _list_files(store, f"{directory.rstrip('/')}/İzmir")) == ["other.md", "plan.md"]
+    assert await store.read(f"{directory.rstrip('/')}/notes.MD") == "memory"
+
+
+@pytest.mark.parametrize("directory", ["İstanbul", "i\u0307stanbul", "İSTANBUL/"])
+async def test_in_memory_store_search_preserves_unicode_relative_paths(directory: str) -> None:
+    """Search results must retain readable paths after matching a Unicode directory."""
+    store = InMemoryAgentFileStore()
+    await store.write("İstanbul/Notes.md", "memory")
+    await store.write("İstanbul/İzmir/plan.md", "memory")
+    await store.write("other/notes.md", "memory")
+
+    direct = await store.search(directory, "memory", "Notes.md")
+    assert [result.file_name for result in direct] == ["Notes.md"]
+
+    recursive = await store.search(directory, "memory", recursive=True)
+    assert {result.file_name for result in recursive} == {"Notes.md", "İzmir/plan.md"}
+    for result in recursive:
+        assert await store.read(f"{directory.rstrip('/')}/{result.file_name}") == "memory"
+
+
 async def test_in_memory_store_search_returns_matches_with_snippets() -> None:
     """The in-memory store should search file content case-insensitively and respect glob filters."""
     store = InMemoryAgentFileStore()
@@ -254,7 +299,7 @@ async def test_in_memory_store_search_rejects_invalid_and_oversize_regex() -> No
     store = InMemoryAgentFileStore()
     await store.write("a.md", "hello")
 
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await store.search("", "[unclosed")
 
     with pytest.raises(ValueError, match="too long"):
@@ -267,6 +312,115 @@ async def test_in_memory_store_normalizes_paths() -> None:
     for bad in ("../escape.txt", "/abs/path.txt", "."):
         with pytest.raises(ValueError):
             await store.write(bad, "boom")
+
+
+async def test_in_memory_store_rejects_file_ancestor_collision() -> None:
+    """Writing a file whose ancestor is already a file must raise NotADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(NotADirectoryError):
+        await store.write("reports/deep/q2.txt", "deep nested content")
+
+    assert await store.read("Reports") == "file content"
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.FILE
+
+
+async def test_in_memory_store_rejects_descendant_directory_collision() -> None:
+    """Writing a file whose path is already a directory must raise IsADirectoryError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports/q1.txt", "nested content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    assert await store.read("Reports/q1.txt") == "nested content"
+    assert await store.read("Reports") is None
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+
+async def test_in_memory_store_create_directory_rejects_existing_file() -> None:
+    """Creating a directory that collides with an existing file must raise FileExistsError."""
+    store = InMemoryAgentFileStore()
+    await store.write("Reports", "file content")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("Reports")
+
+    with pytest.raises(FileExistsError):
+        await store.create_directory("reports/nested")
+
+
+async def test_in_memory_store_explicit_directory_reserves_path_against_write() -> None:
+    """Explicitly created directory must reserve the path and reject file writes."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("Reports", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports", "case insensitive collision")
+
+    children = await store.list_children("")
+    assert len(children) == 1
+    assert children[0].name == "Reports"
+    assert children[0].type == FileStoreEntry.DIRECTORY
+
+    nested_children = await store.list_children("Reports")
+    assert len(nested_children) == 0
+
+
+async def test_in_memory_store_explicit_nested_directory_creation() -> None:
+    """Explicit nested directory creation registers intermediate directories and preserves casing."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("Reports/2026/Q1")
+
+    root_children = await store.list_children("")
+    assert len(root_children) == 1
+    assert root_children[0].name == "Reports"
+    assert root_children[0].type == FileStoreEntry.DIRECTORY
+
+    reports_children = await store.list_children("Reports")
+    assert len(reports_children) == 1
+    assert reports_children[0].name == "2026"
+    assert reports_children[0].type == FileStoreEntry.DIRECTORY
+
+    q1_children = await store.list_children("Reports/2026")
+    assert len(q1_children) == 1
+    assert q1_children[0].name == "Q1"
+    assert q1_children[0].type == FileStoreEntry.DIRECTORY
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("reports/2026", "collision")
+
+
+async def test_in_memory_store_delete_file_cleans_up_implicit_directory_counts() -> None:
+    """Deleting a file unreserves implicit parent directories when no other files remain."""
+    store = InMemoryAgentFileStore()
+    await store.write("data/temp/file.txt", "file content")
+
+    with pytest.raises(IsADirectoryError):
+        await store.write("data/temp", "should fail while file exists")
+
+    deleted = await store.delete("data/temp/file.txt")
+    assert deleted is True
+
+    # Now that the implicit descendant is gone and temp was never explicitly created, writing succeeds
+    await store.write("data/temp", "now a file")
+    assert await store.read("data/temp") == "now a file"
 
 
 async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
@@ -285,6 +439,186 @@ async def test_filesystem_store_round_trips_files(tmp_path: Path) -> None:
 
     assert await store.delete("nested/a.txt") is True
     assert await store.delete("nested/a.txt") is False
+    assert await store.delete("nested") is False
+    assert (tmp_path / "nested").is_dir()
+
+
+async def _run_deterministic_concurrent_deletes(
+    store: FileSystemAgentFileStore,
+    other_store: FileSystemAgentFileStore,
+    first_path: str,
+    second_path: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[bool, bool]:
+    target_paths = {store._resolve_safe_path(first_path), other_store._resolve_safe_path(second_path)}
+    original_to_thread = asyncio.to_thread
+    original_unlink = Path.unlink
+    worker_barrier = threading.Barrier(2)
+    unlink_barrier = threading.Barrier(2)
+    unlink_guard = threading.Lock()
+    overlapping_delete_completed = False
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    def macos_style_unlink(path: Path, missing_ok: bool = False) -> None:
+        nonlocal overlapping_delete_completed
+        if path not in target_paths:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        try:
+            unlink_barrier.wait(timeout=0.5)
+        except threading.BrokenBarrierError:
+            original_unlink(path, missing_ok=missing_ok)
+            return
+
+        # Model concurrent macOS unlinks, where both calls may report success even though only one removes the file.
+        with unlink_guard:
+            if not overlapping_delete_completed:
+                original_unlink(path, missing_ok=missing_ok)
+                overlapping_delete_completed = True
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+    monkeypatch.setattr(Path, "unlink", macos_style_unlink)
+    return await asyncio.gather(store.delete(first_path), other_store.delete(second_path))
+
+
+async def test_filesystem_store_concurrent_delete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion should report one deletion and one missing file."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    await store.write("shared.txt", "content")
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, "shared.txt", "shared.txt", monkeypatch)
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_concurrent_delete_aliases_with_distinct_hashes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Different hashes for aliases must not allow both deletes to report success."""
+    exists = True
+    state_lock = threading.Lock()
+    worker_barrier = threading.Barrier(2)
+    probe_barrier = threading.Barrier(2)
+
+    class AliasedPath:
+        def __init__(self, hash_value: int) -> None:
+            self.hash_value = hash_value
+
+        def __hash__(self) -> int:
+            return self.hash_value
+
+        def is_file(self) -> bool:
+            with state_lock:
+                present = exists
+            with suppress(threading.BrokenBarrierError):
+                probe_barrier.wait(timeout=1)
+            return present
+
+        def unlink(self) -> None:
+            nonlocal exists
+            with state_lock:
+                exists = False
+
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    monkeypatch.setattr(store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(0)))
+    monkeypatch.setattr(other_store, "_resolve_safe_path", lambda _path: cast(Path, AliasedPath(1)))
+
+    original_to_thread = asyncio.to_thread
+
+    async def synchronized_to_thread(function: Any, /, *args: Any, **kwargs: Any) -> Any:
+        def synchronized_call() -> Any:
+            worker_barrier.wait(timeout=5)
+            return function(*args, **kwargs)
+
+        return await original_to_thread(synchronized_call)
+
+    monkeypatch.setattr(asyncio, "to_thread", synchronized_to_thread)
+
+    results = await asyncio.gather(
+        store.delete("first.txt"),
+        other_store.delete("second.txt"),
+    )
+
+    assert sorted(results) == [False, True]
+
+
+async def test_filesystem_store_delete_handles_only_missing_file_from_unlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A vanished file returns False, while an unrelated unlink failure propagates."""
+    store = FileSystemAgentFileStore(tmp_path)
+    await store.write("gone.txt", "content")
+    gone_path = tmp_path / "gone.txt"
+    original_unlink = Path.unlink
+
+    def disappear(path: Path, missing_ok: bool = False) -> None:
+        original_unlink(path, missing_ok=missing_ok)
+        raise FileNotFoundError(path)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", disappear)
+        assert await store.delete("gone.txt") is False
+    assert not gone_path.exists()
+
+    await store.write("denied.txt", "content")
+    denied_path = tmp_path / "denied.txt"
+
+    def deny_unlink(path: Path, missing_ok: bool = False) -> None:
+        raise PermissionError(f"Cannot unlink {path}")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "unlink", deny_unlink)
+        with pytest.raises(PermissionError, match="Cannot unlink"):
+            await store.delete("denied.txt")
+    assert denied_path.is_file()
+
+
+async def test_filesystem_store_concurrent_delete_case_aliases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Concurrent deletion through case aliases should report one deletion."""
+    store = FileSystemAgentFileStore(tmp_path)
+    other_store = FileSystemAgentFileStore(tmp_path)
+    original_name = "Shared.txt"
+    await store.write(original_name, "content")
+
+    original_path = store._resolve_safe_path(original_name)
+    lower_path = tmp_path / original_name.lower()
+    if not await asyncio.to_thread(lower_path.exists) or not await asyncio.to_thread(
+        os.path.samefile, original_path, lower_path
+    ):
+        pytest.skip("filesystem does not treat ASCII case variants as aliases")
+
+    # Choose a case alias with opposite hash parity so the regression
+    # deterministically exercises the former path-hash-keyed synchronization bug
+    # without depending on this interpreter's randomized hash values.
+    alias_name = next(
+        (
+            candidate_name
+            for characters in itertools.product(*[
+                (character.lower(), character.upper()) for character in original_name
+            ])
+            if (candidate_name := "".join(characters)) != original_name
+            and hash(store._resolve_safe_path(candidate_name)) % 2 != hash(original_path) % 2
+        ),
+        None,
+    )
+    if alias_name is None:
+        pytest.skip("no case alias has opposite Path hash parity on this platform")
+    assert alias_name is not None
+    alias_path = other_store._resolve_safe_path(alias_name)
+    assert await asyncio.to_thread(os.path.samefile, original_path, alias_path)
+
+    results = await _run_deterministic_concurrent_deletes(store, other_store, original_name, alias_name, monkeypatch)
+
+    assert sorted(results) == [False, True]
 
 
 async def test_filesystem_store_rejects_traversal_and_rooted_paths(tmp_path: Path) -> None:
@@ -620,13 +954,15 @@ async def test_filesystem_store_does_not_create_root_until_write(tmp_path: Path)
     assert await store.read("a.txt") == "alpha"
 
 
+@pytest.mark.parametrize("tool_name_prefix", [None, "", "spec_files"])
 async def test_file_access_provider_registers_tools_and_instructions(
     chat_client_base: SupportsChatGetResponse,
+    tool_name_prefix: str | None,
 ) -> None:
-    """``FileAccessProvider.before_run`` should add the canonical instructions and all tools."""
+    """Register all tools with the configured prefix while preserving default names."""
     session = AgentSession(session_id="session-1")
     store = InMemoryAgentFileStore()
-    provider = FileAccessProvider(store=store)
+    provider = FileAccessProvider(store=store, tool_name_prefix=tool_name_prefix)
     agent = Agent(client=chat_client_base, context_providers=[provider])
 
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -646,13 +982,94 @@ async def test_file_access_provider_registers_tools_and_instructions(
         "file_access_replace",
         "file_access_replace_lines",
     }
-    assert {getattr(tool, "name", None) for tool in tools} >= expected_names
+    if tool_name_prefix:
+        expected_names = {f"{tool_name_prefix}_{name}" for name in expected_names}
+    assert {getattr(tool, "name", None) for tool in tools} == expected_names
 
+    expected_instructions = (
+        DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+        if tool_name_prefix
+        else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+    )
     instructions = options.get("instructions")
     if isinstance(instructions, str):
-        assert DEFAULT_FILE_ACCESS_INSTRUCTIONS in instructions
+        assert expected_instructions in instructions
     else:
-        assert any(DEFAULT_FILE_ACCESS_INSTRUCTIONS in chunk for chunk in (instructions or []))
+        assert any(expected_instructions in chunk for chunk in (instructions or []))
+
+
+@pytest.mark.parametrize(
+    ("spec_prefix", "sdk_prefix"),
+    [(None, None), ("spec_files", "sdk_files"), ("spec_files", None)],
+    ids=["duplicate-names", "distinct-prefixes", "prefixed-and-default"],
+)
+async def test_file_access_providers_with_multiple_stores(
+    chat_client_base: SupportsChatGetResponse,
+    spec_prefix: str | None,
+    sdk_prefix: str | None,
+) -> None:
+    """Reproduce #9646 and allow an agent run when the stores have distinct tool names."""
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[
+            FileAccessProvider(
+                InMemoryAgentFileStore(),
+                source_id="spec_files",
+                tool_name_prefix=spec_prefix,
+                disable_readonly_tool_approval=True,
+                disable_write_tool_approval=True,
+            ),
+            FileAccessProvider(
+                InMemoryAgentFileStore(),
+                source_id="sdk_files",
+                tool_name_prefix=sdk_prefix,
+                disable_readonly_tool_approval=True,
+                disable_write_tool_approval=True,
+            ),
+        ],
+    )
+
+    if spec_prefix is None and sdk_prefix is None:
+        with pytest.raises(ValueError, match="Duplicate tool name 'file_access_read'"):
+            await agent.run("test")
+    else:
+        response = await agent.run("test")
+        assert response.text == "test response - test"
+
+
+async def test_file_access_provider_prefixed_tools_route_to_their_own_store(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Prefixed tools must keep same-named files in different stores independent."""
+    spec_store = InMemoryAgentFileStore()
+    sdk_store = InMemoryAgentFileStore()
+    agent = Agent(
+        client=chat_client_base,
+        context_providers=[
+            FileAccessProvider(spec_store, source_id="spec_files", tool_name_prefix="spec"),
+            FileAccessProvider(sdk_store, source_id="sdk_files", tool_name_prefix="sdk"),
+        ],
+    )
+    _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
+        session=AgentSession(session_id="session-1"),
+        input_messages=[Message(role="user", contents=["work with files"])],
+    )
+    tools = options["tools"]
+    assert isinstance(tools, list)
+    assert len(tools) == 16
+
+    for prefix, content in (("spec", "specification"), ("sdk", "implementation")):
+        write = _tool_by_name(tools, f"{prefix}_file_access_write")
+        result = await write.invoke(arguments={"file_name": "shared.txt", "content": content})
+        assert "written" in _text(result[0])
+
+    for prefix, content in (("spec", "specification"), ("sdk", "implementation")):
+        read = _tool_by_name(tools, f"{prefix}_file_access_read")
+        result = await read.invoke(arguments={"file_name": "shared.txt"})
+        assert _text(result[0]) == content
+
+    assert await spec_store.read("shared.txt") == "specification"
+    assert await sdk_store.read("shared.txt") == "implementation"
 
 
 async def test_file_access_provider_all_tools_require_approval(
@@ -755,6 +1172,28 @@ def test_read_only_tools_auto_approval_rule() -> None:
         assert FileAccessProvider.read_only_tools_auto_approval_rule(hosted) is False
 
 
+def test_prefixed_provider_read_only_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed read-only tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_read_only_tools_auto_approval_rule()
+
+    prefixed_read = Content("function_call", call_id="c1", name="spec_file_access_read", arguments="{}")
+    unprefixed_read = Content("function_call", call_id="c2", name="file_access_read", arguments="{}")
+    prefixed_write = Content("function_call", call_id="c3", name="spec_file_access_write", arguments="{}")
+    hosted_read = Content(
+        "function_call",
+        call_id="c4",
+        name="spec_file_access_read",
+        arguments="{}",
+        hosted=True,
+    )
+
+    assert rule(prefixed_read) is True
+    assert rule(unprefixed_read) is False
+    assert rule(prefixed_write) is False
+    assert rule(hosted_read) is False
+
+
 def test_all_tools_auto_approval_rule() -> None:
     """The all-tools rule approves every file-access tool but nothing else."""
     for name in (
@@ -781,6 +1220,31 @@ def test_all_tools_auto_approval_rule() -> None:
 
     unrelated = Content("function_call", call_id="c1", name="some_other_tool", arguments="{}")
     assert FileAccessProvider.all_tools_auto_approval_rule(unrelated) is False
+
+
+def test_prefixed_provider_all_tools_auto_approval_rule() -> None:
+    """A provider-bound rule should approve only that provider's prefixed file-access tools."""
+    provider = FileAccessProvider(InMemoryAgentFileStore(), tool_name_prefix="spec")
+    rule = provider.get_all_tools_auto_approval_rule()
+    tool_names = (
+        FileAccessProvider.WRITE_TOOL_NAME,
+        FileAccessProvider.READ_TOOL_NAME,
+        FileAccessProvider.READ_LINES_TOOL_NAME,
+        FileAccessProvider.DELETE_TOOL_NAME,
+        FileAccessProvider.LS_TOOL_NAME,
+        FileAccessProvider.GREP_TOOL_NAME,
+        FileAccessProvider.REPLACE_TOOL_NAME,
+        FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+    )
+
+    for name in tool_names:
+        prefixed = Content("function_call", call_id="c1", name=f"spec_{name}", arguments="{}")
+        unprefixed = Content("function_call", call_id="c2", name=name, arguments="{}")
+        hosted = Content("function_call", call_id="c3", name=f"spec_{name}", arguments="{}", hosted=True)
+
+        assert rule(prefixed) is True
+        assert rule(unprefixed) is False
+        assert rule(hosted) is False
 
 
 async def test_file_access_provider_tools_round_trip_files(
@@ -929,6 +1393,102 @@ async def test_run_search_with_timeout_raises_value_error(monkeypatch: pytest.Mo
         await _run_search_with_timeout(slow_pipeline())
 
 
+# region ReDoS guard
+
+# A pattern that forces catastrophic backtracking, plus a subject it cannot match.
+#
+# ``(a+)+$`` is the textbook example and the one the .NET suite uses, but it is useless
+# here: the ``regex`` engine optimises it away and returns instantly, so it would pass
+# against an unguarded implementation and prove nothing. ``(a|a)*$`` still backtracks
+# exponentially under both engines, so it actually exercises the guard.
+#
+# The trap is sized so an unguarded ``re`` scan takes tens of seconds -- long enough to
+# fail the assertions below decisively, short enough that a regression cannot wedge CI
+# forever. Every doubling of the length doubles the unguarded runtime.
+_REDOS_PATTERN = r"(a|a)*$"
+_REDOS_TRAP = "a" * 26 + "!"
+
+# Deadline used by the guard tests. Short, because a working guard returns at the
+# deadline; only a broken one runs long.
+_REDOS_TIMEOUT_SECONDS = 0.3
+
+
+async def _assert_search_is_bounded(
+    store: AgentFileStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assert a ReDoS pattern is refused promptly without stalling the event loop.
+
+    Two properties are checked, because either one alone can pass against a broken
+    implementation:
+
+    * The search returns (as a ``ValueError``) close to the deadline rather than
+      running the match to completion.
+    * A concurrent task keeps being scheduled *throughout* the search. This is the
+      property the original report turned on: offloading the scan to a worker thread
+      bounds nothing on its own, because CPython's ``re`` engine holds the GIL for the
+      duration of a single match, so the timeout cannot fire and unrelated work on the
+      same loop stops.
+    """
+    monkeypatch.setattr(_file_access_module, "_SEARCH_TIMEOUT_SECONDS", _REDOS_TIMEOUT_SECONDS)
+    await store.write("trap.txt", _REDOS_TRAP)
+
+    beats = 0
+    stop = asyncio.Event()
+
+    async def heartbeat() -> None:
+        nonlocal beats
+        while not stop.is_set():
+            await asyncio.sleep(_REDOS_TIMEOUT_SECONDS / 10)
+            beats += 1
+
+    beating = asyncio.create_task(heartbeat())
+    # Let the heartbeat reach its first await so the count reflects the search window only.
+    await asyncio.sleep(0)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ValueError, match="did not complete"):
+            await store.search("", _REDOS_PATTERN)
+        elapsed = time.monotonic() - started
+    finally:
+        stop.set()
+        beating.cancel()
+        await asyncio.gather(beating, return_exceptions=True)
+
+    # Generous ceiling: the point is that the deadline is enforced at all, not that it is
+    # precise. An unguarded scan overshoots by orders of magnitude, not by a factor of ten.
+    assert elapsed < _REDOS_TIMEOUT_SECONDS * 10, f"search overran its deadline: {elapsed:.2f}s"
+    assert beats >= 2, f"event loop stalled during the search: {beats} heartbeat(s)"
+
+
+async def test_in_memory_store_search_bounds_catastrophic_backtracking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ReDoS pattern must not wedge the in-memory store's scan."""
+    await _assert_search_is_bounded(InMemoryAgentFileStore(), monkeypatch)
+
+
+async def test_filesystem_store_search_bounds_catastrophic_backtracking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ReDoS pattern must not wedge the filesystem store's scan."""
+    await _assert_search_is_bounded(FileSystemAgentFileStore(tmp_path), monkeypatch)
+
+
+async def test_base_search_pipeline_bounds_catastrophic_backtracking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inherited ``search`` pipeline must be bounded too.
+
+    A store that implements only the mandatory members gets this pipeline for free, so
+    it is the shape most third-party stores will run.
+    """
+    await _assert_search_is_bounded(_ContentOnlyStore(), monkeypatch)
+
+
+# endregion
+
+
 async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -951,7 +1511,7 @@ async def test_filesystem_store_symlink_probe_fails_closed_on_oserror(
 
 
 def test_link_probe_detects_windows_reparse_attribute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The Python 3.10/3.11 Windows fallback should detect the reparse-point file attribute."""
+    """The Python 3.11 Windows fallback should detect the reparse-point file attribute."""
     path = tmp_path / "entry"
     path.write_text("content", encoding="utf-8")
     reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
@@ -1075,7 +1635,7 @@ async def test_file_access_tool_wrappers_surface_value_error_as_message(
 
     # An invalid regex is surfaced to the caller (the model) as a raised error
     # so it can correct the pattern and retry.
-    with pytest.raises(re.error):
+    with pytest.raises(regex.error):
         await search.invoke(arguments={"regex_pattern": "[unclosed"})
 
 
@@ -1176,14 +1736,19 @@ async def _prepare_access_tools(
     disable_write_tools: bool = False,
     disable_readonly_tool_approval: bool = False,
     disable_write_tool_approval: bool = False,
+    session_id: str | None = "session-1",
+    session_scoped: bool = False,
+    scope: str | None = None,
 ) -> list[object]:
     """Prepare a FileAccessProvider and return its registered tools."""
-    session = AgentSession(session_id="session-1")
+    session = AgentSession(session_id=session_id)
     provider = FileAccessProvider(
         store=store if store is not None else InMemoryAgentFileStore(),
         disable_write_tools=disable_write_tools,
         disable_readonly_tool_approval=disable_readonly_tool_approval,
         disable_write_tool_approval=disable_write_tool_approval,
+        session_scoped=session_scoped,
+        scope=scope,
     )
     agent = Agent(client=chat_client_base, context_providers=[provider])
     _, options = await agent._prepare_session_and_messages(  # pyright: ignore[reportPrivateUsage]
@@ -1193,6 +1758,130 @@ async def _prepare_access_tools(
     tools = options["tools"]
     assert isinstance(tools, list)
     return tools
+
+
+async def test_file_access_write_reports_actionable_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Directory/file collisions should guide the model to a valid path."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    original_write = store.write
+
+    async def collision_aware_write(path: str, content: str, *, overwrite: bool = True) -> None:
+        if path.lower() == "reports/q1.txt":
+            raise NotADirectoryError("Reports is a file")
+        if path.lower() == "archive":
+            raise IsADirectoryError("Archive is a directory")
+        await original_write(path, content, overwrite=overwrite)
+
+    monkeypatch.setattr(store, "write", collision_aware_write)
+
+    parent_collision = await save.invoke(arguments={"file_name": "reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("reports") == "keep"
+    assert await store.read("reports/q1.txt") is None
+
+    directory_collision = await save.invoke(arguments={"file_name": "ARCHIVE", "content": "replace"})
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("archive/q1.txt") == "keep"
+    assert await store.read("archive") is None
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+async def test_file_access_write_reports_filesystem_path_collision_errors(
+    chat_client_base: SupportsChatGetResponse,
+    tmp_path: Path,
+    overwrite: bool,
+) -> None:
+    """The real filesystem store should distinguish path collisions from existing files."""
+    store = FileSystemAgentFileStore(tmp_path)
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await store.write("Reports", "keep")
+    await store.write("Archive/q1.txt", "keep")
+    await store.write("notes.md", "keep")
+
+    parent_collision = await save.invoke(arguments={"file_name": "Reports/q1.txt", "content": "nested"})
+    parent_message = _text(parent_collision[0])
+    assert "parent path is already a file" in parent_message
+    assert "Choose a different path" in parent_message
+    assert await store.read("Reports") == "keep"
+
+    directory_collision = await save.invoke(
+        arguments={"file_name": "Archive", "content": "replace", "overwrite": overwrite}
+    )
+    directory_message = _text(directory_collision[0])
+    assert "already a directory" in directory_message
+    assert "Choose a different file name" in directory_message
+    assert await store.read("Archive/q1.txt") == "keep"
+
+    existing_file = await save.invoke(arguments={"file_name": "notes.md", "content": "replace"})
+    existing_file_message = _text(existing_file[0])
+    assert "already exists" in existing_file_message
+    assert "overwrite set to true" in existing_file_message
+    assert await store.read("notes.md") == "keep"
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+@pytest.mark.parametrize("is_directory", [False, True])
+async def test_filesystem_store_write_classifies_permission_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overwrite: bool, is_directory: bool
+) -> None:
+    """Windows directory-open errors are normalized without masking file permission failures."""
+    store = FileSystemAgentFileStore(tmp_path)
+    target = tmp_path / "target"
+    if is_directory:
+        target.mkdir()
+    else:
+        target.write_text("keep", encoding="utf-8")
+    denied = PermissionError("access denied")
+
+    def deny_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
+        raise denied
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_file_access_module.os, "open", deny_open)
+        if is_directory:
+            with pytest.raises(IsADirectoryError) as caught:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught.value.__cause__ is denied
+        else:
+            with pytest.raises(PermissionError) as caught_permission:
+                await store.write("target", "replace", overwrite=overwrite)
+            assert caught_permission.value is denied
+
+    if is_directory:
+        assert target.is_dir()
+    else:
+        assert target.read_text(encoding="utf-8") == "keep"
+
+
+async def test_file_access_write_preserves_exclusive_create_guidance(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """An existing file with overwrite disabled should retain its overwrite guidance."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store)
+    save = _tool_by_name(tools, "file_access_write")
+
+    await save.invoke(arguments={"file_name": "notes.md", "content": "keep"})
+    collision = await save.invoke(arguments={"file_name": "NOTES.md", "content": "replace"})
+    message = _text(collision[0])
+
+    assert "already exists" in message
+    assert "overwrite set to true" in message
+    assert await store.read("notes.md") == "keep"
 
 
 async def test_file_access_replace(chat_client_base: SupportsChatGetResponse) -> None:
@@ -1300,6 +1989,74 @@ async def test_file_access_replace_lines(chat_client_base: SupportsChatGetRespon
         }
     )
     assert "Duplicate" in _text(dup[0])
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "first_edit", "second_edit"),
+    [
+        (
+            FileAccessProvider.REPLACE_TOOL_NAME,
+            {"old_string": "A=0", "new_string": "A=1"},
+            {"old_string": "B=0", "new_string": "B=1"},
+        ),
+        (
+            FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            {"edits": [{"line_number": 1, "new_line": "A=1\n"}]},
+            {"edits": [{"line_number": 2, "new_line": "B=1\n"}]},
+        ),
+    ],
+    ids=["replace", "replace_lines"],
+)
+@pytest.mark.parametrize("second_file_name", ["notes.txt", "NOTES.txt"])
+async def test_file_access_providers_sharing_a_store_keep_concurrent_edits(
+    chat_client_base: SupportsChatGetResponse,
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    first_edit: dict[str, Any],
+    second_edit: dict[str, Any],
+    second_file_name: str,
+) -> None:
+    """Two providers on one store must not interleave edits of the same file.
+
+    Each provider used to hold only its own lock, so both could read the file before
+    either wrote it back, and the later write dropped the other edit while both tools
+    reported success. The upper-case name is the same file in this case-insensitive store.
+    """
+    store = InMemoryAgentFileStore()
+    await store.write("notes.txt", "A=0\nB=0\n")
+    original_read = store.read
+
+    async def read_then_yield(path: str) -> str | None:
+        content = await original_read(path)
+        await asyncio.sleep(0)  # Let the other edit run before this one writes back.
+        return content
+
+    monkeypatch.setattr(store, "read", read_then_yield)
+    first = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+    second = _tool_by_name(await _prepare_access_tools(chat_client_base, store=store), tool_name)
+
+    results = await asyncio.gather(
+        first.invoke(arguments={"file_name": "notes.txt", **first_edit}),
+        second.invoke(arguments={"file_name": second_file_name, **second_edit}),
+    )
+
+    messages = [_text(result[0]) for result in results]
+    assert all(message.startswith("Replaced 1 ") for message in messages), messages
+    assert await store.read("notes.txt") == "A=1\nB=1\n"
+
+
+async def test_store_write_lock_folds_unicode_and_case_variants_of_a_folder() -> None:
+    """Spellings of a folder name that a store can treat as one folder share one lock.
+
+    macOS file systems resolve the NFC and NFD forms of a name to the same entry, and
+    case-insensitive stores ignore case, so the lock key folds both.
+    """
+    store = InMemoryAgentFileStore()
+    lock = _store_write_lock(store, "caf\u00e9")
+
+    assert _store_write_lock(store, "cafe\u0301") is lock
+    assert _store_write_lock(store, "CAF\u00c9") is lock
+    assert _store_write_lock(store, "cafe") is not lock
 
 
 def test_slice_lines_returns_inclusive_range() -> None:
@@ -1901,3 +2658,544 @@ async def test_grep_matches_a_lone_carriage_return_as_content(
     payload = json.loads(_text((await grep.invoke(arguments={"regex_pattern": r"alpha\r$"}))[0]))
 
     assert payload[0]["matching_lines"][0]["line_number"] == 1
+
+
+# region Session isolation: session-scoped mode derives an injective working folder
+# from the session id (or explicit scope) via _storage_key_segment, mirroring
+# FileMemoryProvider. Default mode keeps the shared-store semantics untouched.
+
+
+async def test_session_scoped_provider_isolates_sessions(chat_client_base: SupportsChatGetResponse) -> None:
+    """Two sessions must write the same file name into distinct working folders."""
+    store = InMemoryAgentFileStore()
+    tools_a = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+    tools_b = await _prepare_access_tools(chat_client_base, store=store, session_id="session-b", session_scoped=True)
+
+    await _tool_by_name(tools_a, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "AAA"})
+    await _tool_by_name(tools_b, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "BBB"})
+
+    dirs = await _list_dirs(store)
+    assert dirs == ["~access-"]
+    session_dirs = await _list_dirs(store, "~access-")
+    assert len(session_dirs) == 2
+    assert session_dirs[0] != session_dirs[1]
+    assert await _list_files(store) == []
+
+    read_a = await _tool_by_name(tools_a, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
+    read_b = await _tool_by_name(tools_b, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
+    assert _text(read_a[0]) == "AAA"
+    assert _text(read_b[0]) == "BBB"
+
+
+@pytest.mark.parametrize("other_id", COLLIDING_IDENTIFIERS[1:])
+async def test_session_scoped_provider_isolates_colliding_session_ids(
+    chat_client_base: SupportsChatGetResponse, other_id: str
+) -> None:
+    """Identifiers a lossy normalizer would fold must map to distinct working folders."""
+    store = InMemoryAgentFileStore()
+    tools_base = await _prepare_access_tools(
+        chat_client_base, store=store, session_id="customer-42", session_scoped=True
+    )
+    tools_other = await _prepare_access_tools(chat_client_base, store=store, session_id=other_id, session_scoped=True)
+
+    await _tool_by_name(tools_base, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "BASE"})
+    await _tool_by_name(tools_other, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "OTHER"})
+
+    assert await _list_dirs(store) == ["~access-"]
+    assert len(await _list_dirs(store, "~access-")) == 2
+    read_base = await _tool_by_name(tools_base, "file_access_read").invoke(arguments={"file_name": "f.txt"})
+    read_other = await _tool_by_name(tools_other, "file_access_read").invoke(arguments={"file_name": "f.txt"})
+    assert _text(read_base[0]) == "BASE"
+    assert _text(read_other[0]) == "OTHER"
+
+
+async def test_session_scoped_provider_fails_closed_without_session_or_scope() -> None:
+    """Session-scoped mode must raise instead of falling back to the shared store root."""
+    provider = FileAccessProvider(store=InMemoryAgentFileStore(), session_scoped=True)
+    session = AgentSession()
+    context = SessionContext(session_id=None, input_messages=[])
+
+    with pytest.raises(ValueError, match="session"):
+        await provider.before_run(agent=None, session=session, context=context, state={})
+
+
+async def test_session_scoped_provider_scope_overrides_session(chat_client_base: SupportsChatGetResponse) -> None:
+    """An explicit scope must group files across sessions and win over the session id."""
+    store = InMemoryAgentFileStore()
+    tools_a = await _prepare_access_tools(
+        chat_client_base, store=store, session_id="session-a", session_scoped=True, scope="tenant-1"
+    )
+    tools_b = await _prepare_access_tools(
+        chat_client_base, store=store, session_id="session-b", session_scoped=True, scope="tenant-1"
+    )
+
+    await _tool_by_name(tools_a, "file_access_write").invoke(arguments={"file_name": "shared.md", "content": "SHARED"})
+    read_b = await _tool_by_name(tools_b, "file_access_read").invoke(arguments={"file_name": "shared.md"})
+
+    assert _text(read_b[0]) == "SHARED"
+    assert await _list_dirs(store) == ["~access-"]
+    assert len(await _list_dirs(store, "~access-")) == 1
+
+
+async def test_session_scoped_provider_grep_returns_session_relative_names(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Grep results must stay relative to the session root, not the store root or the session folder."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+
+    await _tool_by_name(tools, "file_access_write").invoke(
+        arguments={"file_name": "docs/notes.txt", "content": "hello world"}
+    )
+    payload = json.loads(
+        _text((await _tool_by_name(tools, "file_access_grep").invoke(arguments={"regex_pattern": "hello"}))[0])
+    )
+
+    assert payload[0]["file_name"] == "docs/notes.txt"
+
+
+async def test_session_scoped_disabled_keeps_shared_store_semantics(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """Default mode must keep writing to the shared store root without session folders."""
+    store = InMemoryAgentFileStore()
+    tools_a = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a")
+    tools_b = await _prepare_access_tools(chat_client_base, store=store, session_id="session-b")
+
+    await _tool_by_name(tools_a, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "AAA"})
+    await _tool_by_name(tools_b, "file_access_write").invoke(
+        arguments={"file_name": "notes.txt", "content": "BBB", "overwrite": True}
+    )
+
+    assert await _list_dirs(store) == []
+    assert await _list_files(store) == ["notes.txt"]
+    read_b = await _tool_by_name(tools_b, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
+    assert _text(read_b[0]) == "BBB"
+
+
+def test_session_scoped_provider_uses_file_access_namespace_prefix() -> None:
+    """The session key derivation must use the file-access-specific encoded prefix."""
+    assert _storage_key_segment("Session-a", encoded_prefix="~access-") != _storage_key_segment(
+        "Session-a", encoded_prefix="~scope-"
+    )
+
+
+async def test_session_scoped_ls_rejects_parent_traversal(chat_client_base: SupportsChatGetResponse) -> None:
+    """A '..' directory must not escape the session workspace, even against a permissive store."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+    await _tool_by_name(tools, "file_access_write").invoke(arguments={"file_name": "notes.txt", "content": "AAA"})
+
+    result = await _tool_by_name(tools, "file_access_ls").invoke(arguments={"directory": ".."})
+
+    assert "Could not list directory" in _text(result[0])
+    assert await _list_dirs(store) == ["~access-"]
+    assert await _list_dirs(store, "~access-") == ["session-a"]
+
+
+async def test_session_scoped_grep_rejects_parent_traversal(chat_client_base: SupportsChatGetResponse) -> None:
+    """A '..' search directory must not reach sibling sessions' files."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", session_scoped=True)
+    await _tool_by_name(tools, "file_access_write").invoke(
+        arguments={"file_name": "notes.txt", "content": "hello world"}
+    )
+
+    result = await _tool_by_name(tools, "file_access_grep").invoke(
+        arguments={"regex_pattern": "hello", "directory": ".."}
+    )
+
+    assert "Could not search files" in _text(result[0])
+
+
+async def test_session_scoped_namespace_does_not_collide_with_file_memory(
+    chat_client_base: SupportsChatGetResponse,
+) -> None:
+    """File access and file memory working folders must stay distinct on a shared store root."""
+    store = InMemoryAgentFileStore()
+    access_tools = await _prepare_access_tools(
+        chat_client_base, store=store, session_id="session-a", session_scoped=True
+    )
+    memory_provider = FileMemoryProvider(store=store)
+    memory_session = AgentSession(session_id="session-a")
+    memory_context = SessionContext(session_id="session-a", input_messages=[])
+    await memory_provider.before_run(agent=None, session=memory_session, context=memory_context, state={})
+    memory_tools = {tool.name: tool for tool in memory_context.tools}
+
+    await _tool_by_name(access_tools, "file_access_write").invoke(
+        arguments={"file_name": "notes.txt", "content": "ACCESS"}
+    )
+    await memory_tools["file_memory_write"].invoke(arguments={"file_name": "notes.txt", "content": "MEMORY"})
+
+    assert sorted(await _list_dirs(store)) == ["session-a", "~access-"]
+    read_access = await _tool_by_name(access_tools, "file_access_read").invoke(arguments={"file_name": "notes.txt"})
+    read_memory = await memory_tools["file_memory_read"].invoke(arguments={"file_name": "notes.txt"})
+    assert _text(read_access[0]) == "ACCESS"
+    assert _text(read_memory[0]) == "MEMORY"
+
+
+async def test_scope_alone_enables_scoped_mode(chat_client_base: SupportsChatGetResponse) -> None:
+    """A non-empty scope enables scoped mode without the session_scoped flag."""
+    store = InMemoryAgentFileStore()
+    tools = await _prepare_access_tools(chat_client_base, store=store, session_id="session-a", scope="tenant-1")
+
+    await _tool_by_name(tools, "file_access_write").invoke(arguments={"file_name": "f.txt", "content": "SCOPED"})
+
+    assert await _list_dirs(store) == ["~access-"]
+    inner_dirs = await _list_dirs(store, "~access-")
+    assert len(inner_dirs) == 1
+    assert await _list_files(store, f"~access-/{inner_dirs[0]}") == ["f.txt"]
+
+    # A scope alone must also satisfy before_run when no session id is available.
+    provider = FileAccessProvider(store=store, scope="tenant-1")
+    context = SessionContext(session_id=None, input_messages=[])
+    await provider.before_run(agent=None, session=AgentSession(), context=context, state={})
+
+
+async def test_filesystem_delete_is_file_only_and_delete_directory_matches_in_memory(
+    tmp_path: Path,
+) -> None:
+    """FileSystemAgentFileStore.delete must reject directories exactly like the
+    in-memory backend, and delete_directory must release an empty directory."""
+
+    async def in_memory_mirror() -> tuple[InMemoryAgentFileStore, FileSystemAgentFileStore]:
+        memory_store = InMemoryAgentFileStore()
+        fs_root = tmp_path / "root"
+        fs_store = FileSystemAgentFileStore(fs_root)
+        for store in (memory_store, fs_store):
+            await store.create_directory("sessions/s1")
+            await store.write("sessions/s1/state.txt", "data")
+        return memory_store, fs_store
+
+    memory_store, fs_store = await in_memory_mirror()
+
+    # Backend parity: deleting a directory returns False on both backends.
+    assert await fs_store.delete("sessions/s1") is False
+    assert await memory_store.delete("sessions/s1") is False
+
+    # Deleting the file first leaves the (now empty) directory in place.
+    assert await fs_store.delete("sessions/s1/state.txt") is True
+    assert await memory_store.delete("sessions/s1/state.txt") is True
+    for store in (fs_store, memory_store):
+        assert [entry.name for entry in await store.list_children("sessions/s1")] == []
+
+    # delete_directory releases the empty directory on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is True
+    assert await memory_store.delete_directory("sessions/s1") is True
+    for store in (fs_store, memory_store):
+        assert await store.list_children("sessions") == []
+
+    # A second release of the same path reports False on both backends.
+    assert await fs_store.delete_directory("sessions/s1") is False
+    assert await memory_store.delete_directory("sessions/s1") is False
+
+    # The empty path is the store root, not an explicitly created directory:
+    # both backends must refuse it identically (previously the filesystem
+    # backend rmdir'd its configured root and returned True while the
+    # in-memory store raised on the same call).
+    for empty in ("", "   "):
+        assert await fs_store.delete_directory(empty) is False
+        assert await memory_store.delete_directory(empty) is False
+    assert fs_store._root_path.is_dir()
+
+
+async def test_in_memory_store_delete_is_file_only() -> None:
+    """delete() must stay file-only: a directory path is never removed, matching
+    FileSystemAgentFileStore.delete on the same input (backend parity)."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete("sessions/s1") is False
+    assert await store.delete("sessions/s1/state.txt") is False
+    children = await store.list_children("sessions")
+    assert [entry.name for entry in children] == ["s1"]
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete("sessions/s2") is False
+    assert await store.delete("sessions") is False
+
+    # The emptied directory stays listed, exactly like an empty directory on a filesystem.
+    entries = await store.list_children("sessions")
+    assert [entry.name for entry in entries] == ["s1", "s2"]
+
+
+async def test_in_memory_store_delete_directory_releases_empty_explicit_directory() -> None:
+    """delete_directory() releases an empty explicitly created directory so a
+    session-scoped working folder does not stay in the shared map forever."""
+    store = InMemoryAgentFileStore()
+    await store.create_directory("sessions/s1")
+
+    assert await store.delete_directory("sessions/s1") is True
+    children = await store.list_children("sessions")
+    assert children == []
+
+    await store.create_directory("sessions/s2")
+    await store.write("sessions/s2/state.txt", "data")
+    assert await store.delete_directory("sessions/s2") is False
+    assert await store.delete("sessions/s2/state.txt") is True
+    assert await store.delete_directory("sessions/s2") is True
+    assert await store.delete_directory("sessions") is True
+
+
+async def test_in_memory_store_rejects_paths_beyond_the_complexity_bound() -> None:
+    """A path deeper than the shared bound is rejected before any ancestor
+    prefix is materialized, so one write cannot retain quadratic memory in the
+    path depth. The error matches what the OS raises for the same input on the
+    filesystem backend (ENAMETOOLONG)."""
+    import errno
+
+    store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(path, "x")
+
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    # Nothing was stored and no ancestor prefixes were retained.
+    assert store._files == {}
+    assert store._dir_counts == {}
+    # Reads of the same path hit the same validation, never the index.
+    with pytest.raises(OSError) as read_info:
+        await store.read(path)
+    assert read_info.value.errno == errno.ENAMETOOLONG
+
+    # A total length past the bound is refused the same way even when shallow.
+    with pytest.raises(OSError) as long_info:
+        await store.write("/".join(["b" * 3000, "c" * 3000]), "x")
+    assert long_info.value.errno == errno.ENAMETOOLONG
+    assert store._files == {}
+
+
+async def test_in_memory_store_accepts_deep_paths_within_the_bound() -> None:
+    """Legitimate deep paths (deeper than any realistic hierarchy) still work,
+    and the retention of the directory index stays linear in the stored path."""
+    store = InMemoryAgentFileStore()
+    path = "/".join(["d"] * 200 + ["f"])
+
+    await store.write(path, "x")
+
+    assert await store.read(path) == "x"
+    # Every retained ancestor key is a prefix of the one stored path, so the
+    # index is bounded by a small constant times the path length.
+    retained = sum(len(k) for k in store._dir_counts)
+    assert retained < 200 * len(path)
+
+
+def _windows_long_paths_disabled() -> bool:
+    """Return whether this host is Windows with long-path support turned off.
+
+    Read-only: the registry value is queried, never written. The Windows default is
+    ``0`` when the value or key is absent. The concept does not apply elsewhere, so
+    this returns ``False`` on every other platform.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\FileSystem") as key:
+            enabled, _ = winreg.QueryValueEx(key, "LongPathsEnabled")
+    except OSError:
+        return True
+    return not enabled
+
+
+async def test_filesystem_store_matches_in_memory_complexity_bound(tmp_path) -> None:
+    """Both backends refuse the same over-bound path with the same errno, so
+    backend substitution is not observable on the bound either.
+
+    That agreement stops at the OS bound. On Windows without long-path support a
+    200-segment key is still legal for the store itself but not for the filesystem,
+    so the within-bound half expects the normalized ``ENAMETOOLONG`` there.
+    """
+    import errno
+
+    fs_store = FileSystemAgentFileStore(str(tmp_path))
+    mem_store = InMemoryAgentFileStore()
+    path = "/".join(["a"] * 8000 + ["f"])
+
+    with pytest.raises(OSError) as fs_info:
+        await fs_store.write(path, "x")
+    with pytest.raises(OSError) as mem_info:
+        await mem_store.write(path, "x")
+
+    assert fs_info.value.errno == errno.ENAMETOOLONG
+    assert mem_info.value.errno == errno.ENAMETOOLONG
+
+    within = "/".join(["d"] * 200 + ["f"])
+    await mem_store.write(within, "x")
+    assert await mem_store.read(within) == "x"
+
+    if _windows_long_paths_disabled():
+        with pytest.raises(OSError) as within_info:
+            await fs_store.write(within, "x")
+        assert within_info.value.errno == errno.ENAMETOOLONG
+        # The path is not reachable for the filesystem backend, so it reads as absent.
+        assert await fs_store.read(within) is None
+    else:
+        await fs_store.write(within, "x")
+        assert await fs_store.read(within) == "x"
+
+
+@pytest.mark.parametrize("failure_point", ["mkdir", "open"])
+async def test_filesystem_store_normalizes_windows_path_too_long_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure_point: str
+) -> None:
+    """An OS "path too long" failure is reported as ``ENAMETOOLONG``.
+
+    Windows reports an absolute path past its limit as a missing path, which CPython
+    surfaces as ``FileNotFoundError``; without the rewrite the store reports a path that
+    is merely too long as a missing file. The failure is injected at both points where
+    the store touches the OS and the platform flag is pinned, so the test also runs on
+    CI hosts that have long paths enabled.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    too_long = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified", "too-long")
+
+    def raise_too_long(*_args: object, **_kwargs: object) -> None:
+        raise too_long
+
+    if failure_point == "mkdir":
+        # A directory past its limit is what a real host refuses, and it still creates the
+        # prefixes below the limit first; the rewrite checks for one of those.
+        real_mkdir = Path.mkdir
+        key = "/".join(["d" * 40] * 8)  # absolute path well past both limits
+
+        def length_aware_mkdir(self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False) -> None:
+            if len(str(self)) >= 248:
+                # Mimic pathlib's recursion: create the deepest prefix that is still legal,
+                # then refuse, exactly as the OS does.
+                prefix = self
+                while len(str(prefix)) >= 248 and prefix.parent != prefix:
+                    prefix = prefix.parent
+                if prefix != self and len(str(prefix)) < 248:
+                    real_mkdir(prefix, parents=True, exist_ok=True)
+                raise_too_long()
+            real_mkdir(self, mode, parents, exist_ok)
+
+        monkeypatch.setattr(Path, "mkdir", length_aware_mkdir)
+    else:
+        # Grow the parent until it is just inside the directory limit, then size the file
+        # name from the current length so the absolute path is guaranteed to reach the
+        # file limit wherever ``tmp_path`` happens to live.
+        segments: list[str] = []
+        current = len(str(tmp_path))
+        while current + 1 + 34 <= 247:
+            segments.append("d" * 34)
+            current += 1 + 34
+        key = "/".join([*segments, "f" * max(1, 260 - current - 1)])
+        monkeypatch.setattr(os, "open", raise_too_long)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.__cause__ is too_long
+
+
+@pytest.mark.skipif(_windows_long_paths_disabled(), reason="this host rejects paths past MAX_PATH")
+async def test_filesystem_store_never_rejects_a_path_past_the_windows_limit(tmp_path: Path) -> None:
+    """The Windows limits only rename a failure; they never reject a path up front.
+
+    On a host that supports long paths, the key that fails on a legacy host must still be
+    written and read. A length check applied before the OS call would break exactly this
+    case, which is why the rewrite runs only inside an ``except`` block.
+    """
+    store = FileSystemAgentFileStore(str(tmp_path))
+    key = "/".join(["d" * 40] * 8)
+    await store.write(key, "payload")
+    assert await store.read(key) == "payload"
+
+
+async def test_filesystem_store_propagates_other_file_not_found_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``FileNotFoundError`` that is not the Windows over-long-path error keeps
+    its type and identity, so a genuinely missing parent still reads as missing."""
+    import errno
+
+    store = FileSystemAgentFileStore(str(tmp_path))
+    missing = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified")
+
+    def raise_missing(*_args: object, **_kwargs: object) -> None:
+        raise missing
+
+    monkeypatch.setattr(Path, "mkdir", raise_missing)
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        await store.write("nested/file.txt", "x")
+
+    assert exc_info.value is missing
+
+
+async def test_filesystem_store_measures_long_paths_in_utf16_code_units(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The Windows limit is compared in UTF-16 code units, not Python code points.
+
+    A supplementary character such as an emoji is one code point but two UTF-16 units.
+    A path one code point short of 260 can therefore already have reached the Windows
+    limit, and must still be reported as too long.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    root = str(store.root_path)
+    key = "f" * (257 - len(root)) + "\U0001f600"
+    target = store.root_path / key
+    # 259 code points, 260 UTF-16 units: only the Windows length has reached the limit.
+    assert len(str(target)) == 259
+    assert len(str(target).encode("utf-16-le")) // 2 == 260
+
+    too_long = FileNotFoundError(errno.ENOENT, "The system cannot find the path specified")
+
+    def raise_too_long(*_args: object, **_kwargs: object) -> None:
+        raise too_long
+
+    monkeypatch.setattr(os, "open", raise_too_long)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert not isinstance(exc_info.value, FileNotFoundError)
+    assert exc_info.value.errno == errno.ENAMETOOLONG
+    assert exc_info.value.__cause__ is too_long
+
+
+@pytest.mark.parametrize("error_type", [FileExistsError, PermissionError])
+async def test_filesystem_store_preserves_non_missing_errors_on_long_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error_type: type[OSError]
+) -> None:
+    """Collisions and permission failures on an over-long path keep their own type.
+
+    Only the legacy "missing path" symptom is rewritten. With long-path support enabled
+    Windows reports an existing file as ``FileExistsError`` and a refusal as
+    ``PermissionError``; relabeling either as a length problem would hide the real cause.
+    """
+    import errno
+
+    monkeypatch.setattr("agent_framework._harness._file_access._WINDOWS_PATH_LIMITS_APPLY", True)
+    store = FileSystemAgentFileStore(str(tmp_path))
+    key = "f" * (260 - len(str(store.root_path)) - 1)
+    error_number = errno.EEXIST if error_type is FileExistsError else errno.EACCES
+    error = error_type(error_number, "original failure")
+    assert len(str(store.root_path / key)) == 260
+
+    def raise_error(*_args: object, **_kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(os, "open", raise_error)
+
+    with pytest.raises(OSError) as exc_info:
+        await store.write(key, "x")
+
+    assert exc_info.value is error
+    assert exc_info.value.errno == error_number

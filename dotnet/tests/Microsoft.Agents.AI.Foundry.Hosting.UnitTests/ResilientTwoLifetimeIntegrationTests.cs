@@ -20,6 +20,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Options;
 using CreateResponse = Azure.AI.AgentServer.Responses.Models.CreateResponse;
 using ResponseStreamEvent = Azure.AI.AgentServer.Responses.Models.ResponseStreamEvent;
 
@@ -124,8 +125,11 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         }
     }
 
-    [Fact]
-    public async Task StoppedHost_RecoversWorkflowWithCompleteOrderedOutputAsync()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(ServiceLifetime.Scoped)]
+    [InlineData(ServiceLifetime.Transient)]
+    public async Task StoppedHost_RecoversWorkflowWithCompleteOrderedOutputAsync(ServiceLifetime? factoryLifetime)
     {
         // Arrange
         string stateRoot = Path.Combine(
@@ -151,7 +155,9 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                 Directory.CreateDirectory(checkpointRoot)))
             {
                 WebApplication firstHost = await StartServerAsync(
-                    BuildCountdownWorkflowAgent(coordinator, checkpointStore),
+                    "countdown-workflow",
+                    () => BuildCountdownWorkflowAgent(coordinator, checkpointStore),
+                    factoryLifetime,
                     new FoundryAgentSessionStore(storeName: sessionStoreName),
                     coordinator);
                 try
@@ -164,6 +170,11 @@ public sealed class ResilientTwoLifetimeIntegrationTests
                         input: "Count down from 6");
                     await coordinator.Blocked.Task.WaitAsync(TimeSpan.FromSeconds(15));
                     await coordinator.ExpectedCheckpointProcessed.Task.WaitAsync(
+                        TimeSpan.FromSeconds(15));
+                    await WaitForPersistedOutputCountAsync(
+                        stateRoot,
+                        responseId,
+                        expectedCount: 3,
                         TimeSpan.FromSeconds(15));
 
                     using CancellationTokenSource stopTimeout =
@@ -187,7 +198,9 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             using var recoveryCheckpointStore = new FileSystemJsonCheckpointStore(
                 Directory.CreateDirectory(checkpointRoot));
             await using WebApplication secondHost = await StartServerAsync(
-                BuildCountdownWorkflowAgent(coordinator, recoveryCheckpointStore),
+                "countdown-workflow",
+                () => BuildCountdownWorkflowAgent(coordinator, recoveryCheckpointStore),
+                factoryLifetime,
                 new FoundryAgentSessionStore(storeName: sessionStoreName));
             using HttpClient secondClient = GetClient(secondHost);
             JsonElement completed = await WaitForTerminalAsync(
@@ -223,19 +236,37 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         }
     }
 
-    private static async Task<WebApplication> StartServerAsync(
+    private static Task<WebApplication> StartServerAsync(
         AIAgent agent,
+        AgentSessionStore sessionStore,
+        CountdownRecoveryCoordinator? recoveryCoordinator = null) =>
+        StartServerAsync(agent.Name!, () => agent, factoryLifetime: null, sessionStore, recoveryCoordinator);
+
+    /// <summary>
+    /// Starts a host that registers the agent instance with <c>AddFoundryResponses(agent)</c> when
+    /// <paramref name="factoryLifetime"/> is <see langword="null"/>, or with the factory overload and
+    /// that lifetime otherwise.
+    /// </summary>
+    private static async Task<WebApplication> StartServerAsync(
+        string agentName,
+        Func<AIAgent> createAgent,
+        ServiceLifetime? factoryLifetime,
         AgentSessionStore sessionStore,
         CountdownRecoveryCoordinator? recoveryCoordinator = null)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
-        builder.Services.AddFoundryResponses(
-            agent,
-            sessionStore,
-            options => options.ResilientBackground = true);
-        builder.Services.AddSingleton<HostedSessionIsolationKeyProvider>(
-            new FakeHostedSessionIsolationKeyProvider());
+        var options = new FoundryResponsesServerOptions { ResilientBackground = true };
+        if (factoryLifetime is { } lifetime)
+        {
+            builder.Services.AddFoundryResponses(agentName, _ => createAgent(), lifetime, options);
+            builder.Services.AddFoundryAgentSessionStore(sessionStore);
+        }
+        else
+        {
+            builder.Services.AddFoundryResponses(createAgent(), sessionStore, options);
+        }
+
         builder.Services.AddLogging();
         if (recoveryCoordinator is not null)
         {
@@ -243,7 +274,8 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             builder.Services.AddSingleton<ResponseHandler>(serviceProvider =>
                 new CheckpointObservingResponseHandler(
                     ActivatorUtilities.CreateInstance<AgentFrameworkResponseHandler>(
-                        serviceProvider),
+                        serviceProvider,
+                        serviceProvider.GetRequiredService<IOptions<FoundryResponsesServerOptions>>().Value),
                     recoveryCoordinator));
         }
 
@@ -325,19 +357,70 @@ public sealed class ResilientTwoLifetimeIntegrationTests
         string stateRoot,
         string responseId)
     {
-        string path = GetPersistedResponsePath(stateRoot, responseId);
-        using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(path));
-        return document.RootElement.GetProperty("envelope").Clone();
+        return TryReadPersistedResponse(stateRoot, responseId, out JsonElement response)
+            ? response
+            : throw new InvalidOperationException($"Persisted response '{responseId}' was not found.");
     }
 
-    private static string GetPersistedResponsePath(
+    private static bool TryReadPersistedResponse(
         string stateRoot,
-        string responseId) =>
-        Path.Combine(
+        string responseId,
+        out JsonElement response)
+    {
+        response = default;
+        string directory = Path.Combine(
             stateRoot,
             "responses",
-            "envelopes",
-            $"{responseId}.json");
+            "partitions-v1",
+            "anonymous",
+            "envelopes");
+        if (!Directory.Exists(directory))
+        {
+            return false;
+        }
+
+        foreach (string path in Directory.GetFiles(directory, "*.json"))
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllBytes(path));
+            JsonElement envelope = document.RootElement.GetProperty("envelope");
+            if (string.Equals(
+                envelope.GetProperty("id").GetString(),
+                responseId,
+                StringComparison.Ordinal))
+            {
+                response = envelope.Clone();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task WaitForPersistedOutputCountAsync(
+        string stateRoot,
+        string responseId,
+        int expectedCount,
+        TimeSpan timeout)
+    {
+        DateTime deadline = DateTime.UtcNow + timeout;
+        int actualCount = 0;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (TryReadPersistedResponse(stateRoot, responseId, out JsonElement response))
+            {
+                actualCount = GetOutputTexts(response).Count;
+                if (actualCount >= expectedCount)
+                {
+                    return;
+                }
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(25));
+        }
+
+        throw new TimeoutException(
+            $"Persisted response '{responseId}' contained {actualCount} output items; expected at least {expectedCount}.");
+    }
 
     private static string GetOutputText(JsonElement response)
     {
@@ -593,6 +676,15 @@ public sealed class ResilientTwoLifetimeIntegrationTests
             AgentSessionStoreKey key,
             CancellationToken cancellationToken = default) =>
             inner.GetSessionAsync(
+                agent,
+                key,
+                cancellationToken);
+
+        public override ValueTask DeleteSessionAsync(
+            AIAgent agent,
+            AgentSessionStoreKey key,
+            CancellationToken cancellationToken = default) =>
+            inner.DeleteSessionAsync(
                 agent,
                 key,
                 cancellationToken);

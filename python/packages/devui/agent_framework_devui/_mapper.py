@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any, Union, cast
 from uuid import uuid4
 
-from agent_framework import Content, Message, UsageDetails, add_usage_details
+from agent_framework import Content, Message, UsageDetails, add_usage_details, get_namespaced_value
 from openai.types.responses import (
     Response,
     ResponseContentPartAddedEvent,
@@ -89,7 +89,16 @@ def _workflow_output_metadata(event_type: Any, executor_id: Any) -> dict[str, An
 
 
 def _is_refusal_text_content(content: Content) -> bool:
-    return content.type == "text" and content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY) == _MODEL_OUTPUT_REFUSAL
+    return (
+        content.type == "text"
+        and get_namespaced_value(
+            content.additional_properties,
+            "core",
+            _MODEL_OUTPUT_KIND_KEY,
+            content.additional_properties.get(_MODEL_OUTPUT_KIND_KEY),
+        )
+        == _MODEL_OUTPUT_REFUSAL
+    )
 
 
 def _message_content_part(content: Content) -> ResponseOutputText | ResponseOutputRefusal:
@@ -379,12 +388,11 @@ class MessageMapper:
                                     }
 
                         # Other output items (message, etc.) - track for later
-                        elif item_type == "message":
-                            if isinstance(item, ResponseOutputMessage):
-                                if item.id not in message_order:
-                                    message_order.append(item.id)
-                                if item.content:
-                                    complete_messages[item.id] = item
+                        elif item_type == "message" and isinstance(item, ResponseOutputMessage):
+                            if item.id not in message_order:
+                                message_order.append(item.id)
+                            if item.content:
+                                complete_messages[item.id] = item
 
                 # Handle function call arguments delta - accumulate arguments
                 elif event_type == "response.function_call_arguments.delta":
@@ -1423,7 +1431,7 @@ class MessageMapper:
         """Map TextReasoningContent to ResponseReasoningTextDeltaEvent."""
         return ResponseReasoningTextDeltaEvent(
             type="response.reasoning_text.delta",
-            delta=content.text,
+            delta=content.text or "",
             item_id=context["item_id"],
             output_index=context["output_index"],
             content_index=context["content_index"],

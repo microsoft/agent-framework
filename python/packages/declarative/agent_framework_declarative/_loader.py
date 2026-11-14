@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 
 import yaml
 from agent_framework import (
     Agent,
+    Content,
     SupportsChatGetResponse,
 )
 from agent_framework import (
@@ -43,11 +43,6 @@ from ._models import (
     _safe_mode_context,  # type: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 @experimental(feature_id=ExperimentalFeature.DECLARATIVE_AGENTS)
@@ -290,7 +285,7 @@ class AgentFactory:
         load_dotenv(dotenv_path=env_file_path, encoding=env_file_encoding)
 
     def create_agent_from_yaml_path(self, yaml_path: str | Path) -> Agent:
-        """Create a Agent from a YAML file path.
+        """Create an Agent from a YAML file path.
 
         This method does the following things:
 
@@ -298,7 +293,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             yaml_path: Path to the YAML file representation of a PromptAgent.
@@ -344,7 +339,7 @@ class AgentFactory:
         return self.create_agent_from_yaml(yaml_str)
 
     def create_agent_from_yaml(self, yaml_str: str) -> Agent:
-        """Create a Agent from a YAML string.
+        """Create an Agent from a YAML string.
 
         This method does the following things:
 
@@ -352,7 +347,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             yaml_str: YAML string representation of a PromptAgent.
@@ -417,7 +412,7 @@ class AgentFactory:
         return self.create_agent_from_dict(yaml.safe_load(yaml_str))
 
     def create_agent_from_dict(self, agent_def: dict[str, Any]) -> Agent:
-        """Create a Agent from a dictionary definition.
+        """Create an Agent from a dictionary definition.
 
         This method does the following things:
 
@@ -425,7 +420,7 @@ class AgentFactory:
         2. Validates that the loaded object is a PromptAgent.
         3. Creates the appropriate ChatClient based on the model provider and apiType.
         4. Parses the tools, options, and response format from the PromptAgent.
-        5. Creates and returns a Agent instance with the configured properties.
+        5. Creates and returns an Agent instance with the configured properties.
 
         Args:
             agent_def: Dictionary representation of a PromptAgent.
@@ -485,7 +480,7 @@ class AgentFactory:
         return agent
 
     async def create_agent_from_yaml_path_async(self, yaml_path: str | Path) -> Agent:
-        """Async version: Create a Agent from a YAML file path.
+        """Async version: Create an Agent from a YAML file path.
 
         This is the async counterpart to ``create_agent_from_dict`` and is useful when
         the rest of your setup is already async.
@@ -516,7 +511,7 @@ class AgentFactory:
         return await self.create_agent_from_yaml_async(yaml_str)
 
     async def create_agent_from_yaml_async(self, yaml_str: str) -> Agent:
-        """Async version: Create a Agent from a YAML string.
+        """Async version: Create an Agent from a YAML string.
 
         Use this method when the surrounding call site is already async and you
         want to build an agent directly from YAML text.
@@ -547,7 +542,7 @@ class AgentFactory:
         return await self.create_agent_from_dict_async(yaml.safe_load(yaml_str))
 
     async def create_agent_from_dict_async(self, agent_def: dict[str, Any]) -> Agent:
-        """Async version: Create a Agent from a dictionary definition.
+        """Async version: Create an Agent from a dictionary definition.
 
         This is the async counterpart to ``create_agent_from_dict`` and is useful when
         the rest of your setup is already async.
@@ -740,10 +735,12 @@ class AgentFactory:
             chat_options["stop"] = options.stopSequences
         if options.allowMultipleToolCalls is not None:
             chat_options["allow_multiple_tool_calls"] = options.allowMultipleToolCalls
-        if (chat_tool_mode := options.additionalProperties.pop("chatToolMode", None)) is not None:
+        additional_properties = options.additionalProperties.copy()
+        if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if options.additionalProperties:
-            chat_options["additional_chat_options"] = options.additionalProperties
+        # Pass the rest through as regular options; the typed fields above win on conflicts.
+        for key, value in additional_properties.items():
+            chat_options.setdefault(key, value)
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:
@@ -761,11 +758,34 @@ class AgentFactory:
                     for binding in tool_resource.bindings:
                         if binding.name and (func := self.bindings.get(binding.name)):
                             break
+                registered_tool = func if isinstance(func, AFFunctionTool) else None
+                approval_mode: Literal["always_require", "never_require"] | None = None
+                if registered_tool:
+                    if registered_tool.approval_mode == "always_require":
+                        approval_mode = "always_require"
+                    elif registered_tool.approval_mode == "never_require":
+                        approval_mode = "never_require"
+                result_parser = registered_tool.result_parser if registered_tool else None
+                if registered_tool is not None and callable(result_parser):
+                    registered_result_parser = result_parser
+
+                    def preserve_parser_exception_count(result: Any) -> str | list[Content]:
+                        try:
+                            return registered_result_parser(result)
+                        except Exception:
+                            registered_tool.invocation_exception_count += 1
+                            raise
+
+                    result_parser = preserve_parser_exception_count
                 return AFFunctionTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
                     input_model=tool_resource.parameters.to_json_schema() if tool_resource.parameters else None,
                     func=func,
+                    approval_mode=approval_mode,
+                    kind=registered_tool.kind if registered_tool else None,
+                    additional_properties=registered_tool.additional_properties if registered_tool else None,
+                    result_parser=result_parser,
                 )
             case WebSearchTool():
                 result: dict[str, Any] = {"type": "web_search_preview"}

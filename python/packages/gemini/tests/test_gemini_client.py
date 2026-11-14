@@ -7,32 +7,40 @@ import datetime
 import json
 import logging
 import os
-from typing import Any, cast
+from typing import Any, NotRequired, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agent_framework import Agent, Content, FunctionTool, Message
+from agent_framework import Agent, Content, FunctionTool, Message, ResponseStream
 from agent_framework._settings import SecretString
 from agent_framework.exceptions import (
     ChatClientException,
     ChatClientInvalidAuthException,
     ChatClientInvalidRequestException,
+    ContentError,
 )
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import BaseModel
-from typing_extensions import NotRequired, TypedDict
+from typing_extensions import TypedDict
 
-from agent_framework_gemini import GeminiChatClient, GeminiChatOptions, RawGeminiChatClient, ThinkingConfig
+from agent_framework_gemini import (
+    GeminiChatClient,
+    GeminiChatOptions,
+    GeminiEmbeddingClient,
+    RawGeminiChatClient,
+    ThinkingConfig,
+)
 from agent_framework_gemini._feature_usage import FeatureIndex
 
 
 def _has_gemini_integration_credentials() -> bool:
-    """Return whether integration credentials for either Gemini API or Vertex AI appear to be configured."""
-    if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+    """Return whether Developer API or Enterprise credentials appear to be configured."""
+    if os.getenv("GOOGLE_API_KEY"):
         return True
 
-    if os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"true", "1", "yes", "on"}:
+    enterprise_mode = os.getenv("GOOGLE_GENAI_USE_ENTERPRISE") or os.getenv("GOOGLE_GENAI_USE_VERTEXAI") or ""
+    if enterprise_mode.lower() in {"true", "1", "yes", "on"}:
         return bool(
             os.getenv("GOOGLE_CLOUD_PROJECT")
             or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -47,7 +55,65 @@ skip_if_no_credentials = pytest.mark.skipif(
     reason="Gemini Developer API or Vertex AI credentials not set; skipping integration tests.",
 )
 
-_TEST_MODEL = os.getenv("GOOGLE_MODEL") or os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+_TEST_MODEL = os.getenv("GOOGLE_MODEL") or "gemini-2.5-flash-lite"
+
+
+@pytest.fixture(autouse=True)
+def clear_enterprise_env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate unit tests without removing the configured mode from integration tests."""
+    if request.node.get_closest_marker("integration") is None:
+        monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+
+
+@pytest.mark.parametrize("mode", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_enterprise_integration_gate_accepts_either_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_ENTERPRISE", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv(mode, "true")
+
+    assert _has_gemini_integration_credentials()
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("injected", [False, True])
+@pytest.mark.parametrize("fail_async_close", [False, True])
+async def test_gemini_client_context_ownership(client_type, injected: bool, fail_async_close: bool) -> None:
+    sdk_client = MagicMock()
+    sdk_client.aio.aclose = AsyncMock(side_effect=RuntimeError("close failed") if fail_async_close else None)
+    credential = MagicMock()
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=sdk_client):
+        client = client_type(
+            model="test-model",
+            enterprise=True,
+            project="test-project",
+            location="us-central1",
+            credentials=credential,
+            client=sdk_client if injected else None,
+        )
+    if fail_async_close and not injected:
+        with pytest.raises(RuntimeError, match="close failed"):
+            async with client:
+                pass
+        sdk_client.aio.aclose.assert_awaited_once()
+        sdk_client.close.assert_called_once()
+    else:
+        async with client as entered:
+            assert entered is client
+        await client.close()
+        assert sdk_client.aio.aclose.await_count == (0 if injected else 1)
+        assert sdk_client.close.call_count == (0 if injected else 1)
+    credential.close.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() not in {"true", "1", "yes", "on"},
+    reason="Enterprise mode not configured.",
+)
+def test_integration_fixture_preserves_enterprise_mode() -> None:
+    assert os.getenv("GOOGLE_GENAI_USE_ENTERPRISE", "").lower() in {"true", "1", "yes", "on"}
 
 
 class _ToolListItem(TypedDict):
@@ -145,6 +211,7 @@ def _make_response(
     response.candidates = [candidate]
     response.finish_reason = finish_reason
     response.model_version = model_version
+    response.prompt_feedback = None
 
     if prompt_tokens is not None or output_tokens is not None:
         usage = MagicMock()
@@ -223,7 +290,7 @@ def test_model_stored_on_instance() -> None:
 
 def test_client_created_from_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     """Initialises successfully when the API key is supplied via environment variable."""
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key-123")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key-123")
     client = GeminiChatClient(model="gemini-2.5-flash")
     assert client.model == "gemini-2.5-flash"
 
@@ -233,8 +300,6 @@ def test_client_created_from_google_api_key_env(
     monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
 ) -> None:
     """Initialises successfully when the SDK-standard Google API key environment variable is set."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
@@ -258,7 +323,6 @@ def test_client_created_from_google_api_key_env(
 
 def test_client_created_from_vertex_ai_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Initialises a Vertex AI client when the SDK-standard Vertex AI environment variables are set."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
@@ -278,8 +342,42 @@ def test_client_created_from_vertex_ai_env(monkeypatch: pytest.MonkeyPatch) -> N
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
-def test_google_settings_take_precedence_over_gemini_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prefers SDK-standard ``GOOGLE_*`` settings when both env families are present."""
+def test_chat_clients_created_from_enterprise_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both chat layers share the current Enterprise settings with the embedding client."""
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "global")
+
+    mock_client = MagicMock()
+    mock_client._api_client.vertexai = True
+    mock_client._api_client._http_options.base_url = "https://aiplatform.googleapis.com/"
+    with patch("agent_framework_gemini._sdk_client.genai.Client", return_value=mock_client) as factory:
+        raw = RawGeminiChatClient()
+        full = GeminiChatClient()
+
+    assert factory.call_count == 2
+    for call in factory.call_args_list:
+        assert call.kwargs["enterprise"] is True
+        assert "vertexai" not in call.kwargs
+        assert call.kwargs["project"] == "project"
+        assert call.kwargs["location"] == "global"
+        assert "api_key" not in call.kwargs
+    assert raw.service_url() == full.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_chat_rejects_conflicting_enterprise_and_vertex_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "true")
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "false")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+
+    with pytest.raises(ValueError, match="cannot disagree"):
+        GeminiChatClient(model="gemini-2.5-flash")
+
+
+def test_google_settings_are_used_when_gemini_aliases_are_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only ``GOOGLE_*`` settings configure the connector."""
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-model")
     monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
@@ -303,10 +401,40 @@ def test_google_settings_take_precedence_over_gemini_aliases(monkeypatch: pytest
     assert client.service_url() == "https://aiplatform.googleapis.com"
 
 
+def test_gemini_only_environment_is_not_supported(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_MODEL", raising=False)
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "legacy-key")
+    monkeypatch.setenv("GEMINI_MODEL", "legacy-model")
+
+    with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+        GeminiChatClient()
+
+    injected, _ = _make_gemini_client(model=None)
+    assert injected.model is None
+
+
+@pytest.mark.parametrize("google_key", ["", " "])
+def test_blank_google_key_does_not_fall_back_to_gemini_key(monkeypatch: pytest.MonkeyPatch, google_key: str) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", google_key)
+    monkeypatch.setenv("GEMINI_API_KEY", "legacy-key")
+    monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_LOCATION", raising=False)
+
+    with (
+        patch("agent_framework_gemini._sdk_client.genai.Client") as factory,
+        pytest.raises(ValueError, match="GOOGLE_API_KEY"),
+    ):
+        GeminiChatClient(model="gemini-2.5-flash")
+    factory.assert_not_called()
+
+
 def test_missing_api_key_raises_when_no_client_injected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Raises ValueError at construction when neither Gemini API nor Vertex AI settings are available."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
+    """Raises ValueError when the configured Google credentials are missing."""
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_GENAI_USE_VERTEXAI", raising=False)
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -321,8 +449,6 @@ def test_vertex_ai_express_mode_uses_api_key(
     monkeypatch: pytest.MonkeyPatch, api_key: str | SecretString | None
 ) -> None:
     """Passes the API key in Vertex AI express mode when no project/location pair is configured."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key-123")
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -345,7 +471,6 @@ def test_vertex_ai_express_mode_uses_api_key(
 
 def test_vertex_ai_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises a deterministic error when Vertex AI is enabled without any auth configuration."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
@@ -357,7 +482,6 @@ def test_vertex_ai_requires_configuration(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises a deterministic error when only one Vertex AI location setting is present."""
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
@@ -369,7 +493,6 @@ def test_vertex_ai_requires_project_and_location_together(monkeypatch: pytest.Mo
 
 async def test_missing_model_raises_on_get_response(monkeypatch: pytest.MonkeyPatch) -> None:
     """Raises ValueError at call time when no model is set on the client or in options."""
-    monkeypatch.delenv("GEMINI_MODEL", raising=False)
     monkeypatch.delenv("GOOGLE_MODEL", raising=False)
     client, mock = _make_gemini_client(model=None)  # type: ignore[arg-type]
     mock.aio.models.generate_content = AsyncMock()
@@ -455,6 +578,106 @@ async def test_get_response_model_from_response() -> None:
     response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
 
     assert response.model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when the response carries no model_version."""
+    client, mock = _make_gemini_client()
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+
+    response = await client.get_response(messages=[Message(role="user", contents=[Content.from_text("Hi")])])
+
+    assert response.model == "gemini-2.5-flash"
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_get_response_reports_requested_model_on_both_paths(stream: bool) -> None:
+    """Without a model_version, both paths report the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    raw = _make_response([_make_part(text="Hi")])
+    raw.model_version = None
+    mock.aio.models.generate_content = AsyncMock(return_value=raw)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([raw]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(
+            messages=messages, options={"model": "gemini-2.5-pro"}, stream=True
+        ).get_final_response()
+    else:
+        response = await client.get_response(messages=messages, options={"model": "gemini-2.5-pro"})
+
+    assert response.model == "gemini-2.5-pro"
+
+
+async def test_get_response_streaming_model_from_chunk() -> None:
+    """Populates the update model from the model_version field on each chunk."""
+    client, mock = _make_gemini_client()
+    chunks = [_make_response([_make_part(text="Hi")], model_version="gemini-2.5-pro-002")]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro-002"
+
+
+async def test_get_response_streaming_model_falls_back_to_configured_model() -> None:
+    """Falls back to the configured model when a chunk carries no model_version."""
+    client, mock = _make_gemini_client()
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-flash"
+
+
+async def test_get_response_streaming_model_falls_back_to_requested_model() -> None:
+    """Falls back to the model requested in options, not the client default."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    chunk = _make_response([_make_part(text="Hi")])
+    chunk.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([chunk]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+
+    assert updates[0].model == "gemini-2.5-pro"
+
+
+async def test_get_response_streaming_keeps_model_version_seen_earlier() -> None:
+    """A later chunk without model_version must not replace a version already seen in the stream."""
+    client, mock = _make_gemini_client(model="gemini-2.5-flash")
+    first = _make_response([_make_part(text="Hi")], finish_reason=None, model_version="gemini-2.5-pro-002")
+    last = _make_response([_make_part(text="!")], finish_reason="STOP")
+    last.model_version = None
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([first, last]))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"model": "gemini-2.5-pro"},
+        stream=True,
+    )
+    updates = [update async for update in stream]
+    final = await stream.get_final_response()
+
+    assert [update.model for update in updates] == ["gemini-2.5-pro-002", "gemini-2.5-pro-002"]
+    assert final.model == "gemini-2.5-pro-002"
 
 
 async def test_get_response_uses_model_from_options() -> None:
@@ -601,6 +824,12 @@ async def test_unmapped_finish_reason_still_attaches_usage_on_streamed_final_chu
     updates = [update async for update in stream]
 
     assert updates[-1].finish_reason == "TOO_MANY_TOOL_CALLS"
+    assert all(
+        content.merge_mode == "append" for update in updates for content in update.contents if content.type == "text"
+    )
+    assert all(
+        content.merge_mode == "replace" for update in updates for content in update.contents if content.type == "usage"
+    )
     assert any(c.type == "usage" for c in updates[-1].contents)
 
 
@@ -1127,6 +1356,7 @@ def test_server_side_tool_call_part_is_informational_only() -> None:
     assert contents[0].name == "FILE_SEARCH"
     assert contents[0].parse_arguments() == {"query": "docs"}
     assert contents[0].informational_only is True
+    assert contents[0].hosted is True
 
 
 def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
@@ -1151,6 +1381,38 @@ def test_server_side_tool_call_part_preserves_raw_part_on_replay() -> None:
     assert parts[0].tool_call.id == "search-1"
     assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
     assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_replays_from_first_class_fields_without_raw_part() -> None:
+    client, _ = _make_gemini_client()
+    raw_part = types.Part(
+        tool_call=types.ToolCall(id="search-1", tool_type=types.ToolType.FILE_SEARCH, args={"query": "docs"})
+    )
+    content = client._parse_parts([raw_part])[0]
+    content.raw_representation = None
+
+    parts = client._convert_message_contents([content], {})
+
+    assert len(parts) == 1
+    assert parts[0].tool_call is not None
+    assert parts[0].function_call is None
+    assert parts[0].tool_call.id == "search-1"
+    assert parts[0].tool_call.tool_type == types.ToolType.FILE_SEARCH
+    assert parts[0].tool_call.args == {"query": "docs"}
+
+
+def test_server_side_tool_call_rejects_unsupported_replay_tool_name() -> None:
+    client, _ = _make_gemini_client()
+    content = Content.from_function_call(
+        call_id="search-1",
+        name="UNKNOWN_SERVER_TOOL",
+        arguments={"query": "docs"},
+        informational_only=True,
+        hosted=True,
+    )
+
+    with pytest.raises(ContentError, match="supported tool name"):
+        client._convert_message_contents([content], {})
 
 
 def test_server_side_tool_response_part_preserves_raw_part_on_replay() -> None:
@@ -1468,6 +1730,20 @@ async def test_prepare_config_stop_sequences() -> None:
     assert config.stop_sequences == ["END", "STOP"]
 
 
+async def test_prepare_config_stop_single_string() -> None:
+    """A single stop string is sent as a one-item stop_sequences list."""
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Hi")]))
+
+    await client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        options={"stop": "END"},
+    )
+
+    config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
+    assert config.stop_sequences == ["END"]
+
+
 async def test_prepare_config_seed() -> None:
     """Forwards the seed option to GenerateContentConfig.seed for reproducible outputs."""
     client, mock = _make_gemini_client()
@@ -1584,8 +1860,8 @@ async def test_response_format_sets_json_mime_type() -> None:
     assert config.response_mime_type == "application/json"
 
 
-async def test_response_format_pydantic_model_sets_response_schema() -> None:
-    """A Pydantic model response_format must reach Gemini as response_schema, not just JSON mode.
+async def test_response_format_pydantic_model_sets_response_json_schema() -> None:
+    """A Pydantic model response_format must reach Gemini as response_json_schema, not just JSON mode.
 
     Without the schema, the model is asked for JSON but is not constrained by it, so it can
     return arbitrary JSON that then fails to parse into the requested model - the failure mode
@@ -1606,7 +1882,7 @@ async def test_response_format_pydantic_model_sets_response_schema() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == Reply.model_json_schema()
+    assert config.response_json_schema == Reply.model_json_schema()
 
 
 async def test_response_schema_option_wins_over_pydantic_response_format() -> None:
@@ -1696,7 +1972,7 @@ async def test_response_format_raw_json_schema_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_agent_default_options_response_format_raw_schema_added_to_config() -> None:
@@ -1710,7 +1986,7 @@ async def test_agent_default_options_response_format_raw_schema_added_to_config(
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_complex_raw_json_schema_preserved() -> None:
@@ -1753,7 +2029,7 @@ async def test_response_format_complex_raw_json_schema_preserved() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_schema_envelope_added_to_config() -> None:
@@ -1769,7 +2045,7 @@ async def test_response_format_json_schema_envelope_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_format_envelope_added_to_config() -> None:
@@ -1785,7 +2061,7 @@ async def test_response_format_format_envelope_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_direct_schema_key_added_to_config() -> None:
@@ -1801,7 +2077,7 @@ async def test_response_format_direct_schema_key_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_schema_envelope_preserves_empty_schema() -> None:
@@ -1816,7 +2092,7 @@ async def test_response_format_json_schema_envelope_preserves_empty_schema() -> 
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_anyof_raw_schema_added_to_config() -> None:
@@ -1831,7 +2107,7 @@ async def test_response_format_anyof_raw_schema_added_to_config() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_union_type_raw_schema_added_to_config() -> None:
@@ -1846,7 +2122,7 @@ async def test_response_format_union_type_raw_schema_added_to_config() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_response_format_json_object_does_not_set_schema() -> None:
@@ -1913,7 +2189,7 @@ async def test_response_format_raw_schema_kept_with_tools() -> None:
     )
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content.call_args.kwargs["config"]
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
     assert config.tools is not None
     assert _first_function_declaration(config).name == "calculator"
 
@@ -1935,7 +2211,7 @@ async def test_streaming_response_format_raw_schema_added_to_config() -> None:
 
     config: types.GenerateContentConfig = mock.aio.models.generate_content_stream.call_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema == schema
+    assert config.response_json_schema == schema
 
 
 async def test_streaming_response_format_mapping_populates_final_value() -> None:
@@ -2361,8 +2637,8 @@ def test_get_web_search_tool_returns_google_search_tool() -> None:
 def test_get_web_search_tool_with_params() -> None:
     """Parameters are forwarded to types.GoogleSearch."""
     time_range = types.Interval(
-        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.timezone.utc),
-        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.timezone.utc),
+        start_time=datetime.datetime(2024, 1, 1, tzinfo=datetime.UTC),
+        end_time=datetime.datetime(2024, 12, 31, tzinfo=datetime.UTC),
     )
     tool = GeminiChatClient.get_web_search_tool(
         search_types=types.SearchTypes(web_search=types.WebSearch()),
@@ -2595,6 +2871,58 @@ async def test_streaming_get_final_response() -> None:
     assert final.usage_details["output_token_count"] == 5
 
 
+async def test_streaming_updates_have_assistant_role() -> None:
+    """Streamed updates must carry the assistant role, matching the non-streaming response."""
+    client, mock = _make_gemini_client()
+    chunks = [
+        _make_response([_make_part(text="Hello ")], finish_reason=None, prompt_tokens=None, output_tokens=None),
+        _make_response([_make_part(text="world!")], finish_reason="STOP"),
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter(chunks))
+
+    stream = client.get_response(
+        messages=[Message(role="user", contents=[Content.from_text("Hi")])],
+        stream=True,
+    )
+
+    updates = [update async for update in stream]
+    assert [update.role for update in updates] == ["assistant", "assistant"]
+
+
+async def test_streaming_answer_after_tool_call_stays_in_history() -> None:
+    """The answer streamed after a tool call must be its own assistant message, not part of the
+    tool message, so that it is sent back to Gemini on the next turn."""
+
+    def get_weather(city: str) -> str:
+        """Get the weather for a city."""
+        return f"Sunny in {city}"
+
+    client, mock = _make_gemini_client()
+    model_calls = [
+        [_make_response([_make_part(function_call=("call-1", "get_weather", {"city": "Paris"}))])],
+        [_make_response([_make_part(text="It is sunny in Paris.")])],
+    ]
+    mock.aio.models.generate_content_stream = AsyncMock(side_effect=lambda **_: _async_iter(model_calls.pop(0)))
+    question = Message(role="user", contents=[Content.from_text("What's the weather in Paris?")])
+
+    stream = client.get_response(messages=[question], options={"tools": [get_weather]}, stream=True)
+    async for _ in stream:
+        pass
+    final = await stream.get_final_response()
+
+    assert [message.role for message in final.messages] == ["assistant", "tool", "assistant"]
+    assert [content.type for content in final.messages[1].contents] == ["function_result"]
+    assert final.messages[2].text == "It is sunny in Paris."
+
+    mock.aio.models.generate_content = AsyncMock(return_value=_make_response([_make_part(text="Paris.")]))
+    follow_up = Message(role="user", contents=[Content.from_text("Which city did I ask about?")])
+    await client.get_response(messages=[question, *final.messages, follow_up])
+
+    contents: list[types.Content] = mock.aio.models.generate_content.call_args.kwargs["contents"]
+    assert [content.role for content in contents] == ["user", "model", "user", "model", "user"]
+    assert _parts(contents[3])[0].text == "It is sunny in Paris."
+
+
 # The Gemini API returns a list of candidates, each representing a possible response from the model.
 # In practice only one candidate is returned, but the list can be empty or None if the request
 # was blocked by safety filters or the API returned an unexpected response.
@@ -2636,6 +2964,54 @@ async def test_empty_candidates_in_stream_does_not_raise(candidates: list | None
     assert updates[0].finish_reason is None
 
 
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_prompt_reports_content_filter(stream: bool) -> None:
+    """A prompt blocked by Gemini (no candidates, prompt_feedback.block_reason set) reports content_filter."""
+    client, mock = _make_gemini_client()
+    blocked = types.GenerateContentResponse.model_validate({
+        "promptFeedback": {"blockReason": "SAFETY"},
+        "usageMetadata": {"promptTokenCount": 8, "totalTokenCount": 8},
+        "modelVersion": "gemini-2.5-flash",
+    })
+    mock.aio.models.generate_content = AsyncMock(return_value=blocked)
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=_async_iter([blocked]))
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == ""
+    assert response.finish_reason == "content_filter"
+    assert response.usage_details is not None
+    assert response.usage_details["input_token_count"] == 8
+
+
+@pytest.mark.parametrize("stream", [False, True])
+async def test_blocked_continuation_hop_reports_content_filter(stream: bool) -> None:
+    """A blocked automatic-continuation hop after an earlier hop returned text still reports content_filter."""
+    client, mock = _make_gemini_client()
+    partial = {"candidates": [{"content": {"role": "model", "parts": [{"text": "partial answer"}]}}]}
+    blocked = {"promptFeedback": {"blockReason": "SAFETY"}}
+    # generate_content merges the hops: the earlier candidate stays, with its finish_reason cleared.
+    mock.aio.models.generate_content = AsyncMock(
+        return_value=types.GenerateContentResponse.model_validate({**partial, **blocked})
+    )
+    mock.aio.models.generate_content_stream = AsyncMock(
+        return_value=_async_iter([types.GenerateContentResponse.model_validate(hop) for hop in (partial, blocked)])
+    )
+    messages = [Message(role="user", contents=[Content.from_text("Hi")])]
+
+    if stream:
+        response = await client.get_response(messages=messages, stream=True).get_final_response()
+    else:
+        response = await client.get_response(messages=messages)
+
+    assert response.text == "partial answer"
+    assert response.finish_reason == "content_filter"
+
+
 # service_url
 
 
@@ -2657,6 +3033,79 @@ def test_service_url_falls_back_when_sdk_base_url_is_unavailable() -> None:
 
     assert gemini_client.service_url() == "https://generativelanguage.googleapis.com"
     assert vertex_client.service_url() == "https://aiplatform.googleapis.com"
+
+
+def test_injected_sdk_routing_is_shared_with_embeddings() -> None:
+    sdk = MagicMock()
+    sdk._api_client.vertexai = True
+    sdk._api_client._http_options.base_url = "https://custom.example.test/"
+
+    chat = GeminiChatClient(client=sdk, model="gemini-2.5-flash", vertexai=False)
+    embeddings = GeminiEmbeddingClient(client=sdk, model="gemini-embedding-2", vertexai=False)
+
+    assert chat._genai_client is embeddings._genai_client is sdk
+    assert chat._vertexai is embeddings._vertexai is True
+    assert chat.service_url() == embeddings.service_url() == "https://custom.example.test"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("env_var", ["GOOGLE_GENAI_USE_ENTERPRISE", "GOOGLE_GENAI_USE_VERTEXAI"])
+def test_injected_sdk_client_ignores_invalid_connection_settings(
+    client_type: type[RawGeminiChatClient],
+    env_var: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client is used as-is, so connection settings it does not need are never parsed."""
+    monkeypatch.setenv(env_var, "not-a-bool")
+    monkeypatch.setenv("GOOGLE_MODEL", "env-model")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = False
+    sdk._api_client._http_options.base_url = "https://generativelanguage.googleapis.com/"
+
+    client = client_type(client=sdk)
+
+    assert client._genai_client is sdk
+    assert client._vertexai is False
+    assert client.service_url() == "https://generativelanguage.googleapis.com"
+    assert client.model == "env-model"
+
+
+@pytest.mark.parametrize("client_type", [RawGeminiChatClient, GeminiChatClient])
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_without_mode_uses_explicit_mode(
+    client_type: type[RawGeminiChatClient],
+    mode_arg: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit mode stays the fallback when the injected SDK client does not expose its mode."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "not-a-bool")
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+    sdk._api_client._http_options.base_url = None
+
+    client = client_type(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: True}))
+
+    assert client._genai_client is sdk
+    assert client._vertexai is True
+    assert client.service_url() == "https://aiplatform.googleapis.com"
+
+
+@pytest.mark.parametrize("mode_arg", ["enterprise", "vertexai"])
+def test_injected_sdk_client_rejects_non_bool_explicit_mode(mode_arg: str) -> None:
+    """Explicit mode arguments are type-checked for an injected client, like for an owned one."""
+    sdk = MagicMock()
+    sdk._api_client.vertexai = None
+
+    with pytest.raises(ValueError, match=f"genai_use_{mode_arg}"):
+        RawGeminiChatClient(client=sdk, model="gemini-2.5-flash", **cast(dict[str, Any], {mode_arg: "false"}))
+
+
+def test_owned_client_still_validates_connection_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without an injected SDK client, invalid connection settings still fail construction."""
+    monkeypatch.setenv("GOOGLE_GENAI_USE_ENTERPRISE", "not-a-bool")
+
+    with pytest.raises(ValueError, match="GOOGLE_GENAI_USE_ENTERPRISE"):
+        GeminiChatClient(api_key="test-key", model="gemini-2.5-flash")
 
 
 # integration tests
@@ -2810,3 +3259,57 @@ async def test_integration_code_execution() -> None:
 
     assert response.messages
     assert response.messages[0].text
+
+
+async def test_streaming_closes_sdk_stream_when_consumer_stops_early() -> None:
+    """Stopping early must close the Gemini SDK stream instead of leaving it to garbage collection."""
+    closed = False
+
+    async def sdk_stream():
+        nonlocal closed
+        try:
+            yield _make_response([_make_part(text="first")], finish_reason=None)
+            yield _make_response([_make_part(text="second")])
+        finally:
+            closed = True
+
+    client, mock = _make_gemini_client()
+    mock.aio.models.generate_content_stream = AsyncMock(return_value=sdk_stream())
+    stream = client._inner_get_response(messages=[Message(role="user", contents=["hello"])], options={}, stream=True)
+    assert isinstance(stream, ResponseStream)
+    async with stream:
+        async for _ in stream:
+            break
+
+    assert closed
+
+
+@pytest.mark.parametrize("bad_count", [0, "0", 2, "2", -1])
+def test_candidate_count_other_than_one_is_rejected(bad_count: Any) -> None:
+    """``candidate_count`` other than 1 (or absent) is rejected up front.
+
+    Both the streaming and non-streaming parsers read ``candidates[0]`` only, so any
+    other count would be billed while all but the first candidate are silently dropped.
+    Zero is rejected along with counts above one (follow-up to the review on #9929).
+    """
+    client, _ = _make_gemini_client()
+
+    with pytest.raises(ChatClientInvalidRequestException, match="candidate_count"):
+        client._prepare_config({"candidate_count": bad_count}, None)
+
+
+@pytest.mark.parametrize("good_count", [1, "1"])
+def test_candidate_count_one_passes_through_normalized(good_count: Any) -> None:
+    """A single candidate is accepted and normalized to an int for the config."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({"candidate_count": good_count}, None)
+    assert config.candidate_count == 1
+
+
+def test_candidate_count_absent_leaves_config_unset() -> None:
+    """Without the option the config keeps Gemini's single-candidate default."""
+    client, _ = _make_gemini_client()
+
+    config = client._prepare_config({}, None)
+    assert config.candidate_count is None

@@ -15,15 +15,15 @@ import os
 import subprocess
 import sys
 import threading
-import time
+import weakref
 from collections.abc import Awaitable, Callable, Coroutine, Generator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, Literal, cast
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 import pytest
 from agent_framework import (
@@ -325,6 +325,9 @@ class _FakeSandbox:
     def snapshot(self) -> str:
         return "snapshot"
 
+    def interrupt_handle(self) -> SimpleNamespace:
+        return SimpleNamespace(kill=lambda: False)
+
     def restore(self, snapshot: Any) -> None:
         self.restore_calls.append(snapshot)
 
@@ -346,9 +349,7 @@ class _FakeSandboxWithoutOutputListing(_FakeSandbox):
         return []
 
 
-class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
-    writer_threads: list[threading.Thread] = []
-
+class _FakeSandboxWithUnlistedOutput(_FakeSandboxWithoutOutputListing):
     def run(self, code: str) -> _FakeResult:
         if (
             'Path("/output/report.txt").write_text("artifact", encoding="utf-8")' in code
@@ -356,15 +357,7 @@ class _FakeSandboxWithDelayedUnlistedOutput(_FakeSandboxWithoutOutputListing):
         ):
             if self.output_dir is None:
                 raise AssertionError("Expected output directory for delayed output test.")
-            output_dir = self.output_dir
-
-            def _write_file() -> None:
-                time.sleep(0.15)
-                Path(output_dir, "report.txt").write_text("artifact", encoding="utf-8")
-
-            writer_thread = threading.Thread(target=_write_file)
-            writer_thread.start()
-            self.writer_threads.append(writer_thread)
+            Path(self.output_dir, "report.txt").write_text("artifact", encoding="utf-8")
             return _FakeResult(success=True)
 
         return super().run(code)
@@ -520,6 +513,159 @@ def test_execute_code_tool_updates_approval_with_managed_tools() -> None:
 
     execute_code.add_tools([dangerous_compute])
     assert execute_code.approval_mode == "always_require"
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_execute_code_additional_properties_are_isolated_across_run_snapshots(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+) -> None:
+    properties: dict[str, Any] = {
+        "source_integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "agent_framework.security.principals": [{"tenant_id": "tenant-a", "user_id": "user-a"}],
+    }
+    codeact = entry_point(additional_properties=properties, _registry=_FakeRuntime())
+    template = codeact if isinstance(codeact, HyperlightExecuteCodeTool) else codeact._execute_code_tool
+
+    properties["agent_framework.security.principals"][0]["user_id"] = "mutated-input"
+    assert template.additional_properties is not None
+    assert template.additional_properties["agent_framework.security.principals"][0]["user_id"] == "user-a"
+
+    run_tool = template.create_run_tool()
+    template.additional_properties["agent_framework.security.principals"][0]["user_id"] = "mutated-template"
+
+    assert run_tool.additional_properties is not None
+    assert run_tool.additional_properties["source_integrity"] == "untrusted"
+    assert run_tool.additional_properties["agent_framework.security.principals"] == [
+        {"tenant_id": "tenant-a", "user_id": "user-a"}
+    ]
+
+    _close_execute_code_registry(template)
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("register_later", [False, True])
+@pytest.mark.parametrize(
+    "properties",
+    [
+        {"source_integrity": "untrusted"},
+        {"confidentiality": "private"},
+        {"max_allowed_confidentiality": "public"},
+        {"max_allowed_confidentiality": None},
+        {"accepts_untrusted": False},
+        {"standing_guidance": []},
+        {"agent_framework.security.principals": []},
+        {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_server_ifc_policy": "restrict"},
+        {"_mcp_trust_server_ifc": False},
+    ],
+)
+def test_codeact_warns_for_fides_tool_metadata(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    register_later: bool,
+    properties: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def annotated_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=None if register_later else annotated_tool, _registry=_FakeRuntime())
+        if register_later:
+            codeact.add_tools(annotated_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].levelname == "WARNING"
+    assert records[0].args == ("annotated_tool",)
+    assert codeact.get_tools()[0] is annotated_tool
+    assert annotated_tool.additional_properties == properties
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("properties", [None, {}, {"custom_property": False}])
+def test_codeact_does_not_warn_for_unannotated_tools(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    properties: dict[str, Any] | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties=properties)
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=plain_tool, _registry=_FakeRuntime())
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools()[0] is plain_tool
+
+
+def test_run_snapshot_warns_for_fides_metadata_added_after_registration(caplog: pytest.LogCaptureFixture) -> None:
+    @tool
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["accepts_untrusted"] = False
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+    assert annotated_tool.invocation_count == annotated_tool.invocation_exception_count == 0
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_codeact_does_not_repeat_fides_warning_for_unrelated_registration(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    @tool
+    def plain_tool(value: int) -> int:
+        return value
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact = entry_point(tools=annotated_tool, _registry=_FakeRuntime())
+        caplog.clear()
+        codeact.add_tools(plain_tool)
+
+    assert "FIDES" not in caplog.text
+    assert codeact.get_tools() == [annotated_tool, plain_tool]
+
+
+@pytest.mark.parametrize("entry_point", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+def test_codeact_warns_once_for_annotated_tool_replacement(
+    entry_point: type[HyperlightExecuteCodeTool] | type[HyperlightCodeActProvider],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(name="shared")
+    def original_tool(value: int) -> int:
+        return value
+
+    @tool(name="shared", additional_properties={"accepts_untrusted": False})
+    def replacement_tool(value: int) -> int:
+        return value
+
+    codeact = entry_point(tools=original_tool, _registry=_FakeRuntime())
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.add_tools(replacement_tool)
+
+    records = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.message
+    ]
+    assert len(records) == 1
+    assert records[0].args == ("shared",)
+    assert codeact.get_tools() == [replacement_tool]
 
 
 def test_execute_code_tool_replaces_tools_with_the_same_name() -> None:
@@ -1352,7 +1498,7 @@ async def test_execute_code_tool_preserves_result_when_post_cleanup_fails(
 
         recovered = await execute_code.invoke(arguments={"code": "fail"})
         assert not any(item.type == "data" for item in recovered)
-        assert any(item.type == "error" and item.error_details == "sandbox boom" for item in recovered)
+        assert any(item.type == "error" and item.error_details is None for item in recovered)
         assert len(_FakeSandbox.instances) == 2
         assert registry._entries == {}
     finally:
@@ -1415,13 +1561,15 @@ async def test_cleanup_failed_entry_disposes_directories_without_blocking_result
         _close_execute_code_registry(execute_code)
 
 
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
 async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    include_detailed_errors: bool,
 ) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
-    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path)
+    execute_code = HyperlightExecuteCodeTool(workspace_root=tmp_path, include_detailed_errors=include_detailed_errors)
     config = execute_code._build_run_config()
     registry = cast(Any, execute_code._registry)
     output_root = Path(registry._get_or_create_entry(config).output_dir.name)
@@ -1444,7 +1592,8 @@ async def test_execute_code_tool_preserves_exception_when_post_cleanup_fails(
     monkeypatch.setattr(execute_code_module, "_build_execution_contents", fail_build_contents)
 
     try:
-        with pytest.raises(RuntimeError, match="primary build failure"):
+        expected = "primary build failure" if include_detailed_errors else "Code execution failed."
+        with pytest.raises(RuntimeError, match=expected):
             await execute_code.invoke(arguments={"code": "create-output"})
         assert registry._entries == {}
     finally:
@@ -2104,6 +2253,100 @@ async def test_description_format_reuses_sandbox_cache(monkeypatch: pytest.Monke
         registry.close()
 
 
+@pytest.mark.parametrize("mutation", ["remove", "clear", "replace"])
+@pytest.mark.parametrize("cleanup", ["close", "discard"])
+async def test_sandbox_cache_retains_tool_identity_until_entry_removed(
+    monkeypatch: pytest.MonkeyPatch, mutation: str, cleanup: str
+) -> None:
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+
+    @tool(name="compute")
+    def original(a: int, b: int) -> int:
+        return a + b
+
+    original_ref = weakref.ref(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    del original
+
+    try:
+        await execute_code.invoke(arguments={"code": "None"})
+        if mutation == "remove":
+            execute_code.remove_tool("compute")
+        elif mutation == "clear":
+            execute_code.clear_tools()
+        else:
+            execute_code.add_tools(compute)
+
+        gc.collect()
+        assert original_ref() is not None
+        assert len(registry._entries) == 1
+
+        if cleanup == "close":
+            registry.close()
+        else:
+            registry._discard_entry(
+                cache_key=next(iter(registry._entries)), entry=next(iter(registry._entries.values()))
+            )
+            registry._cleanup_executor.submit(lambda: None).result(timeout=5)
+
+        gc.collect()
+        assert registry._entries == {}
+        assert original_ref() is None
+    finally:
+        registry.close()
+
+
+async def test_sandbox_cache_replacement_preserves_run_snapshots_and_identity_semantics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ValueEqualTool(FunctionTool):
+        def __eq__(self, other: object) -> bool:
+            return isinstance(other, FunctionTool) and self.name == other.name
+
+    calls: list[str] = []
+
+    def original_callback(a: int, b: int) -> int:
+        calls.append("original")
+        return a + b
+
+    def replacement_callback(a: int, b: int) -> int:
+        calls.append("replacement")
+        return a - b
+
+    _FakeSandbox.instances.clear()
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
+    registry = execute_code_module._SandboxRegistry()
+    original = ValueEqualTool(name="compute", func=original_callback)
+    replacement = ValueEqualTool(name="compute", func=replacement_callback)
+    assert original == replacement
+    with pytest.raises(TypeError):
+        hash(original)
+    execute_code = HyperlightExecuteCodeTool(tools=[original], _registry=registry)
+    previous_run = execute_code.create_run_tool()
+    code = 'print(call_tool("compute", a=20, b=22))'
+
+    try:
+        await previous_run.invoke(arguments={"code": "None"})
+        execute_code.remove_tool("compute")
+        execute_code.add_tools(replacement)
+        current_run = execute_code.create_run_tool()
+
+        result = await current_run.invoke(arguments={"code": code})
+        repeated_result = await current_run.invoke(arguments={"code": code})
+        assert result[0].text == repeated_result[0].text == "-2\n"
+        assert calls == ["replacement", "replacement"]
+        assert len(_FakeSandbox.instances) == 2
+
+        previous_result = await previous_run.invoke(arguments={"code": code})
+        assert previous_result[0].text == "42\n"
+        assert calls == ["replacement", "replacement", "original"]
+        assert len(_FakeSandbox.instances) == 2
+    finally:
+        registry.close()
+
+
 async def test_execute_code_tool_executes_with_structured_content(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
@@ -2140,37 +2383,49 @@ async def test_execute_code_tool_collects_output_files_without_backend_listing(
 async def test_execute_code_tool_waits_for_unlisted_output_files_to_appear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _FakeSandboxWithDelayedUnlistedOutput.writer_threads.clear()
-    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithDelayedUnlistedOutput)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithUnlistedOutput)
 
     execute_code = HyperlightExecuteCodeTool(
         file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
     )
-    result = await execute_code.invoke(
-        arguments={"code": 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")'}
-    )
+    try:
+        # Hide the file on the first poll without racing a background writer against the retry deadline.
+        with patch.object(
+            execute_code_module,
+            "_collect_output_relative_paths",
+            wraps=execute_code_module._collect_output_relative_paths,
+            side_effect=[set(), DEFAULT],
+        ) as collect_output_paths:
+            result = await execute_code.invoke(
+                arguments={"code": 'Path("/output/report.txt").write_text("artifact", encoding="utf-8")'}
+            )
 
-    for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
-        writer_thread.join()
-
-    assert any(item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result)
+        assert collect_output_paths.call_count == 2
+        assert any(
+            item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result
+        )
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 async def test_execute_code_tool_waits_for_dynamically_addressed_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _FakeSandboxWithDelayedUnlistedOutput.writer_threads.clear()
-    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithDelayedUnlistedOutput)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandboxWithUnlistedOutput)
     execute_code = HyperlightExecuteCodeTool(
         file_mounts=[FileMount(Path(__file__), "fixtures/source.py")],
     )
 
     try:
-        result = await execute_code.invoke(arguments={"code": "create-dynamic-delayed-output"})
+        with patch.object(
+            execute_code_module,
+            "_collect_output_relative_paths",
+            wraps=execute_code_module._collect_output_relative_paths,
+            side_effect=[set(), DEFAULT],
+        ) as collect_output_paths:
+            result = await execute_code.invoke(arguments={"code": "create-dynamic-delayed-output"})
 
-        for writer_thread in _FakeSandboxWithDelayedUnlistedOutput.writer_threads:
-            writer_thread.join()
-
+        assert collect_output_paths.call_count == 2
         assert any(
             item.type == "data" and item.additional_properties["path"] == "/output/report.txt" for item in result
         )
@@ -2219,22 +2474,29 @@ async def test_execute_code_tool_replaces_output_generation_after_empty_retry_wi
         second_result = await execute_code.invoke(arguments={"code": "fail"})
 
         assert not any(item.type == "data" for item in second_result)
-        assert any(item.type == "error" and item.error_details == "sandbox boom" for item in second_result)
+        assert any(item.type == "error" and item.error_details is None for item in second_result)
         assert len(_FakeSandbox.instances) == 2
     finally:
         release_cleanup.set()
         _close_execute_code_registry(execute_code)
 
 
-async def test_execute_code_tool_failure_returns_error_content(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_execute_code_tool_failure_returns_error_content(
+    monkeypatch: pytest.MonkeyPatch, include_detailed_errors: bool
+) -> None:
     _FakeSandbox.instances.clear()
     monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: _FakeSandbox)
 
-    execute_code = HyperlightExecuteCodeTool()
-    result = await execute_code.invoke(arguments={"code": "fail"})
+    execute_code = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    try:
+        result = await execute_code.invoke(arguments={"code": "fail"})
 
-    assert result[0].type == "error"
-    assert result[0].error_details == "sandbox boom"
+        assert result[0].type == "error"
+        assert result[0].error_details == ("sandbox boom" if include_detailed_errors else None)
+        assert ("sandbox boom" in json.dumps([item.to_dict() for item in result])) is include_detailed_errors
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_rejects_host_targets(
@@ -2273,6 +2535,9 @@ async def test_execute_code_tool_retries_allowed_domains_with_urls_when_backend_
 
         def snapshot(self) -> str:
             return "snapshot"
+
+        def interrupt_handle(self) -> SimpleNamespace:
+            return SimpleNamespace(kill=lambda: False)
 
         def restore(self, snapshot: Any) -> None:
             del snapshot
@@ -2381,6 +2646,30 @@ async def test_provider_forwards_output_limits_to_run_tool_and_serializable_stat
     json.dumps(state)
 
 
+@pytest.mark.parametrize("constructor", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("value", [True, "30", None, 0, -1, float("inf"), float("-inf"), float("nan")])
+def test_execution_timeout_requires_a_positive_finite_number(constructor: Any, value: Any) -> None:
+    with pytest.raises((TypeError, ValueError), match="execution_timeout_seconds"):
+        constructor(execution_timeout_seconds=value)
+
+
+async def test_provider_captures_execution_timeout_without_changing_sandbox_identity() -> None:
+    runtime = _FakeRuntime()
+    provider = HyperlightCodeActProvider(execution_timeout_seconds=0.25, _registry=runtime)
+    context = _FakeSessionContext()
+    state: dict[str, Any] = {}
+
+    await provider.before_run(agent=object(), session=None, context=cast(Any, context), state=state)
+    run_tool = context.tools[0][1][0]
+    assert isinstance(run_tool, HyperlightExecuteCodeTool)
+    await run_tool.invoke(arguments={"code": "None"})
+
+    assert runtime.calls[0][0].execution_timeout_seconds == 0.25
+    assert state[provider.source_id]["execution_timeout_seconds"] == 0.25
+    default_config = HyperlightExecuteCodeTool(_registry=runtime)._build_run_config()
+    assert runtime.calls[0][0].cache_key() == default_config.cache_key()
+
+
 async def test_output_limits_are_isolated_when_registry_is_shared(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2412,7 +2701,7 @@ async def test_output_limits_are_isolated_when_registry_is_shared(
     assert len(_FakeSandbox.instances) == 2
     assert [
         (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) for sandbox in _FakeSandbox.instances
-    ] == [("4B", "10B", 20), ("3B", "10B", 20)]
+    ] == [("4", "10", 20), ("3", "10", 20)]
 
 
 async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
@@ -2429,8 +2718,8 @@ async def test_default_output_limits_are_forwarded_to_hyperlight_sandbox(
 
     sandbox = _FakeSandbox.instances[0]
     assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == (
-        "5242880B",
-        "20971520B",
+        "5242880",
+        "20971520",
         20,
     )
 
@@ -2452,7 +2741,7 @@ async def test_custom_output_limits_are_forwarded_to_hyperlight_sandbox(
         _close_execute_code_registry(execute_code)
 
     sandbox = _FakeSandbox.instances[0]
-    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7B", "11B", 3)
+    assert (sandbox.max_file_size, sandbox.max_total_size, sandbox.max_file_count) == ("7", "11", 3)
 
 
 def test_execute_code_tool_uses_finite_default_output_limits() -> None:
@@ -2604,7 +2893,13 @@ async def test_execute_code_tool_rejects_sparse_file_with_real_sandbox(tmp_path:
     finally:
         _close_execute_code_registry(execute_code)
 
-    _assert_bounded_output_error(contents, "per-file output limit")
+    # Hyperlight 0.8 enforces the quota during the guest write, before the
+    # host-side materializer can report its more specific limit error.
+    assert not any(item.type == "data" and _decode_content_bytes(item) for item in contents)
+    errors = [item for item in contents if item.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].message == "Execution error"
+    assert errors[0].message == "Execution error"
 
 
 @pytest.mark.flaky
@@ -2701,10 +2996,6 @@ async def test_sandbox_code_failure_returns_nonzero_exit(restored_sandbox) -> No
 
 @pytest.mark.integration
 @skip_if_hyperlight_integration_tests_disabled
-@pytest.mark.skipif(
-    sys.platform == "win32" and sys.version_info < (3, 11),
-    reason="Hyperlight sandbox snapshot/restore crashes on Windows Python 3.10.",
-)
 async def test_sandbox_snapshot_restore_keeps_sandbox_functional(restored_sandbox) -> None:
     """Verify snapshot/restore cycle leaves the sandbox in a working state."""
     # Mutate the sandbox
@@ -3033,9 +3324,139 @@ async def test_make_sandbox_callback_propagates_exceptions() -> None:
         """Always fails."""
         raise RuntimeError("nope")
 
-    callback = execute_code_module._make_sandbox_callback(boom)
+    callback = execute_code_module._make_sandbox_callback(boom, include_detailed_errors=True)
     with pytest.raises(RuntimeError, match="nope"):
         callback(x=1)
+
+
+@pytest.mark.parametrize("failing_host_tool", [False, True], indirect=True)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_sandbox_callback_redacts_errors_unless_explicitly_enabled(
+    failing_host_tool: FunctionTool, host_error_detail: str, include_detailed_errors: bool
+) -> None:
+    callback = execute_code_module._make_sandbox_callback(
+        failing_host_tool, include_detailed_errors=include_detailed_errors
+    )
+
+    with pytest.raises(ValueError if include_detailed_errors else RuntimeError) as error:
+        callback()
+
+    assert (host_error_detail in str(error.value)) is include_detailed_errors
+    if not include_detailed_errors:
+        assert str(error.value) == "Host tool execution failed."
+        assert error.value.__suppress_context__
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_error_policy_preserves_callback_cancellation(
+    cancelled_host_tool: FunctionTool, include_detailed_errors: bool
+) -> None:
+    callback = execute_code_module._make_sandbox_callback(
+        cancelled_host_tool, include_detailed_errors=include_detailed_errors
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        callback()
+
+
+@pytest.mark.parametrize(
+    "failure_stage", ["build", "register_tool", "allow_domain", "warmup", "snapshot", "restore", "run"]
+)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_failures_obey_error_policy_and_retire_worker(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(
+        tools=[lambda: "ok"], allowed_domains=["example.com"], include_detailed_errors=include_detailed_errors
+    )
+    registry = cast(Any, execute_code._registry)
+    try:
+        with pytest.raises(ValueError if include_detailed_errors else RuntimeError) as error:
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+        assert (host_error_detail in str(error.value)) is include_detailed_errors
+        if not include_detailed_errors:
+            assert str(error.value) == "Code execution failed."
+        assert registry._entries == {}
+    finally:
+        _close_execute_code_registry(execute_code)
+    gc.collect()
+    owner_threads = {ident for _, ident in sandbox_cls.events}
+    assert len(owner_threads) == 1
+    assert threading.get_ident() not in owner_threads
+
+
+@pytest.mark.parametrize("signal_type", [asyncio.CancelledError, SystemExit, KeyboardInterrupt])
+@pytest.mark.parametrize("failure_stage", ["warmup", "restore", "run"])
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_lifecycle_error_policy_preserves_system_signals(
+    monkeypatch: pytest.MonkeyPatch,
+    lifecycle_sandbox_factory: Callable[..., type[Any]],
+    host_error_detail: str,
+    signal_type: type[BaseException],
+    failure_stage: str,
+    include_detailed_errors: bool,
+) -> None:
+    sandbox_cls = lifecycle_sandbox_factory(failure_stage, signal_type)
+    monkeypatch.setattr(execute_code_module, "_load_sandbox_class", lambda: sandbox_cls)
+    execute_code = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    try:
+        with pytest.raises(signal_type, match=host_error_detail):
+            await execute_code.invoke(arguments={"code": "print('ok')"})
+    finally:
+        _close_execute_code_registry(execute_code)
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+def test_error_policy_is_snapshotted_and_part_of_the_sandbox_cache_key(include_detailed_errors: bool) -> None:
+    registry = _FakeRuntime()
+    codeact = HyperlightExecuteCodeTool(include_detailed_errors=include_detailed_errors, _registry=registry)
+    provider = HyperlightCodeActProvider(include_detailed_errors=include_detailed_errors, _registry=registry)
+    opposite = HyperlightExecuteCodeTool(include_detailed_errors=not include_detailed_errors, _registry=registry)
+
+    assert codeact.create_run_tool().build_serializable_state()["include_detailed_errors"] is include_detailed_errors
+    assert (
+        provider._execute_code_tool.create_run_tool().build_serializable_state()["include_detailed_errors"]
+        is include_detailed_errors
+    )
+    assert codeact._build_run_config().cache_key() != opposite._build_run_config().cache_key()
+    assert set(codeact.parameters()["properties"]) == {"code"}
+
+
+@pytest.mark.parametrize("constructor", [HyperlightExecuteCodeTool, HyperlightCodeActProvider])
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_detailed_error_option_rejects_non_boolean_values(constructor: Any, value: Any) -> None:
+    with pytest.raises(TypeError, match="include_detailed_errors must be a bool"):
+        constructor(include_detailed_errors=value)
+
+
+@pytest.mark.integration
+@skip_if_hyperlight_integration_tests_disabled
+@pytest.mark.parametrize("failing_host_tool", [False, True], indirect=True)
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_host_error_policy_with_real_sandbox(
+    failing_host_tool: FunctionTool, host_error_detail: str, include_detailed_errors: bool
+) -> None:
+    _skip_if_hyperlight_integration_runtime_disabled()
+    execute_code = HyperlightExecuteCodeTool(tools=[failing_host_tool], include_detailed_errors=include_detailed_errors)
+    try:
+        result = await execute_code.invoke(
+            arguments={
+                "code": "try:\n    call_tool('failing_host_tool')\nexcept Exception as exc:\n    print(str(exc))"
+            },
+            skip_parsing=True,
+        )
+        serialized = json.dumps([content.to_dict() for content in result])
+        assert (host_error_detail in serialized) is include_detailed_errors
+        if not include_detailed_errors:
+            assert "Host tool execution failed." in serialized
+    finally:
+        _close_execute_code_registry(execute_code)
 
 
 class _OwnerThreadTrackedResult:
@@ -3220,7 +3641,7 @@ def test_sandbox_entry_does_not_expose_unsendable_attributes() -> None:
     assert "sandbox" not in fields, "_SandboxEntry must not expose `sandbox` directly"
     assert "snapshot" not in fields, "_SandboxEntry must not expose `snapshot` directly"
     # Whatever attributes remain must be sendable / safe to GC on any thread.
-    assert fields <= {"worker", "input_dir", "output_dir"}
+    assert fields <= {"worker", "input_dir", "output_dir", "tools"}
 
 
 def test_sandbox_survives_external_thread_holding_stale_reference(
@@ -3276,3 +3697,124 @@ def test_sandbox_survives_external_thread_holding_stale_reference(
         gc.collect()
 
     assert drop_violations == []
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+
+
+def test_fides_warning_cache_pruned_on_tool_removal() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+    assert any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+    codeact.remove_tool(first.name)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_warning_cache_pruned_on_clear() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+    codeact.clear_tools()
+
+    assert codeact._fides_warned_metadata == []
+
+
+def test_fides_warning_cache_pruned_on_replacement() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=first, _registry=_FakeRuntime())
+
+    @tool(
+        name=first.name,
+        additional_properties={"source_integrity": "trusted"},
+    )
+    def replacement(value: int) -> int:
+        return value
+
+    codeact.add_tools(replacement)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+    assert any(obj is replacement for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_metadata_change_warns_once_across_run_snapshots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = HyperlightExecuteCodeTool(tools=annotated_tool, _registry=_FakeRuntime())
+    assert annotated_tool.additional_properties is not None
+
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    warnings = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.getMessage()
+    ]
+    assert len(warnings) == 1

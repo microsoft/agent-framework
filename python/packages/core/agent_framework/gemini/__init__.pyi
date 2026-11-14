@@ -3,17 +3,21 @@
 from agent_framework_gemini import (
     GeminiChatClient,
     GeminiChatOptions,
-    GeminiSettings,
+    GeminiEmbeddingClient,
+    GeminiEmbeddingOptions,
     GoogleGeminiSettings,
     RawGeminiChatClient,
+    RawGeminiEmbeddingClient,
     ThinkingConfig,
 )
 
 __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
-    "GeminiSettings",
+    "GeminiEmbeddingClient",
+    "GeminiEmbeddingOptions",
     "GoogleGeminiSettings",
     "RawGeminiChatClient",
+    "RawGeminiEmbeddingClient",
     "ThinkingConfig",
 ]

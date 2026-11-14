@@ -89,7 +89,7 @@ public sealed class ToolApprovalObserver : ConsoleObserver
                 {
                     "Always approve this tool (any arguments)" => request.CreateAlwaysApproveToolResponse("User chose to always approve this tool"),
                     "Always approve this tool with these arguments" => request.CreateAlwaysApproveToolWithArgumentsResponse("User chose to always approve this tool with these arguments"),
-                    "Deny" => request.CreateResponse(approved: false, reason: "User denied"),
+                    "Deny" => request.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it."),
                     _ => request.CreateResponse(approved: true, reason: "User approved"),
                 };
 

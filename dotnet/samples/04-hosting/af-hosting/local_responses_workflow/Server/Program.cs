@@ -22,6 +22,11 @@ using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// This local sample does not authenticate callers. Multi-user hosts must authenticate and authorize
+// requests and partition response mappings, sessions, and checkpoints by trusted caller identity.
+// An isolation provider does not automatically scope these application-owned stores.
+// See the shared hosting guide and this sample's README.
+
 // Configuration via environment variables (never hardcode secrets).
 string endpoint = Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOINT")
     ?? throw new InvalidOperationException("FOUNDRY_PROJECT_ENDPOINT is not set.");
@@ -113,7 +118,7 @@ app.MapPost("/responses", async (JsonElement body, CancellationToken cancellatio
 });
 
 // Bind to a fixed local URL so the paired client sample has a deterministic default.
-// Override with the ASPNETCORE_URLS environment variable when needed.
+// To use a different address, change the URL below and set RESPONSES_SERVER_URL in the client.
 app.Run("http://localhost:5001");
 
 // Flattens the Responses input messages into a single brief string for the workflow's start executor.

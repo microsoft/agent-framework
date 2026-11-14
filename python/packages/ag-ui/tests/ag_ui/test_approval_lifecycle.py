@@ -1182,7 +1182,8 @@ async def test_settled_raw_call_id_can_be_reused_for_a_new_occurrence() -> None:
     assert lifecycle.get(second.identity).status is ApprovalStatus.PENDING
 
 
-async def test_identical_accepted_retry_returns_retained_outcome_without_execution() -> None:
+@pytest.mark.parametrize("result", ["wrote first", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+async def test_identical_accepted_retry_returns_retained_outcome_without_execution(result: str) -> None:
     """A settled accepted decision reprojects its result instead of granting authority again."""
     lifecycle = ApprovalLifecycle()
     occurrence = lifecycle.register(
@@ -1204,7 +1205,7 @@ async def test_identical_accepted_retry_returns_retained_outcome_without_executi
     async def execute_once() -> list[Content]:
         nonlocal invocation_count
         invocation_count += 1
-        return [Content.from_function_result(call_id="call-1", result="wrote first")]
+        return [Content.from_function_result(call_id="call-1", result=result)]
 
     first_outcome = await LocalPendingToolTransitionOwner(execute_once).execute(intent, lifecycle=lifecycle)
     retry = lifecycle.claim_batch(thread_id="thread-1", decisions=[decision])

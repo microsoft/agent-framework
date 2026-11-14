@@ -110,6 +110,32 @@ public sealed class ChatClientExtensionsTests
     }
 
     [Fact]
+    public void CreateAIAgent_SharedChatClient_DoesNotLeakToolsBetweenAgents()
+    {
+        // Arrange: a single pre-decorated IChatClient shared by two independently-constructed agents,
+        // one "privileged" and one "public", each with their own distinct tool.
+        var chatClientMock = new Mock<IChatClient>();
+        var sharedChatClient = chatClientMock.Object.AsBuilder().UseFunctionInvocation().Build();
+
+        AITool publicTool = AIFunctionFactory.Create(() => "public", name: "public_read");
+        AITool privilegedTool = AIFunctionFactory.Create(() => "privileged", name: "privileged_write");
+
+        // Act: construct the low-privilege agent first, then the privileged agent on the same shared client.
+        var publicAgent = sharedChatClient.AsAIAgent(tools: [publicTool]);
+        var privilegedAgent = sharedChatClient.AsAIAgent(tools: [privilegedTool]);
+
+        // Assert: neither agent mutated the shared FunctionInvokingChatClient's AdditionalTools, so
+        // constructing the privileged agent cannot overwrite/leak tools into the public agent's execution scope.
+        var functionInvokingClient = sharedChatClient.GetService<FunctionInvokingChatClient>();
+        Assert.NotNull(functionInvokingClient);
+        Assert.True(functionInvokingClient.AdditionalTools is null or { Count: 0 });
+
+        // Each agent's own configured tools remain scoped to itself.
+        Assert.Equal([publicTool], publicAgent.ChatOptions!.Tools);
+        Assert.Equal([privilegedTool], privilegedAgent.ChatOptions!.Tools);
+    }
+
+    [Fact]
     public void CreateAIAgent_WithNullClient_Throws()
     {
         // Arrange

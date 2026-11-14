@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Generic;
 using HyperlightSandbox.Api;
 using Microsoft.Extensions.AI;
@@ -70,6 +71,29 @@ public sealed class HyperlightCodeActProviderOptions
     public string? StackSize { get; set; }
 
     /// <summary>
+    /// Gets or sets the maximum execution time. Defaults to 30 seconds.
+    /// The value must be greater than <see cref="TimeSpan.Zero"/> and must not
+    /// exceed 4,294,967,294 milliseconds.
+    /// </summary>
+    /// <remarks>
+    /// The limit interrupts guest execution but cannot interrupt runtime initialization
+    /// or a host tool callback. Host tools must enforce their own cancellation policy.
+    /// </remarks>
+    public TimeSpan ExecutionTimeout
+    {
+        get;
+        set
+        {
+            if (value <= TimeSpan.Zero || value > TimeSpan.FromMilliseconds(uint.MaxValue - 1L))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The execution timeout must be greater than zero and must not exceed 4,294,967,294 milliseconds.");
+            }
+
+            field = value;
+        }
+    } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Gets or sets the initial set of provider-owned CodeAct tools made available
     /// inside the sandbox via <c>call_tool(...)</c>.
     /// </summary>
@@ -80,6 +104,17 @@ public sealed class HyperlightCodeActProviderOptions
     /// Defaults to <see cref="CodeActApprovalMode.NeverRequire"/>.
     /// </summary>
     public CodeActApprovalMode ApprovalMode { get; set; } = CodeActApprovalMode.NeverRequire;
+
+    /// <summary>
+    /// Gets or sets whether host exception details are exposed to generated code and in execution errors.
+    /// Defaults to <see langword="false"/>.
+    /// </summary>
+    /// <remarks>
+    /// Detailed errors include exception types, stack traces, and inner exceptions.
+    /// Enable only for a trusted channel: diagnostics can contain sensitive host data.
+    /// This is independent of the outer chat client's error policy and sensitive-data logging.
+    /// </remarks>
+    public bool IncludeDetailedErrors { get; set; }
 
     /// <summary>
     /// Gets or sets an optional host directory exposed to the sandbox as its

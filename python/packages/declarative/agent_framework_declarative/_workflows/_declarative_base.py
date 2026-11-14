@@ -29,14 +29,13 @@ import locale
 import logging
 import os
 import re
-import sys
 import uuid
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal as _Decimal
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypedDict, cast
 
 from agent_framework import (
     Executor,
@@ -45,6 +44,14 @@ from agent_framework import (
 )
 from agent_framework._workflows._state import State
 
+from ._errors import DeclarativeWorkflowError
+from ._powerfx_functions import (
+    _iter_powerfx_expression_indices,  # pyright: ignore[reportPrivateUsage]
+    whole_call_args,
+)
+from ._powerfx_limits import _PowerFxStateBudget, _validate_powerfx_state  # pyright: ignore[reportPrivateUsage]
+from ._state_path import _is_safe_path_segment  # pyright: ignore[reportPrivateUsage]
+
 try:
     from powerfx import Engine
 except (ImportError, RuntimeError):
@@ -52,86 +59,11 @@ except (ImportError, RuntimeError):
     # RuntimeError: .NET runtime not available or misconfigured
     Engine = None
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 
 logger = logging.getLogger(__name__)
 
 
 _ENV_REFERENCE_RE = re.compile(r"\bEnv\.([A-Za-z_][A-Za-z0-9_]*)")
-
-# Allowed identifier shape for object-attribute steps in declarative state paths
-_SAFE_PATH_SEGMENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
-
-
-def _skip_powerfx_opaque_token(formula: str, start: int) -> int:
-    """Return the end of an ordinary quoted token or comment, or start if neither."""
-    quote = formula[start]
-    if quote in ('"', "'"):
-        pos = start + 1
-        while pos < len(formula):
-            if formula[pos] == quote:
-                if pos + 1 < len(formula) and formula[pos + 1] == quote:
-                    pos += 2
-                    continue
-                return pos + 1
-            pos += 1
-        return pos
-    if formula.startswith("//", start):
-        pos = start + 2
-        while pos < len(formula) and formula[pos] not in "\r\n":
-            pos += 1
-        return pos
-    if formula.startswith("/*", start):
-        end = formula.find("*/", start + 2)
-        return len(formula) if end == -1 else end + 2
-    return start
-
-
-def _iter_powerfx_expression_indices(formula: str) -> Iterator[int]:
-    """Yield code positions, excluding literals/comments but including interpolation expressions."""
-    # None denotes interpolated text; integers track record braces in expression sections.
-    scopes: list[int | None] = [0]
-    cursor = 0
-    while cursor < len(formula):
-        depth = scopes[-1]
-        char = formula[cursor]
-        if depth is None:
-            if formula.startswith(('""', "{{", "}}"), cursor):
-                cursor += 2
-                continue
-            if char == "{":
-                scopes.append(0)
-            elif char == '"':
-                scopes.pop()
-            cursor += 1
-            continue
-
-        if formula.startswith('$"', cursor):
-            scopes.append(None)
-            cursor += 2
-            continue
-
-        token_end = _skip_powerfx_opaque_token(formula, cursor)
-        if token_end != cursor:
-            cursor = token_end
-            continue
-
-        if char == "{":
-            scopes[-1] = depth + 1
-        elif char == "}":
-            if depth > 0:
-                scopes[-1] = depth - 1
-            elif len(scopes) > 1:
-                scopes.pop()
-                cursor += 1
-                continue
-
-        yield cursor
-        cursor += 1
 
 
 @dataclass(frozen=True)
@@ -167,6 +99,8 @@ class DeclarativeEnvConfig:
         # contents of ``values`` / ``referenced_names``: caller mutations
         # to the original objects after construction cannot leak into
         # ``resolve()``.
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         object.__setattr__(self, "values", MappingProxyType(dict(self.values)))
         object.__setattr__(self, "referenced_names", frozenset(self.referenced_names))
 
@@ -179,6 +113,8 @@ class DeclarativeEnvConfig:
         unrelated environment variables never enter the PowerFx scope.
         Configuration values always win over the environment fallback.
         """
+        _validate_powerfx_state(self.values)
+        _validate_powerfx_state(self.referenced_names)
         resolved = {name: str(value) for name, value in self.values.items()}
         if self.restrict_to_configuration:
             return resolved
@@ -197,6 +133,10 @@ def discover_env_references(node: Any) -> set[str]:
     happen to mention ``Env.SOMETHING`` as plain text, the scan only inspects
     strings that begin with ``=`` (PowerFx expression marker, matching the
     convention enforced by :meth:`DeclarativeWorkflowState.eval`).
+    Shared containers are scanned once by identity without Python recursion.
+    Cyclic mappings and lists are rejected rather than silently skipped.
+    This avoids repeated container traversal, but does not impose a definition-size,
+    depth, parsing-time, or execution budget.
 
     Args:
         node: A parsed workflow definition (typically the dict produced by
@@ -205,23 +145,43 @@ def discover_env_references(node: Any) -> set[str]:
     Returns:
         The set of ``Env`` identifier names referenced in PowerFx
         expressions inside ``node``.
+
+    Raises:
+        DeclarativeWorkflowError: If the definition contains a mapping/list cycle.
     """
     names: set[str] = set()
+    active: set[int] = set()
+    # Retain containers so their identities cannot be reused during the walk.
+    visited: dict[int, Mapping[Any, Any] | list[Any]] = {}
+    stack: list[tuple[int | None, Iterator[Any]]] = [(None, iter((node,)))]
 
-    def visit(value: Any) -> None:
+    while stack:
+        parent_id, children = stack[-1]
+        try:
+            value = next(children)
+        except StopIteration:
+            stack.pop()
+            if parent_id is not None:
+                active.remove(parent_id)
+            continue
         if isinstance(value, str):
             if value.startswith("="):
                 names.update(_ENV_REFERENCE_RE.findall(value))
-            return
-        if isinstance(value, Mapping):
-            for inner in cast(Mapping[Any, Any], value).values():
-                visit(inner)
-            return
-        if isinstance(value, list):
-            for item in cast(list[Any], value):
-                visit(item)
+            continue
+        if not isinstance(value, (Mapping, list)):
+            continue
 
-    visit(node)
+        container = cast(Mapping[Any, Any] | list[Any], value)
+        container_id = id(container)
+        if container_id in active:
+            raise DeclarativeWorkflowError("Cyclic mappings or lists are not supported in workflow definitions.")
+        if container_id in visited:
+            continue
+        visited[container_id] = container
+        active.add(container_id)
+        children = iter(container.values()) if isinstance(container, Mapping) else iter(container)
+        stack.append((container_id, children))
+
     return names
 
 
@@ -288,10 +248,16 @@ def _make_powerfx_safe(value: Any) -> Any:
 
     Returns:
         A PowerFx-safe representation of the value
-    """
-    if value is None:
-        return value
 
+    Raises:
+        ValueError: If the input or converted symbols exceed the state budget.
+    """
+    _validate_powerfx_state(value)
+    return _convert_powerfx_value(value, _PowerFxStateBudget(), 0)
+
+
+def _convert_powerfx_value(value: Any, budget: _PowerFxStateBudget, depth: int) -> Any:
+    """Convert an already bounded value without restarting its traversal budget."""
     # Enum coercion must run BEFORE the primitive type check: many MAF
     # enums (e.g. MessageRole) are ``str``-subclass enums, so they pass
     # ``isinstance(v, str)`` but pythonnet refuses to convert them to
@@ -300,25 +266,27 @@ def _make_powerfx_safe(value: Any) -> Any:
     # to the underlying value (or its string form) so PowerFx sees a
     # plain ``str``/``int``.
     if isinstance(value, Enum):
-        return _make_powerfx_safe(value.value)
+        return _convert_powerfx_value(value.value, budget, depth)
 
+    if not isinstance(value, (*_POWERFX_SAFE_TYPES, dict, list)):
+        if hasattr(value, "__dict__"):
+            return _convert_powerfx_value(vars(value), budget, depth)
+        value = str(value)
+
+    budget.consume(value, depth)
     if isinstance(value, _POWERFX_SAFE_TYPES):
         return value
 
     if isinstance(value, dict):
         value_dict = cast(Mapping[Any, Any], value)
-        return {str(k): _make_powerfx_safe(v) for k, v in value_dict.items()}
+        result: dict[str, Any] = {}
+        for key, member in value_dict.items():
+            name = str(key)
+            budget.consume(name, depth + 1)
+            result[name] = _convert_powerfx_value(member, budget, depth + 1)
+        return result
 
-    if isinstance(value, list):
-        value_list = cast(list[Any], value)
-        return [_make_powerfx_safe(item) for item in value_list]
-
-    # Try to convert objects with __dict__ or dataclass-style attributes
-    if hasattr(value, "__dict__"):
-        return _make_powerfx_safe(vars(value))
-
-    # For other objects, try to convert to string representation
-    return str(value)
+    return [_convert_powerfx_value(item, budget, depth + 1) for item in cast(list[Any], value)]
 
 
 class DeclarativeWorkflowState:
@@ -358,6 +326,7 @@ class DeclarativeWorkflowState:
         Args:
             inputs: Initial workflow inputs (become Workflow.Inputs.*)
         """
+        _validate_powerfx_state(inputs)
         conversation_id = str(uuid.uuid4())
         state_data: DeclarativeStateData = {
             "Inputs": dict(inputs) if inputs else {},
@@ -376,10 +345,11 @@ class DeclarativeWorkflowState:
             "Conversation": {"messages": [], "history": []},
             "Custom": {},
         }
-        self._state.set(DECLARATIVE_STATE_KEY, state_data)
+        self.set_state_data(state_data)
 
     def get_state_data(self) -> DeclarativeStateData:
         """Get the full state data dict from state."""
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         result = self._state.get(DECLARATIVE_STATE_KEY)
         if result is None:
             # Initialize if not present
@@ -395,10 +365,12 @@ class DeclarativeWorkflowState:
         scenarios), the start executor needs to avoid calling initialize()
         and clobbering the prior turn's Conversation/Local/System data.
         """
+        self._state._validate(DECLARATIVE_STATE_KEY, _validate_powerfx_state)  # pyright: ignore[reportPrivateUsage]
         return self._state.get(DECLARATIVE_STATE_KEY) is not None
 
     def set_state_data(self, data: DeclarativeStateData) -> None:
         """Set the full state data dict in state."""
+        _validate_powerfx_state(data)
         self._state.set(DECLARATIVE_STATE_KEY, data)
 
     def get(self, path: str, default: Any = None) -> Any:
@@ -457,7 +429,7 @@ class DeclarativeWorkflowState:
                     return default
             else:
                 # Attribute access is only allowed for safe declarative identifiers.
-                if not _SAFE_PATH_SEGMENT_RE.match(part):
+                if not _is_safe_path_segment(part):
                     logger.warning(
                         "DeclarativeWorkflowState.get: rejecting attribute segment %r in path %r",
                         part,
@@ -591,6 +563,8 @@ class DeclarativeWorkflowState:
         Raises:
             RuntimeError: If the powerfx package is not installed and the
                 expression requires PowerFx evaluation.
+            ValueError: If state copying or symbol conversion exceeds the
+                PowerFx state budget.
         """
         if not expression:
             return expression
@@ -678,50 +652,50 @@ class DeclarativeWorkflowState:
 
         Returns None if the formula is not a custom function call.
         """
-        import re
+        formula = formula.strip()
 
         # Concat/Concatenate - string concatenation
         # In standard PowerFx, Concatenate is for strings, Concat is for tables.
         # Copilot Studio uses Concat for strings, so we support both.
-        match = re.match(r"(?:Concat|Concatenate)\((.+)\)$", formula.strip())
-        if match:
-            args_str = match.group(1)
+        args_str = whole_call_args(formula, "Concat", "Concatenate")
+        # Empty arguments fall through so PowerFx reports the arity error.
+        if args_str:
             # Parse comma-separated arguments (handling nested parentheses)
             args = self._parse_function_args(args_str)
             evaluated_args: list[str] = []
             for arg in args:
                 arg = arg.strip()
-                if arg.startswith('"') and arg.endswith('"'):
+                if re.fullmatch(r'"(?:[^"]|"")*"', arg):
                     # String literal
-                    evaluated_args.append(arg[1:-1])
+                    evaluated_args.append(arg[1:-1].replace('""', '"'))
                 elif arg.startswith("'") and arg.endswith("'"):
                     # Single-quoted string literal
                     evaluated_args.append(arg[1:-1])
                 else:
-                    # Variable reference - evaluate it
+                    # Variable reference or expression - evaluate it
                     result = self.eval(f"={arg}")
                     evaluated_args.append(str(result) if result is not None else "")
             return "".join(evaluated_args)
 
         # UserMessage(expr) - creates a user message dict
-        match = re.match(r"UserMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "UserMessage")
+        if inner_args:
+            inner_expr = inner_args.strip()
             # Evaluate the inner expression
             text = self.eval(f"={inner_expr}")
             return {"role": "user", "text": str(text) if text else ""}
 
         # AgentMessage(expr) - creates an assistant message dict
-        match = re.match(r"AgentMessage\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "AgentMessage")
+        if inner_args:
+            inner_expr = inner_args.strip()
             text = self.eval(f"={inner_expr}")
             return {"role": "assistant", "text": str(text) if text else ""}
 
         # MessageText(expr) - extracts text from the last message
-        match = re.match(r"MessageText\((.+)\)$", formula.strip())
-        if match:
-            inner_expr = match.group(1).strip()
+        inner_args = whole_call_args(formula, "MessageText")
+        if inner_args:
+            inner_expr = inner_args.strip()
             # Reuse the helper method for consistent text extraction
             return self._eval_and_replace_message_text(inner_expr)
 
@@ -914,10 +888,10 @@ class DeclarativeWorkflowState:
             symbols["Env"] = env_bound
         # Debug log the Local symbols to help diagnose type issues
         if local_data:
-            for key, value in local_data.items():
+            for value in local_data.values():
                 logger.debug(
-                    f"PowerFx symbol Local.{key}: type={type(value).__name__}, "
-                    f"value_preview={str(value)[:100] if value else None}"
+                    "PowerFx Local symbol type=%s",
+                    type(value).__name__,
                 )
         result = _make_powerfx_safe(symbols)
         return cast(dict[str, Any], result)
@@ -940,8 +914,9 @@ class DeclarativeWorkflowState:
         Captures brace-delimited tokens whose root segment is an identifier
         (``[A-Za-z][A-Za-z0-9_]*``) followed by zero or more ``.`` separated
         dict-key segments. Resolution is delegated to :meth:`get`; unresolved
-        tokens are replaced with the empty string. Tokens that do not look
-        like state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
+        tokens are replaced with the empty string. Substituted values remain
+        literal and are not interpolated again. Tokens that do not look like
+        state paths (e.g. ``{foo-bar}``, ``{Ctrl+C}``) are left literal.
 
         Args:
             text: Text that may contain {Variable.Path} references
@@ -961,12 +936,7 @@ class DeclarativeWorkflowState:
         # per-segment safety on attribute traversal.
         pattern = r"\{([A-Za-z][A-Za-z0-9_]*(?:\.[^{}\s.]+)*)\}"
 
-        result = text
-        for match in re.finditer(pattern, text):
-            replacement = replace_var(match)
-            result = result.replace(match.group(0), replacement, 1)
-
-        return result
+        return re.sub(pattern, replace_var, text)
 
 
 # Message types for inter-executor communication

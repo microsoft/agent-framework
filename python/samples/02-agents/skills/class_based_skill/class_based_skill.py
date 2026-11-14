@@ -5,7 +5,14 @@ import json
 import os
 from textwrap import dedent
 
-from agent_framework import Agent, ClassSkill, SkillFrontmatter, SkillsProvider, ToolApprovalMiddleware
+from agent_framework import (
+    Agent,
+    ClassSkill,
+    FunctionInvocationContext,
+    SkillFrontmatter,
+    SkillsProvider,
+    ToolApprovalMiddleware,
+)
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -22,6 +29,8 @@ Key concepts shown:
 - Subclassing ``ClassSkill`` to create a self-contained skill
 - Using ``@property`` + ``@ClassSkill.resource`` (bare) — name defaults to method name
 - Using ``@ClassSkill.script(name=..., description=...)`` — explicit name and description
+- Reading host-controlled rounding precision through an injected
+  ``FunctionInvocationContext``, separately from model-supplied arguments
 - Lazy-loading and caching of resources and scripts
 """
 
@@ -86,17 +95,26 @@ class UnitConverterSkill(ClassSkill):
     # 2. Explicit name — overrides the method name
     # 3. Explicit description — provides a description for the script
     @ClassSkill.script(name="convert", description="Multiplies a value by a conversion factor.")
-    def convert_units(self, value: float, factor: float) -> str:
+    def convert_units(self, value: float, factor: float, *, ctx: FunctionInvocationContext) -> str:
         """Convert a value using a multiplication factor: result = value × factor.
+
+        The model supplies ``value`` and ``factor``. The annotated ``ctx`` parameter
+        is injected by the provider and hidden from the script's parameter schema.
 
         Args:
             value: The numeric value to convert.
             factor: Conversion factor from the conversion table.
+            ctx: Tool invocation context with host-controlled rounding precision.
 
         Returns:
             JSON string with the inputs and converted result.
         """
-        result = round(value * factor, 4)
+        if "precision" not in ctx.kwargs:
+            raise RuntimeError(
+                "Expected host-supplied 'precision' in ctx.kwargs. "
+                "Pass it through agent.run(function_invocation_kwargs=...)."
+            )
+        result = round(value * factor, ctx.kwargs["precision"])
         return json.dumps({"value": value, "factor": factor, "result": result})
 
 
@@ -128,6 +146,7 @@ async def main() -> None:
         session = agent.create_session()
         response = await agent.run(
             "How many kilometers is a marathon (26.2 miles)? And how many pounds is 75 kilograms?",
+            function_invocation_kwargs={"precision": 4},
             session=session,
         )
         print(f"Agent: {response}\n")

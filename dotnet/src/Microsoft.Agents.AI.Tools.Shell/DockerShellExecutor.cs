@@ -26,8 +26,12 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <c>--cap-drop=ALL</c>, <c>--security-opt=no-new-privileges</c>, memory and
 /// pids limits, <c>--tmpfs /tmp</c>). These are a best-effort starting point,
 /// NOT a guarantee: the actual isolation you get depends on the host kernel,
-/// the container runtime, the image, and any caller-supplied
-/// <c>ExtraRunArgs</c>. Do not rely on this tool as your sole defense against
+/// the container runtime, the image, and the complete caller configuration.
+/// <see cref="DockerShellExecutorOptions.UnsafeExtraRunArgs"/> must come only
+/// from developer-controlled configuration, never users, model output, or
+/// other untrusted sources; it can weaken or remove isolation. The model-facing
+/// function accepts only commands and cannot choose Docker options. Do not
+/// rely on this tool as your sole defense against
 /// untrusted input. Approval gating via <see cref="AsAIFunction"/> is the
 /// primary safety control; pair it with the precautions you would normally
 /// apply when running adversarial code: review the model's output before
@@ -92,7 +96,7 @@ public sealed class DockerShellExecutor : ShellExecutor
     private readonly int _pidsLimit;
     private readonly ContainerUser _user;
     private readonly bool _readOnlyRoot;
-    private readonly IReadOnlyList<string> _extraRunArgs;
+    private readonly IReadOnlyList<string> _unsafeExtraRunArgs;
     private readonly IReadOnlyDictionary<string, string> _env;
     private readonly ShellPolicy _policy;
     private readonly TimeSpan? _timeout;
@@ -102,20 +106,23 @@ public sealed class DockerShellExecutor : ShellExecutor
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="DockerShellExecutor"/>
-    /// class with default options.
-    /// </summary>
-    public DockerShellExecutor() : this(new DockerShellExecutorOptions())
-    {
-    }
-
-    /// <summary>
     /// Initializes a new instance of the <see cref="DockerShellExecutor"/> class.
     /// </summary>
+    /// <param name="dockerBinaryPath">
+    /// Fully qualified path to the Docker-compatible container runtime executable, for example
+    /// <c>/usr/bin/docker</c>, <c>/usr/bin/podman</c>, or
+    /// <c>C:\Program Files\Docker\Docker\resources\bin\docker.exe</c>. On Windows, the path must
+    /// include the file extension (such as <c>.exe</c>) so it names exactly one file. The same file is
+    /// used for every runtime command this executor starts.
+    /// </param>
     /// <param name="options">Configuration. <see langword="null"/> selects defaults.</param>
-    public DockerShellExecutor(DockerShellExecutorOptions options)
+    /// <exception cref="ArgumentNullException"><paramref name="dockerBinaryPath"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.</exception>
+    /// <exception cref="FileNotFoundException">No file exists at <paramref name="dockerBinaryPath"/>.</exception>
+    public DockerShellExecutor(string dockerBinaryPath, DockerShellExecutorOptions? options = null)
     {
-        _ = Throw.IfNull(options);
+        PathValidation.ValidateFullyQualifiedPathToExistingExecutable(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
+        options ??= new DockerShellExecutorOptions();
         _ = Throw.IfNull(options.Image);
         if (options.MaxOutputBytes <= 0)
         {
@@ -125,6 +132,8 @@ public sealed class DockerShellExecutor : ShellExecutor
         {
             throw new ArgumentOutOfRangeException(nameof(options), $"{nameof(options.MemoryBytes)} must be positive.");
         }
+        string[] unsafeExtraRunArgs = options.UnsafeExtraRunArgs is null ? [] : options.UnsafeExtraRunArgs.ToArray();
+        ValidateUnsafeExtraRunArgs(unsafeExtraRunArgs);
 
         this._image = options.Image;
         this.ContainerName = options.ContainerName ?? GenerateContainerName();
@@ -137,19 +146,19 @@ public sealed class DockerShellExecutor : ShellExecutor
         this._pidsLimit = options.PidsLimit;
         this._user = options.User ?? ContainerUser.Default;
         this._readOnlyRoot = options.ReadOnlyRoot;
-        this._extraRunArgs = options.ExtraRunArgs ?? [];
+        this._unsafeExtraRunArgs = unsafeExtraRunArgs;
         this._env = options.Environment ?? new Dictionary<string, string>();
         this._policy = options.Policy ?? new ShellPolicy();
         this._timeout = options.Timeout;
         this._maxOutputBytes = options.MaxOutputBytes;
-        this.DockerBinary = options.DockerBinary ?? "docker";
+        this.DockerBinaryPath = dockerBinaryPath;
     }
 
     /// <summary>Gets the container name (auto-generated when not specified at construction).</summary>
     public string ContainerName { get; }
 
-    /// <summary>Gets the docker binary path.</summary>
-    public string DockerBinary { get; }
+    /// <summary>Gets the fully qualified path to the container runtime executable.</summary>
+    public string DockerBinaryPath { get; }
 
     /// <summary>Eagerly start the container (and inner shell session in persistent mode).</summary>
     public override async Task InitializeAsync(CancellationToken cancellationToken = default)
@@ -167,7 +176,7 @@ public sealed class DockerShellExecutor : ShellExecutor
             this._containerStarted = true;
             if (this._mode == ShellMode.Persistent)
             {
-                var execArgv = BuildExecArgv(this.DockerBinary, this.ContainerName);
+                var execArgv = BuildExecArgv(this.DockerBinaryPath, this.ContainerName);
                 // BuildExecArgv already includes the bash flags
                 // (--noprofile --norc) at the end of the argv. We pass
                 // ShellKind.Sh here (not Bash) because Sh's
@@ -277,9 +286,8 @@ public sealed class DockerShellExecutor : ShellExecutor
     public override AIFunction AsAIFunction(string name = "run_shell", string? description = null, bool requireApproval = true)
     {
         description ??=
-            "Execute a single shell command inside an isolated Docker container and return its " +
-            "stdout, stderr, and exit code. The container has no network, no host filesystem access " +
-            "(except an optional read-only workspace mount), and runs as a non-root user. " +
+            "Execute a single shell command using the configured Docker container and return its " +
+            "stdout, stderr, and exit code. Container isolation depends on the application's complete configuration. " +
             (this._mode == ShellMode.Persistent
                 ? "PERSISTENT MODE: a single long-lived container handles every call; cd and exported variables persist."
                 : "STATELESS MODE: each call runs in a fresh container.");
@@ -305,17 +313,30 @@ public sealed class DockerShellExecutor : ShellExecutor
     }
 
     /// <summary>
-    /// Probe whether the configured docker binary can be reached. Returns
-    /// <see langword="true"/> only if the binary exists on PATH and
+    /// Probe whether the container runtime at <paramref name="dockerBinaryPath"/> can be reached.
+    /// Returns <see langword="true"/> only if the file exists and
     /// <c>docker version</c> succeeds within ~5 seconds.
     /// </summary>
-    public static async Task<bool> IsAvailableAsync(string binary = "docker", CancellationToken cancellationToken = default)
+    /// <param name="dockerBinaryPath">
+    /// Fully qualified path to the Docker-compatible container runtime executable. Bare names,
+    /// relative paths, and on Windows paths without a file extension are rejected, as in the constructor.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="dockerBinaryPath"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException"><paramref name="dockerBinaryPath"/> is empty, whitespace, or not fully qualified, or on Windows has no file extension.</exception>
+    public static async Task<bool> IsAvailableAsync(string dockerBinaryPath, CancellationToken cancellationToken = default)
     {
+        PathValidation.ValidateFullyQualifiedExecutablePath(dockerBinaryPath, nameof(dockerBinaryPath), "Docker executable");
+        if (!File.Exists(dockerBinaryPath))
+        {
+            return false;
+        }
+
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = binary,
+                FileName = dockerBinaryPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -430,10 +451,7 @@ public sealed class DockerShellExecutor : ShellExecutor
 
     private async Task StartContainerAsync(CancellationToken cancellationToken)
     {
-        var argv = BuildRunArgv(
-            this.DockerBinary, this._image, this.ContainerName, this._user, this._network,
-            this._memoryBytes, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
-            this._mountReadonly, this._readOnlyRoot, this._env, this._extraRunArgs);
+        var argv = this.BuildRunArgvPersistent();
 
         var (exit, _, stderr) = await RunDockerCommandAsync(argv, cancellationToken).ConfigureAwait(false);
         if (exit != 0)
@@ -445,7 +463,7 @@ public sealed class DockerShellExecutor : ShellExecutor
 
     private async Task StopContainerAsync()
     {
-        var argv = new[] { this.DockerBinary, "rm", "-f", this.ContainerName };
+        var argv = new[] { this.DockerBinaryPath, "rm", "-f", this.ContainerName };
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -489,7 +507,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         try { _ = proc.Start(); }
         catch (Win32Exception ex)
         {
-            throw new IOException($"Failed to launch '{this.DockerBinary}': {ex.Message}", ex);
+            throw new IOException($"Failed to launch '{this.DockerBinaryPath}': {ex.Message}", ex);
         }
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
@@ -535,11 +553,11 @@ public sealed class DockerShellExecutor : ShellExecutor
             TimedOut: timedOut);
     }
 
-    private List<string> BuildRunArgvStateless(string perCallName)
+    internal List<string> BuildRunArgvStateless(string perCallName)
     {
         var argv = new List<string>
         {
-            this.DockerBinary,
+            this.DockerBinaryPath,
             "run", "--rm", "-i",
             "--name", perCallName,
             "--user", this._user.ToString(),
@@ -563,8 +581,26 @@ public sealed class DockerShellExecutor : ShellExecutor
             argv.Add("-e");
             argv.Add($"{kv.Key}={kv.Value}");
         }
-        argv.AddRange(this._extraRunArgs);
+        argv.AddRange(this._unsafeExtraRunArgs);
         return argv;
+    }
+
+    internal IReadOnlyList<string> BuildRunArgvPersistent() =>
+        BuildRunArgv(
+            this.DockerBinaryPath, this._image, this.ContainerName, this._user, this._network,
+            this._memoryBytes, this._pidsLimit, this._containerWorkdir, this._hostWorkdir,
+            this._mountReadonly, this._readOnlyRoot, this._env, this._unsafeExtraRunArgs);
+
+    private static void ValidateUnsafeExtraRunArgs(string[] args)
+    {
+        for (var index = 0; index < args.Length; index++)
+        {
+            if (args[index] is null)
+            {
+                throw new ArgumentException(
+                    $"{nameof(DockerShellExecutorOptions.UnsafeExtraRunArgs)} contains a null token at index {index}.");
+            }
+        }
     }
 
     private async Task BestEffortKillContainerAsync(string containerName)
@@ -573,7 +609,7 @@ public sealed class DockerShellExecutor : ShellExecutor
         {
             using var killCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             _ = await RunDockerCommandAsync(
-                [this.DockerBinary, "kill", "--signal", "KILL", containerName], killCts.Token).ConfigureAwait(false);
+                [this.DockerBinaryPath, "kill", "--signal", "KILL", containerName], killCts.Token).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is OperationCanceledException || ex is Win32Exception || ex is InvalidOperationException)
         {

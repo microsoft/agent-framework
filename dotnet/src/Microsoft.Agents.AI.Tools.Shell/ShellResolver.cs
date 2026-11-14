@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -13,9 +14,11 @@ namespace Microsoft.Agents.AI.Tools.Shell;
 /// <remarks>
 /// Resolution order:
 /// <list type="bullet">
-/// <item><description>Windows: prefer <c>pwsh</c>, fall back to <c>powershell.exe</c>, then <c>cmd.exe</c>.</description></item>
+/// <item><description>Windows: prefer <c>pwsh.exe</c>, fall back to <c>powershell.exe</c>, then <c>%SystemRoot%\System32\cmd.exe</c>.
+/// Only fully qualified <c>PATH</c> entries are searched.</description></item>
 /// <item><description>Linux / macOS: prefer <c>/bin/bash</c>, fall back to <c>/bin/sh</c>.</description></item>
-/// <item><description>Override via the constructor argument or the <c>AGENT_FRAMEWORK_SHELL</c> environment variable.</description></item>
+/// <item><description>Override via the constructor argument or the <c>AGENT_FRAMEWORK_SHELL</c> environment variable.
+/// An override must be a fully qualified path, and on Windows must include a file extension.</description></item>
 /// </list>
 /// </remarks>
 internal static class ShellResolver
@@ -27,25 +30,39 @@ internal static class ShellResolver
     public const string EnvVarName = "AGENT_FRAMEWORK_SHELL";
 
     /// <summary>Resolve the shell binary and the per-command argv prefix.</summary>
-    public static ResolvedShell Resolve(string? overrideShell = null)
+    /// <param name="overrideShell">
+    /// Optional fully qualified path to the shell binary. When <see langword="null"/> or whitespace, the
+    /// <c>AGENT_FRAMEWORK_SHELL</c> environment variable is consulted, then OS defaults.
+    /// </param>
+    /// <param name="paramName">The name of the parameter that supplied <paramref name="overrideShell"/>, used in error messages.</param>
+    /// <exception cref="ArgumentException">
+    /// The override is not a fully qualified path, or on Windows has no file extension.
+    /// </exception>
+    public static ResolvedShell Resolve(string? overrideShell = null, string paramName = "overrideShell")
     {
-        var requested = overrideShell ?? Environment.GetEnvironmentVariable(EnvVarName);
-        if (!string.IsNullOrWhiteSpace(requested))
+        if (!string.IsNullOrWhiteSpace(overrideShell))
         {
-            return ClassifyExplicit(requested!);
+            return ClassifyExplicit(overrideShell!, paramName, "shell");
+        }
+
+        var fromEnv = Environment.GetEnvironmentVariable(EnvVarName);
+        if (!string.IsNullOrWhiteSpace(fromEnv))
+        {
+            return ClassifyExplicit(fromEnv!, EnvVarName, EnvVarName);
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            if (TryFindOnPath("pwsh", out var pwsh))
+            var pathEnv = Environment.GetEnvironmentVariable("PATH");
+            if (PathValidation.TryFindOnPath(pathEnv, "pwsh.exe", out var pwsh))
             {
                 return new ResolvedShell(pwsh, ShellKind.PowerShell);
             }
-            if (TryFindOnPath("powershell", out var winps))
+            if (PathValidation.TryFindOnPath(pathEnv, "powershell.exe", out var winps))
             {
                 return new ResolvedShell(winps, ShellKind.PowerShell);
             }
-            return new ResolvedShell(Path.Combine(SystemRoot(), "System32", "cmd.exe"), ShellKind.Cmd);
+            return new ResolvedShell(Path.Combine(WindowsSystemRoot(), "System32", "cmd.exe"), ShellKind.Cmd);
         }
 
         if (File.Exists("/bin/bash"))
@@ -60,17 +77,23 @@ internal static class ShellResolver
     /// the binary; the rest are passed as a launch-time prefix preceding
     /// the standard <c>-c</c> / <c>-Command</c> / persistent suffix.
     /// </summary>
-    public static ResolvedShell ResolveArgv(IReadOnlyList<string> shellArgv)
+    /// <param name="shellArgv">The argv list. The first element must be a fully qualified path, and on Windows must include a file extension.</param>
+    /// <param name="paramName">The name of the parameter that supplied <paramref name="shellArgv"/>, used in error messages.</param>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="shellArgv"/> is empty, or its first element is not a fully qualified path, or on Windows has no file extension.
+    /// </exception>
+    public static ResolvedShell ResolveArgv(IReadOnlyList<string> shellArgv, string paramName = "shellArgv")
     {
         if (shellArgv is null)
         {
-            throw new ArgumentNullException(nameof(shellArgv));
+            throw new ArgumentNullException(paramName);
         }
         if (shellArgv.Count == 0)
         {
-            throw new ArgumentException("shellArgv must contain at least the binary path.", nameof(shellArgv));
+            throw new ArgumentException("shellArgv must contain at least the binary path.", paramName);
         }
         var binary = shellArgv[0];
+        PathValidation.ValidateFullyQualifiedExecutablePath(binary, paramName, "shell");
         var kind = ClassifyKind(binary);
         var extra = shellArgv.Count > 1 ? new string[shellArgv.Count - 1] : Array.Empty<string>();
         for (var i = 1; i < shellArgv.Count; i++)
@@ -80,8 +103,11 @@ internal static class ShellResolver
         return new ResolvedShell(binary, kind, ExtraArgv: extra);
     }
 
-    private static ResolvedShell ClassifyExplicit(string path) =>
-        new(path, ClassifyKind(path));
+    private static ResolvedShell ClassifyExplicit(string path, string paramName, string fileDescription)
+    {
+        PathValidation.ValidateFullyQualifiedExecutablePath(path, paramName, fileDescription);
+        return new(path, ClassifyKind(path));
+    }
 
     private static ShellKind ClassifyKind(string path)
     {
@@ -98,39 +124,11 @@ internal static class ShellResolver
         };
     }
 
-    private static bool TryFindOnPath(string name, out string fullPath)
+    private static string WindowsSystemRoot()
     {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrEmpty(pathEnv))
-        {
-            fullPath = string.Empty;
-            return false;
-        }
-        var exts = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? new[] { ".exe", ".cmd", ".bat", string.Empty }
-            : new[] { string.Empty };
-        foreach (var dir in pathEnv!.Split(Path.PathSeparator))
-        {
-            if (string.IsNullOrEmpty(dir))
-            {
-                continue;
-            }
-            foreach (var ext in exts)
-            {
-                var candidate = Path.Combine(dir, name + ext);
-                if (File.Exists(candidate))
-                {
-                    fullPath = candidate;
-                    return true;
-                }
-            }
-        }
-        fullPath = string.Empty;
-        return false;
+        var systemRoot = Environment.GetEnvironmentVariable("SystemRoot");
+        return PathValidation.IsFullyQualifiedPath(systemRoot) ? systemRoot : @"C:\Windows";
     }
-
-    private static string SystemRoot() =>
-        Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
 }
 
 /// <summary>Identifies the dialect of the resolved shell.</summary>

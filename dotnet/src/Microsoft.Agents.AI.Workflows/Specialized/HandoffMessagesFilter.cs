@@ -32,7 +32,7 @@ internal sealed class HandoffMessagesFilter
 
         bool filterAllToolCalls = this._filteringBehavior == HandoffToolCallFilteringBehavior.All;
 
-        // The logic of filtering is fairly straightforward: We are only interested in FunctionCallContent and FunctionResponseContent.
+        // Filter selected function calls and results, including reasoning-only remnants of filtered messages.
         // We are going to assume that Handoff operates as follows:
         //  * Each agent is only taking one turn at a time
         //  * Each agent is taking a turn alone
@@ -88,9 +88,11 @@ internal sealed class HandoffMessagesFilter
                 retainedContents.Add(content);
             }
 
-            if (retainedContents.Count == 0)
+            if (retainedContents.Count == 0
+                || (retainedContents.Count < unfilteredMessage.Contents.Count
+                    && retainedContents.TrueForAll(content => content is TextReasoningContent)))
             {
-                // message was fully filtered, skip it
+                // Reasoning alone cannot convey the filtered tool call to the receiving agent.
                 continue;
             }
 

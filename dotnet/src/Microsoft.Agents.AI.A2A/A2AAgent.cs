@@ -19,54 +19,36 @@ namespace Microsoft.Agents.AI.A2A;
 /// Represents an <see cref="AIAgent"/> that can interact with remote agents that are exposed via the A2A protocol
 /// </summary>
 /// <remarks>
-/// This agent supports only messages as a response from A2A agents.
-/// Support for tasks will be added later as part of the long-running
-/// executions work.
+/// This agent supports messages, tasks, and streaming updates as responses from A2A agents.
+/// <para>
+/// For a direct gRPC connection, also reference the SDK's <c>A2A.Grpc</c> package
+/// and supply an <c>A2A.Grpc.A2AGrpcClient</c>.
+/// The caller owns the supplied client and must dispose it if it implements <see cref="IDisposable"/>.
+/// </para>
 /// </remarks>
 public sealed class A2AAgent : AIAgent
 {
     private static readonly AIAgentMetadata s_agentMetadata = new("a2a");
 
     private readonly IA2AClient _a2aClient;
-    private readonly A2AAgentOptions _agentOptions;
+    private readonly A2AAgentOptions? _agentOptions;
     private readonly ILogger _logger;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="A2AAgent"/> class.
     /// </summary>
     /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
-    /// <param name="id">The unique identifier for the agent.</param>
-    /// <param name="name">The name of the agent.</param>
-    /// <param name="description">The description of the agent.</param>
-    /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(IA2AClient a2aClient, string? id = null, string? name = null, string? description = null, ILoggerFactory? loggerFactory = null)
-        : this(
-              a2aClient,
-              new A2AAgentOptions
-              {
-                  Id = id,
-                  Name = name,
-                  Description = description
-              },
-              loggerFactory)
-    {
-    }
-
-    /// <summary>
-    /// Initializes a new instance of the <see cref="A2AAgent"/> class.
-    /// </summary>
-    /// <param name="a2aClient">The A2A client to use for interacting with A2A agents.</param>
     /// <param name="options">
-    /// Configuration options that control the agent's identity, including its identifier, name, and description.
+    /// Optional configuration options that control the agent's identity, including its identifier, name, and description.
+    /// When omitted or <see langword="null"/>, default options are used.
     /// </param>
     /// <param name="loggerFactory">Optional logger factory to use for logging.</param>
-    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions options, ILoggerFactory? loggerFactory = null)
+    public A2AAgent(IA2AClient a2aClient, A2AAgentOptions? options = null, ILoggerFactory? loggerFactory = null)
     {
         _ = Throw.IfNull(a2aClient);
-        _ = Throw.IfNull(options);
 
         this._a2aClient = a2aClient;
-        this._agentOptions = options.Clone();
+        this._agentOptions = options?.Clone();
         this._logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<A2AAgent>();
     }
 
@@ -140,25 +122,23 @@ public sealed class A2AAgent : AIAgent
 
         this._logger.LogAgentChatClientInvokedAgent(nameof(RunAsync), this.Id, this.Name);
 
-        if (a2aResponse.PayloadCase == SendMessageResponseCase.Message)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Message &&
+            a2aResponse.Message is { } message)
         {
-            var message = a2aResponse.Message!;
-
             UpdateSession(typedSession, message.ContextId);
 
             return this.ConvertToAgentResponse(message);
         }
 
-        if (a2aResponse.PayloadCase == SendMessageResponseCase.Task)
+        if (a2aResponse.PayloadCase == SendMessageResponseCase.Task &&
+            a2aResponse.Task is { } task)
         {
-            var agentTask = a2aResponse.Task!;
+            UpdateSession(typedSession, task.ContextId, task.Id, task.Status.State);
 
-            UpdateSession(typedSession, agentTask.ContextId, agentTask.Id, agentTask.Status.State);
-
-            return this.ConvertToAgentResponse(agentTask);
+            return this.ConvertToAgentResponse(task);
         }
 
-        throw new NotSupportedException($"Only Message and AgentTask responses are supported from A2A agents. Received: {a2aResponse.PayloadCase}");
+        throw new NotSupportedException($"Unsupported A2A response or missing payload. Received: {a2aResponse.PayloadCase}");
     }
 
     /// <inheritdoc/>
@@ -198,37 +178,37 @@ public sealed class A2AAgent : AIAgent
         {
             switch (streamResponse.PayloadCase)
             {
-                case StreamResponseCase.Message:
-                    var message = streamResponse.Message!;
+                case StreamResponseCase.Message when streamResponse.Message is { } message:
                     contextId = message.ContextId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(message);
                     break;
 
-                case StreamResponseCase.Task:
-                    var task = streamResponse.Task!;
+                case StreamResponseCase.Task when streamResponse.Task is { } task:
                     contextId = task.ContextId;
                     taskId = task.Id;
                     taskState = task.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(task);
                     break;
 
-                case StreamResponseCase.StatusUpdate:
-                    var statusUpdate = streamResponse.StatusUpdate!;
+                case StreamResponseCase.StatusUpdate when streamResponse.StatusUpdate is { } statusUpdate:
                     contextId = statusUpdate.ContextId;
                     taskId = statusUpdate.TaskId;
                     taskState = statusUpdate.Status.State;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(statusUpdate);
                     break;
 
-                case StreamResponseCase.ArtifactUpdate:
-                    var artifactUpdate = streamResponse.ArtifactUpdate!;
+                case StreamResponseCase.ArtifactUpdate when streamResponse.ArtifactUpdate is { } artifactUpdate:
                     contextId = artifactUpdate.ContextId;
                     taskId = artifactUpdate.TaskId;
+                    ValidateContext(typedSession, contextId);
                     yield return this.ConvertToAgentResponseUpdate(artifactUpdate);
                     break;
 
                 default:
-                    throw new NotSupportedException($"Only message, task, task update events are supported from A2A agents. Received: {streamResponse.PayloadCase}");
+                    throw new NotSupportedException($"Unsupported A2A stream response or missing payload. Received: {streamResponse.PayloadCase}");
             }
         }
 
@@ -236,13 +216,13 @@ public sealed class A2AAgent : AIAgent
     }
 
     /// <inheritdoc/>
-    protected override string? IdCore => this._agentOptions.Id;
+    protected override string? IdCore => this._agentOptions?.Id;
 
     /// <inheritdoc/>
-    public override string? Name => this._agentOptions.Name;
+    public override string? Name => this._agentOptions?.Name;
 
     /// <inheritdoc/>
-    public override string? Description => this._agentOptions.Description;
+    public override string? Description => this._agentOptions?.Description;
 
     /// <inheritdoc/>
     public override object? GetService(Type serviceType, object? serviceKey = null)
@@ -347,13 +327,7 @@ public sealed class A2AAgent : AIAgent
             return;
         }
 
-        // Surface cases where the A2A agent responds with a response that
-        // has a different context Id than the session's conversation Id.
-        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
-        {
-            throw new InvalidOperationException(
-                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
-        }
+        ValidateContext(session, contextId);
 
         // Assign a server-generated context Id to the session if it's not already set.
         session.ContextId ??= contextId;
@@ -361,9 +335,27 @@ public sealed class A2AAgent : AIAgent
         session.TaskState = taskState;
     }
 
+    private static void ValidateContext(A2AAgentSession session, string? contextId)
+    {
+        // Surface cases where the A2A agent responds with a response that
+        // has a different context Id than the session's conversation Id.
+        if (session.ContextId is not null && contextId is not null && session.ContextId != contextId)
+        {
+            throw new InvalidOperationException(
+                $"The {nameof(contextId)} returned from the A2A agent is different from the conversation Id of the provided {nameof(AgentSession)}.");
+        }
+    }
+
     private static Message CreateA2AMessage(A2AAgentSession typedSession, IReadOnlyCollection<ChatMessage> messages)
     {
         var a2aMessage = messages.ToA2AMessage();
+
+        if (a2aMessage.Parts.Count == 0)
+        {
+            throw new ArgumentException(
+                "The provided messages contain no content that can be sent to the remote agent.",
+                nameof(messages));
+        }
 
         // Linking the message to the existing conversation, if any.
         // See: https://github.com/a2aproject/A2A/blob/main/docs/topics/life-of-a-task.md#group-related-interactions
@@ -479,7 +471,7 @@ public sealed class A2AAgent : AIAgent
             MessageId = statusUpdateEvent.Status.Message?.MessageId,
             FinishReason = MapTaskStateToFinishReason(statusUpdateEvent.Status.State),
             AdditionalProperties = statusUpdateEvent.Metadata?.ToAdditionalProperties() ?? [],
-            Contents = statusUpdateEvent.Status.GetUserInputRequests(),
+            Contents = statusUpdateEvent.Status.ToChatMessage()?.Contents,
         };
     }
 

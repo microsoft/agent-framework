@@ -6,6 +6,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
+    <InjectSharedHttpHeaderValidation>true</InjectSharedHttpHeaderValidation>
     <InjectSharedThrow>true</InjectSharedThrow>
     <InjectSharedDiagnosticIds>true</InjectSharedDiagnosticIds>
     <InjectIsExternalInitOnLegacy>true</InjectIsExternalInitOnLegacy>
@@ -34,6 +35,7 @@
     <PackageReference Include="Microsoft.Agents.ObjectModel.PowerFx" />
     <PackageReference Include="Microsoft.PowerFx.Interpreter" />
     <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
     <PackageReference Include="Microsoft.Extensions.Logging" />
     <PackageReference Include="System.CodeDom" TreatAsUsed="true" />
     <PackageReference Include="System.Collections.Immutable" />

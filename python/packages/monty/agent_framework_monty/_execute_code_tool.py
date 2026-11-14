@@ -6,20 +6,25 @@ Mirrors the public API of ``HyperlightExecuteCodeTool`` for the subset that
 applies to a pure-Python interpreter (no backends to choose from). By default
 the Monty sandbox rejects OS / filesystem / network calls with
 ``PermissionError``; pass ``workspace_root`` or ``file_mounts`` to expose
-scoped host directories, and the tool will capture any files written under
-``read-write`` mounts as ``Content`` items in the response.
+scoped host directories, and the tool will capture files written under
+``read-write`` mounts as ``Content`` items within per-execution capture limits.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
+import os
+import stat
 from collections.abc import Callable, Iterator, Sequence
+from copy import deepcopy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from agent_framework import Content, FunctionTool
+from agent_framework._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
 from agent_framework._tools import (
     ApprovalMode,
     _normalize_tool_description_format,  # pyright: ignore[reportPrivateUsage]
@@ -30,18 +35,41 @@ from agent_framework._tools import (
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
+from ._mount_gate import MountGate, MountGateTimeoutError
 from ._types import FileMount, FileMountInput
+
+logger = logging.getLogger("agent_framework")
 
 EXECUTE_CODE_TOOL_NAME = "execute_code"
 EXECUTE_CODE_TOOL_DESCRIPTION = "Execute Python in a Monty interpreter."
+
+_FIDES_TOOL_PROPERTY_KEYS = frozenset({
+    "source_integrity",
+    "confidentiality",
+    "max_allowed_confidentiality",
+    "accepts_untrusted",
+    "standing_guidance",
+    "agent_framework.security.principals",
+    "_agent_framework_internal_security_tool",
+    "_mcp_server_ifc_policy",
+    "_mcp_trust_server_ifc",
+})
 
 #: Virtual path that the optional ``workspace_root`` directory is mounted at,
 #: matching the Hyperlight default. Use ``file_mounts`` for any other path.
 WORKSPACE_MOUNT_PATH = "/input"
 
-#: Maximum bytes per captured output file. Files larger than this are skipped
-#: and a ``Content.from_text`` warning is appended in their place.
+#: Maximum bytes per captured output file. Oversized files are skipped and
+#: reported in one omission summary per execution.
 MAX_CAPTURED_FILE_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+#: Maximum captured files across all read-write mounts in one execution.
+MAX_CAPTURED_FILES = 20
+
+#: Maximum raw captured bytes across all read-write mounts in one execution.
+MAX_CAPTURED_TOTAL_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+_CAPTURE_OMISSION_MESSAGE = "[files omitted: capture file-count or byte limits exceeded]"
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -165,8 +193,45 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     Returns the raw native value (no ``Content`` wrapping) so the Monty interpreter
     receives real Python objects. ``FunctionTool.invoke`` accepts direct keyword
     arguments and handles both sync and async underlying functions internally.
+    The raw path deliberately bypasses adapters that attach labels after
+    ``Content`` normalization.
     """
     return partial(tool_obj.invoke, skip_parsing=True)
+
+
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools, or label the outer execute_code result "
+                "with CodeAct additional_properties for coarse-grained handling.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
 
 
 class MontyExecuteCodeTool(FunctionTool):
@@ -190,7 +255,12 @@ class MontyExecuteCodeTool(FunctionTool):
     Hyperlight's ``/output`` flow.
 
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
-    time, memory, output size, recursion depth, and GC frequency.
+    time, memory, output size, recursion depth, and GC frequency. When it sets
+    neither ``max_feed_duration_secs`` nor its legacy alias ``max_duration_secs``,
+    guest execution is limited to 30 seconds, not counting time spent waiting on
+    host tools. Set ``max_feed_duration_secs`` to another value, or to ``None`` to
+    remove the limit. ``max_duration_secs`` will be removed soon, because this
+    package is in beta.
 
     ``tool_description_format`` controls parameter documentation in both the
     description and instructions: ``"compact"`` (default) or ``"json"`` globally,
@@ -199,37 +269,69 @@ class MontyExecuteCodeTool(FunctionTool):
     are copied and retain entries for tools registered later.
 
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
-    the same task/thread that owns the tool. Monty itself runs on the event
-    loop, so no internal locking is needed.
+    the same task/thread that owns the tool; they are not synchronized. Guest
+    code runs in Monty worker processes and does not block the event loop, so
+    concurrent ``execute_code`` calls overlap and each starts its own worker
+    process.
+
+    Calls on a tool that has a read-write mount (including ``workspace_root``)
+    take turns, so that written files are attributed to the right call. This
+    covers every run of one provider and works across event loops and threads.
+    A call waits at most 10 minutes for its turn and then returns an error. A call
+    that a host tool starts while its own call has the turn, such as a sub-agent
+    that uses the same provider, is part of that call and does not wait. The turn
+    lasts until the call and every call it started have ended. Tools and mounts
+    are read when a call gets its turn. Separate tools or providers that mount the
+    same host directory do not take turns with each other, so give each one its
+    own directory.
+
+    Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. The mapping is deep-copied at construction and for each
+            run snapshot. It can define one coarse FIDES policy for the complete
+            CodeAct result; it does not label or enforce nested host-tool calls.
+        include_detailed_errors: Include host exception types/messages and execution error details.
+            Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
+            This setting is independent of the outer client's error and sensitive-logging settings.
     """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
+        _mount_gate: MountGate | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
             approval_mode="never_require",
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
+            additional_properties=deepcopy(additional_properties),
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
             tool_description_format
         )
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
         )
         self._file_mounts: dict[str, FileMount] = {}
         self._resource_limits: dict[str, Any] | None = dict(resource_limits) if resource_limits else None
+        self._mount_gate: MountGate = _mount_gate or MountGate()
 
         if tools is not None:
             self.add_tools(tools)
@@ -258,7 +360,14 @@ class MontyExecuteCodeTool(FunctionTool):
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]],
     ) -> None:
         """Add Monty-side tools to this execute_code surface."""
-        self._managed_tools = _collect_tools(self._managed_tools, tools)
+        new_tools = _collect_tools(tools)
+        self._managed_tools = _collect_tools(self._managed_tools, new_tools)
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in self._managed_tools)
+        ]
+        _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -271,11 +380,17 @@ class MontyExecuteCodeTool(FunctionTool):
         if len(remaining_tools) == len(self._managed_tools):
             raise KeyError(f"No managed tool named {name!r} is registered.")
         self._managed_tools = remaining_tools
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in remaining_tools)
+        ]
         self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed Monty tools."""
         self._managed_tools = []
+        self._fides_warned_metadata.clear()
         self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -315,7 +430,10 @@ class MontyExecuteCodeTool(FunctionTool):
 
     @property
     def resource_limits(self) -> dict[str, Any] | None:
-        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any."""
+        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any.
+
+        The default guest execution limit applied when no feed duration is configured is not included.
+        """
         return dict(self._resource_limits) if self._resource_limits else None
 
     def build_instructions(self, *, tools_visible_to_model: bool) -> str:
@@ -329,13 +447,19 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        tools = self.get_tools()
+        _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
         return MontyExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=self._fides_warned_metadata,
+            tools=tools,
+            additional_properties=deepcopy(self.additional_properties),
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
+            include_detailed_errors=self._include_detailed_errors,
+            _mount_gate=self._mount_gate,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -348,6 +472,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return {
             "runtime": "monty",
             "approval_mode": approval_mode,
+            "include_detailed_errors": self._include_detailed_errors,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
             "tool_description_format": (
                 dict(self._tool_description_format)
@@ -412,12 +537,25 @@ class MontyExecuteCodeTool(FunctionTool):
         return mounts
 
     async def _run_code(self, *, code: str) -> list[Content]:
+        # Written files are attributed by comparing read-write mounts before and after the run, so calls that can
+        # write to the same host files take turns.
+        if not any(mount.mode == "read-write" for mount in self._effective_mounts()):
+            return await self._execute(code)
+        try:
+            async with self._mount_gate.hold():
+                return await self._execute(code)
+        except MountGateTimeoutError as exc:
+            return [Content.from_error(message=str(exc))]
+
+    async def _execute(self, code: str) -> list[Content]:
+        include_detailed_errors = self._include_detailed_errors
         tools = list(self._managed_tools)
         mounts = self._effective_mounts()
 
         tool_map = self._build_tool_map(tools)
         stub_map = self._build_type_stub_map(tools)
-        type_stubs = generate_type_stubs(stub_map) if stub_map else None
+        accepted_parameters = {tool_obj.name: tool_obj.parameters().get("properties", {}) for tool_obj in tools}
+        type_stubs = generate_type_stubs(stub_map, accepted_parameters=accepted_parameters) if stub_map else None
 
         # Snapshot mtimes of host files in read-write mounts so we can later
         # identify which files the sandbox actually touched.
@@ -428,6 +566,7 @@ class MontyExecuteCodeTool(FunctionTool):
             type_stubs=type_stubs,
             mounts=[_to_monty_mount(mount) for mount in mounts] or None,
             resource_limits=self._resource_limits,
+            include_detailed_errors=include_detailed_errors,
         )
 
         try:
@@ -436,7 +575,7 @@ class MontyExecuteCodeTool(FunctionTool):
             return [
                 Content.from_error(
                     message="Execution error",
-                    error_details=f"{type(exc).__name__}: {exc}",
+                    error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
                 ),
             ]
 
@@ -473,42 +612,111 @@ def _build_execution_contents(*, result: dict[str, Any]) -> list[Content]:
 
 
 def _iter_real_files(root: Path) -> Iterator[Path]:
-    """Walk ``root`` recursively, yielding only real (non-symlink) files.
+    """Walk ``root`` recursively, yielding only real regular files.
 
     ``Path.rglob`` follows directory symlinks by default, which combined with
     ``Path.is_file()`` / ``Path.read_bytes()`` (both follow symlinks) would let
     an attacker who controls the workspace pre-place a symlink to a host file
-    or directory and have our post-execution capture surface it. Skipping every
-    symlink at both the directory and file level closes that escape.
+    or directory and have our post-execution capture surface it. Skip symlinks,
+    Windows junctions, and other reparse points at every directory level.
     """
     stack: list[Path] = [root]
     while stack:
         current = stack.pop()
         try:
+            if _is_link_or_reparse_point(current):
+                continue
             entries = list(current.iterdir())
         except OSError:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink():
+                if _is_link_or_reparse_point(entry):
                     continue
-                if entry.is_dir():
+                entry_stat = entry.lstat()
+                if stat.S_ISDIR(entry_stat.st_mode):
                     stack.append(entry)
-                elif entry.is_file():
+                elif stat.S_ISREG(entry_stat.st_mode):
                     yield entry
             except OSError:
                 continue
 
 
+def _safe_capture_file_stat(*, root: Path, entry: Path) -> os.stat_result | None:
+    """Return the verified stat for a real regular file beneath ``root``."""
+    try:
+        relative = entry.relative_to(root)
+    except ValueError:
+        return None
+
+    current = root
+    try:
+        if _is_link_or_reparse_point(current):
+            return None
+        for part in relative.parts:
+            current /= part
+            if _is_link_or_reparse_point(current):
+                return None
+        entry_stat = current.lstat()
+    except OSError:
+        return None
+    return entry_stat if stat.S_ISREG(entry_stat.st_mode) else None
+
+
+class _CaptureSizeLimitError(ValueError):
+    """A file exceeded its remaining capture byte allowance."""
+
+
+def _read_validated_file(
+    *,
+    root: Path,
+    entry: Path,
+    expected: os.stat_result,
+    max_bytes: int,
+) -> bytes | None:
+    """Read ``entry`` through one descriptor that is checked against the validated file.
+
+    ``Path.read_bytes()`` reopens the path, so a component swapped for a link or junction after
+    validation would be followed. Opening first, comparing the descriptor with the validated ``lstat``
+    identity, and revalidating the path afterwards rejects such a swap. Windows has no no-follow open,
+    so the check is not atomic there, but an undetected swap would have to be applied, reverted, and
+    applied again around the checks. Returns ``None`` when the file identity changed or cannot be read
+    safely. Raises ``_CaptureSizeLimitError`` if the file exceeds ``max_bytes``.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(entry, flags)
+    except OSError:
+        return None
+    try:
+        opened = os.fstat(fd)
+        identity = (opened.st_dev, opened.st_ino)
+        if not stat.S_ISREG(opened.st_mode) or identity != (expected.st_dev, expected.st_ino):
+            return None
+        rechecked = _safe_capture_file_stat(root=root, entry=entry)
+        if rechecked is None or (rechecked.st_dev, rechecked.st_ino) != identity:
+            return None
+        if opened.st_size > max_bytes:
+            raise _CaptureSizeLimitError("File exceeds the capture byte limit.")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            data = handle.read(max_bytes + 1)
+        if len(data) > max_bytes:
+            raise _CaptureSizeLimitError("File grew beyond the capture byte limit.")
+        return data
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str, tuple[int, int]]]:
-    """Capture (size, mtime_ns) for every real (non-symlink) host file under read-write mounts.
+    """Capture (size, mtime_ns) for every real host file under read-write mounts.
 
     Returns ``{mount_path: {relative_posix_path: (size, mtime_ns)}}``. Used by
     :func:`_capture_written_files` to detect new or modified files after the run.
     Read-only and overlay mounts are skipped because their writes do not
-    propagate to the host. Symlinks (file or directory) are deliberately skipped
-    so an attacker cannot escape the mount by pre-placing a symlink to a host
-    path outside the workspace.
+    propagate to the host. Links and reparse points are deliberately skipped so
+    an attacker cannot escape the mount through a host path outside the workspace.
     """
     snapshot: dict[str, dict[str, tuple[int, int]]] = {}
     for mount in mounts:
@@ -518,11 +726,11 @@ def _snapshot_writable_mounts(mounts: Sequence[FileMount]) -> dict[str, dict[str
         per_mount: dict[str, tuple[int, int]] = {}
         for entry in _iter_real_files(host_root):
             try:
-                stat = entry.lstat()  # lstat: never follow symlinks (defensive)
+                entry_stat = entry.lstat()  # lstat: never follow symlinks (defensive)
             except OSError:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            per_mount[relative] = (int(stat.st_size), int(stat.st_mtime_ns))
+            per_mount[relative] = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
         snapshot[mount.mount_path] = per_mount
     return snapshot
 
@@ -533,42 +741,43 @@ def _capture_written_files(
 ) -> list[Content]:
     """Return :class:`Content` items for files the sandbox wrote during the run.
 
-    Mirrors Hyperlight's ``/output`` capture flow: any new or modified real
-    (non-symlink) file under a read-write mount is read back as binary and
-    surfaced as ``Content.from_data`` with a ``path`` annotation in
-    ``additional_properties``. Symlinks are skipped at both directory and file
-    level so a malicious workspace cannot trick us into capturing host files
-    outside the configured mount root.
+    New or modified real regular files under read-write mounts are surfaced as
+    ``Content.from_data`` with a ``path`` annotation in ``additional_properties``.
+    File-count and raw-byte budgets apply across all mounts, with one summary
+    for files omitted by capture limits. Links and reparse points are skipped at
+    every directory level, and bounded reads use descriptors verified against
+    the validated paths.
     """
     captured: list[Content] = []
+    total_bytes = 0
+    omitted = False
     for mount in mounts:
         if mount.mode != "read-write":
             continue
         host_root = Path(mount.host_path)
         before = pre_state.get(mount.mount_path, {})
         for entry in sorted(_iter_real_files(host_root)):
-            try:
-                stat = entry.lstat()
-            except OSError:
+            entry_stat = _safe_capture_file_stat(root=host_root, entry=entry)
+            if entry_stat is None:
                 continue
             relative = entry.relative_to(host_root).as_posix()
-            current = (int(stat.st_size), int(stat.st_mtime_ns))
+            current = (int(entry_stat.st_size), int(entry_stat.st_mtime_ns))
             if before.get(relative) == current:
                 continue  # Unchanged.
+            if len(captured) >= MAX_CAPTURED_FILES:
+                captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
+                return captured
             sandbox_path = f"{mount.mount_path.rstrip('/')}/{relative}"
-            if stat.st_size > MAX_CAPTURED_FILE_BYTES:
-                captured.append(
-                    Content.from_text(
-                        f"[file {sandbox_path} omitted: {stat.st_size} bytes "
-                        f"exceeds MAX_CAPTURED_FILE_BYTES={MAX_CAPTURED_FILE_BYTES}]"
-                    )
-                )
+            max_bytes = min(MAX_CAPTURED_FILE_BYTES, MAX_CAPTURED_TOTAL_BYTES - total_bytes)
+            if entry_stat.st_size > max_bytes:
+                omitted = True
                 continue
             try:
-                # _iter_real_files already excluded symlinks at every level of
-                # the walk; reading the file here is safe.
-                data = entry.read_bytes()
-            except OSError:
+                data = _read_validated_file(root=host_root, entry=entry, expected=entry_stat, max_bytes=max_bytes)
+            except _CaptureSizeLimitError:
+                omitted = True
+                continue
+            if data is None:
                 continue
             media_type = mimetypes.guess_type(entry.name)[0] or "application/octet-stream"
             captured.append(
@@ -578,4 +787,7 @@ def _capture_written_files(
                     additional_properties={"path": sandbox_path},
                 )
             )
+            total_bytes += len(data)
+    if omitted:
+        captured.append(Content.from_text(_CAPTURE_OMISSION_MESSAGE))
     return captured

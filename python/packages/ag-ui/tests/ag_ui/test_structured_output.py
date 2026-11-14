@@ -261,3 +261,37 @@ async def test_empty_updates_no_structured_processing(streaming_chat_client_stub
 
     # Should only have start and end events
     assert len(events) == 2  # RunStarted, RunFinished
+
+
+async def test_structured_output_with_json_schema_mapping_emits_text(
+    streaming_chat_client_stub, stream_from_updates_fixture
+):
+    """Test that JSON Schema mapping response_format still emits text content events."""
+    from agent_framework.ag_ui import AgentFrameworkAgent
+
+    json_payload = '{"name": "Alice", "age": 30}'
+    updates = [ChatResponseUpdate(contents=[Content.from_text(text=json_payload)])]
+
+    agent = Agent(
+        name="extractor",
+        instructions="Extract person info as JSON.",
+        client=streaming_chat_client_stub(stream_from_updates_fixture(updates)),
+    )
+    agent.default_options = {
+        "response_format": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}, "age": {"type": "integer"}},
+            "required": ["name", "age"],
+        }
+    }
+
+    wrapper = AgentFrameworkAgent(agent=agent)
+    input_data = {"messages": [{"role": "user", "content": "Extract info for Alice aged 30"}]}
+
+    events: list[Any] = []
+    async for event in wrapper.run(input_data):
+        events.append(event)
+
+    text_events = [e for e in events if e.type == "TEXT_MESSAGE_CONTENT"]
+    assert len(text_events) > 0
+    assert text_events[0].delta == json_payload

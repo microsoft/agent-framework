@@ -1,6 +1,6 @@
 ﻿# Microsoft.Agents.AI.Hyperlight
 
-First-class [CodeAct](../../../docs/decisions/0038-codeact-integration.md)
+First-class [CodeAct](../../../docs/decisions/0031-codeact-integration.md)
 support for the Microsoft Agent Framework, backed by the
 [Hyperlight](https://github.com/hyperlight-dev/hyperlight) VM-isolated sandbox.
 
@@ -52,6 +52,74 @@ This does not change `execute_code`'s own input schema, which remains the single
   restore will fail; this project is intentionally `IsPackable=false` in
   the meantime.
 * A Hyperlight Python guest module when using `SandboxBackend.Wasm`.
+
+## Error diagnostics
+
+Host tool failures return a generic JSON error by default. Host execution
+exceptions returned by the executor also use a generic message.
+`HyperlightCodeActProviderOptions.IncludeDetailedErrors` defaults to `false`
+for both the provider and standalone function. Set it to `true` only for a
+trusted channel: full exception details, including stack traces and inner
+exceptions, can contain sensitive data. Argument-validation errors keep their
+safe messages by default and include stack traces only with this opt-in.
+
+This option is independent of the outer `FunctionInvokingChatClient` error policy
+and sensitive-data logging. Outer error handling cannot redact diagnostics that
+generated code has already caught and included in normal output. Run snapshots
+capture the policy, and sandbox configuration fingerprints include it so cached
+callbacks cannot retain a different disclosure policy.
+The same boundary covers initialization, warm-up, snapshot restore, and execution
+failures. Ordinary failures dispose and clear failed sandbox state before returning
+an error; cancellation still propagates.
+
+## Execution limits
+
+Guest execution has a finite 30-second limit by default. Configure
+`HyperlightCodeActProviderOptions.ExecutionTimeout`, for example
+`ExecutionTimeout = TimeSpan.FromMilliseconds(500)`, to change it. Values must be
+greater than zero and at most 4,294,967,294 milliseconds. Run snapshots capture the
+limit independently of later option changes.
+
+Caller cancellation interrupts running guest code and propagates as
+`OperationCanceledException`. Reaching the configured limit returns an unsuccessful
+execution result. The next invocation restores the warm snapshot before reuse.
+Native execution finishes before another invocation can enter the sandbox.
+
+Runtime initialization and host tool callbacks cannot be interrupted by the guest
+limit. Host tools must enforce their own cancellation and execution limits.
+This behavior requires an upstream SDK version with the cancellation-aware `Run` overload.
+
+### KVM guest regression tests
+
+Ordinary unit tests retain reflection-disabled JSON settings. To run the guest
+regressions on a KVM-capable host with the corresponding native SDK installed:
+
+```powershell
+$env:HYPERLIGHT_RUN_GUEST_TESTS = "true"
+$env:HYPERLIGHT_PYTHON_GUEST_PATH = "/absolute/path/to/python.wasm" # Path to the built Python guest module.
+dotnet test --project dotnet\tests\Microsoft.Agents.AI.Hyperlight.UnitTests -f net10.0 -p:HyperlightGuestTests=true
+```
+
+The explicit guest configuration enables reflection-based serialization required
+by the upstream SDK; without opt-in, guest-only tests are skipped.
+
+## Network access and guest packages
+
+`HyperlightCodeActProviderOptions.AllowedDomains` controls outbound requests
+from the sandbox. It does not install guest packages or expose host-installed
+dependencies to guest code.
+
+`CreateForWasm(modulePath)` selects an existing `.wasm` or `.aot` guest module;
+it does not build a guest or install Python packages. The Agent Framework
+integration does not provide a custom guest build or package installation
+workflow. Package availability depends on the selected module and backend;
+the default JavaScript backend does not run Python code.
+
+For operations requiring application dependencies or external APIs, register
+an `AIFunction` in `Tools` and invoke it from the guest with `call_tool(...)`.
+Keep credentials and authorization in the host function. These functions run
+outside the guest, so `AllowedDomains` does not restrict their network requests;
+enforce any required destination policy in the host function.
 
 ## Status
 

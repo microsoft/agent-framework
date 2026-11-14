@@ -5,6 +5,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading;
@@ -25,6 +28,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 {
     private const string DefaultName = "GitHub Copilot Agent";
     private const string DefaultDescription = "An AI agent powered by GitHub Copilot";
+    private const UnixFileMode OwnerOnlyDirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    private const UnixFileMode OwnerOnlyFileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
 
     private readonly CopilotClient _copilotClient;
     private readonly string? _id;
@@ -34,6 +39,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     private readonly bool _ownsClient;
     private readonly JsonSerializerOptions _jsonSerializerOptions;
     private readonly ILogger _logger;
+    private readonly SemaphoreSlim _startLock = new(1, 1);
+    private volatile bool _cliVersionChecked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="GitHubCopilotAgent"/> class.
@@ -53,6 +60,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools. If the caller supplies their own
     /// <c>OnPreToolUse</c> hook, it takes precedence and the caller is fully responsible for approval handling; in that
     /// case a warning is logged for any approval-required tool that will not be automatically gated.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -92,6 +103,10 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
     /// When a tool wrapped in <see cref="ApprovalRequiredAIFunction"/> is registered, the agent installs a default
     /// <c>Hooks.OnPreToolUse</c> handler that returns <c>"ask"</c> for those tools (routing the decision to
     /// <c>SessionConfig.OnPermissionRequest</c>) and defers all other tools.
+    /// <para>
+    /// GitHub Copilot CLI version 1.0.85 or higher is required. The version is checked the first time the agent runs,
+    /// and an <see cref="InvalidOperationException"/> is thrown if it is older or cannot be determined.
+    /// </para>
     /// </remarks>
     public GitHubCopilotAgent(
         CopilotClient copilotClient,
@@ -178,9 +193,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         await this.EnsureClientStartedAsync(cancellationToken).ConfigureAwait(false);
 
         // Create or resume a session with streaming enabled by default
-        SessionConfig sessionConfig = this._sessionConfig != null
-            ? CopySessionConfig(this._sessionConfig)
-            : new SessionConfig { Streaming = true };
+        SessionConfig sessionConfig = CopySessionConfig(this._sessionConfig);
 
         bool isStreaming = sessionConfig.Streaming ?? true;
         CopilotSession copilotSession;
@@ -188,7 +201,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             copilotSession = await this._copilotClient.ResumeSessionAsync(
                 typedSession.SessionId,
-                this.CreateResumeConfig(),
+                ToResumeSessionConfig(this._sessionConfig),
                 cancellationToken).ConfigureAwait(false);
         }
         else
@@ -253,7 +266,8 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
                 // Handle DataContent as attachments
                 (List<AttachmentFile>? attachments, tempDir) = await ProcessDataContentAttachmentsAsync(
                     messages,
-                    cancellationToken).ConfigureAwait(false);
+                    tempRoot: null,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
 
                 // Send the message with attachments
                 MessageOptions messageOptions = new() { Prompt = prompt };
@@ -299,58 +313,178 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
         {
             await this._copilotClient.DisposeAsync().ConfigureAwait(false);
         }
+
+        this._startLock.Dispose();
     }
 
     private async Task EnsureClientStartedAsync(CancellationToken cancellationToken)
     {
-        await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+        if (this._cliVersionChecked)
+        {
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        // Only one start and version check may run at a time, so a failed check can't stop a client
+        // that another concurrent run has already accepted.
+        await this._startLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await this._copilotClient.StartAsync(cancellationToken).ConfigureAwait(false);
+
+            if (this._cliVersionChecked)
+            {
+                return;
+            }
+
+            try
+            {
+                string? version;
+                try
+                {
+                    GetStatusResponse status = await this._copilotClient.GetStatusAsync(cancellationToken).ConfigureAwait(false);
+                    version = status?.Version;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    throw CopilotCliVersionGuard.CreateUndeterminedVersionException(ex);
+                }
+
+                CopilotCliVersionGuard.EnsureSupported(version);
+            }
+            catch (InvalidOperationException) when (this._ownsClient)
+            {
+                await this.StopOwnedClientAfterFailedCheckAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            // Only a successful check is remembered, so a failed check is repeated on the next run.
+            this._cliVersionChecked = true;
+        }
+        finally
+        {
+            this._startLock.Release();
+        }
     }
 
-    private ResumeSessionConfig CreateResumeConfig()
+    private async Task StopOwnedClientAfterFailedCheckAsync()
     {
-        return CopyResumeSessionConfig(this._sessionConfig);
+        try
+        {
+            await this._copilotClient.StopAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Keep the original version check error; a failure to stop is only logged.
+            this._logger.LogFailedToStopClientAfterVersionCheck(ex);
+        }
     }
 
     /// <summary>
     /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new instance,
-    /// preserving <see cref="SessionConfigBase.Streaming"/> from the source (defaulting to <c>true</c> if unset).
+    /// defaulting <see cref="SessionConfigBase.Streaming"/> to <see langword="true"/> and
+    /// <see cref="SessionConfigBase.EnableFileHooks"/> to <see langword="false"/> when unset.
     /// </summary>
-    internal static SessionConfig CopySessionConfig(SessionConfig source)
+    internal static SessionConfig CopySessionConfig(SessionConfig? source)
     {
-        SessionConfig copy = source.Clone();
-        copy.Streaming = source.Streaming ?? true;
+        SessionConfig copy = source?.Clone() ?? new SessionConfig();
+        copy.Streaming = source?.Streaming ?? true;
+        copy.EnableFileHooks = source?.EnableFileHooks ?? false;
         return copy;
     }
 
     /// <summary>
-    /// Copies all supported properties from a source <see cref="SessionConfig"/> into a new
-    /// <see cref="ResumeSessionConfig"/>, preserving <see cref="SessionConfigBase.Streaming"/>
-    /// from the source (defaulting to <c>true</c> if unset).
+    /// Converts a source <see cref="SessionConfig"/> into a new
+    /// <see cref="ResumeSessionConfig"/>, defaulting <see cref="SessionConfigBase.Streaming"/>
+    /// to <see langword="true"/> and <see cref="SessionConfigBase.EnableFileHooks"/>
+    /// to <see langword="false"/> when unset.
     /// </summary>
-    internal static ResumeSessionConfig CopyResumeSessionConfig(SessionConfig? source)
+    internal static ResumeSessionConfig ToResumeSessionConfig(SessionConfig? source)
     {
+        // ResumeSessionConfig is a separate SDK type, so resumed sessions need every shared setting projected explicitly.
         return new ResumeSessionConfig
         {
-            Model = source?.Model,
-            ReasoningEffort = source?.ReasoningEffort,
-            ReasoningSummary = source?.ReasoningSummary,
-            ContextTier = source?.ContextTier,
-            Tools = source?.Tools,
-            SystemMessage = source?.SystemMessage,
+            AdditionalDirectories = source?.AdditionalDirectories,
+            Agent = source?.Agent,
+            AskUserVariant = source?.AskUserVariant,
+            AuthClientIdMetadataUrl = source?.AuthClientIdMetadataUrl,
             AvailableTools = source?.AvailableTools,
+            CanvasHandler = source?.CanvasHandler,
+            CanvasProvider = source?.CanvasProvider,
+            Canvases = source?.Canvases,
+            Capi = source?.Capi,
+            ClientName = source?.ClientName,
+            CoauthorEnabled = source?.CoauthorEnabled,
+            Commands = source?.Commands,
+            ConfigDirectory = source?.ConfigDirectory,
+            ContextTier = source?.ContextTier,
+            CreateSessionFsProvider = source?.CreateSessionFsProvider,
+            CustomAgents = source?.CustomAgents,
+            CustomAgentsLocalOnly = source?.CustomAgentsLocalOnly,
+            DefaultAgent = source?.DefaultAgent,
+            DisabledMcpServers = source?.DisabledMcpServers,
+            DisabledSkills = source?.DisabledSkills,
+            EmbeddingCacheStorage = source?.EmbeddingCacheStorage,
+            EnableCitations = source?.EnableCitations,
+            EnableConfigDiscovery = source?.EnableConfigDiscovery,
+            EnableExperimentalMode = source?.EnableExperimentalMode,
+            EnableFileChangeTracking = source?.EnableFileChangeTracking,
+            EnableFileHooks = source?.EnableFileHooks ?? false,
+            EnableHostGitOperations = source?.EnableHostGitOperations,
+            EnableManagedSettings = source?.EnableManagedSettings,
+            EnableMcpApps = source?.EnableMcpApps ?? default,
+            EnableOnDemandInstructionDiscovery = source?.EnableOnDemandInstructionDiscovery,
+            EnableSessionStore = source?.EnableSessionStore,
+            EnableSessionTelemetry = source?.EnableSessionTelemetry,
+            EnableSkills = source?.EnableSkills,
+            ExcludedBuiltInAgents = source?.ExcludedBuiltInAgents,
             ExcludedTools = source?.ExcludedTools,
-            Provider = source?.Provider,
+            ExpAssignments = source?.ExpAssignments,
+            ExtensionInfo = source?.ExtensionInfo,
+            ExtensionSdkPath = source?.ExtensionSdkPath,
+            FeatureFlags = source?.FeatureFlags,
+            GitHubMcpToolConfig = source?.GitHubMcpToolConfig,
+            GitHubToken = source?.GitHubToken,
+            GitHubTokenProvider = source?.GitHubTokenProvider,
+            Hooks = source?.Hooks,
+            IncludeSubAgentStreamingEvents = source?.IncludeSubAgentStreamingEvents ?? default,
+            IncludedBuiltinSkills = source?.IncludedBuiltinSkills,
+            InfiniteSessions = source?.InfiniteSessions,
+            InstructionDirectories = source?.InstructionDirectories,
+            LargeOutput = source?.LargeOutput,
+            ManagedSettings = source?.ManagedSettings,
+            ManageScheduleEnabled = source?.ManageScheduleEnabled,
+            McpOAuthTokenStorage = source?.McpOAuthTokenStorage,
+            McpServers = source?.McpServers,
+            Memory = source?.Memory,
+            Model = source?.Model,
+            ModelCapabilities = source?.ModelCapabilities,
+            Models = source?.Models,
+            OnAutoModeSwitchRequest = source?.OnAutoModeSwitchRequest,
+            OnElicitationRequest = source?.OnElicitationRequest,
+            OnEvent = source?.OnEvent,
+            OnExitPlanModeRequest = source?.OnExitPlanModeRequest,
+            OnMcpAuthRequest = source?.OnMcpAuthRequest,
             OnPermissionRequest = source?.OnPermissionRequest,
             OnUserInputRequest = source?.OnUserInputRequest,
-            Hooks = source?.Hooks,
-            WorkingDirectory = source?.WorkingDirectory,
-            ConfigDirectory = source?.ConfigDirectory,
-            McpServers = source?.McpServers,
-            CustomAgents = source?.CustomAgents,
+            OrganizationCustomInstructions = source?.OrganizationCustomInstructions,
+            PluginDirectories = source?.PluginDirectories,
+            Provider = source?.Provider,
+            Providers = source?.Providers,
+            ReasoningEffort = source?.ReasoningEffort,
+            ReasoningSummary = source?.ReasoningSummary,
+            RemoteSession = source?.RemoteSession,
+            RequestCanvasRenderer = source?.RequestCanvasRenderer,
+            RequestExtensions = source?.RequestExtensions,
+            SessionLimits = source?.SessionLimits,
             SkillDirectories = source?.SkillDirectories,
-            DisabledSkills = source?.DisabledSkills,
-            InfiniteSessions = source?.InfiniteSessions,
-            Streaming = source?.Streaming ?? true
+            SkipCustomInstructions = source?.SkipCustomInstructions,
+            SkipEmbeddingRetrieval = source?.SkipEmbeddingRetrieval,
+            Streaming = source?.Streaming ?? true,
+            SystemMessage = source?.SystemMessage,
+            ToolSearch = source?.ToolSearch,
+            Tools = source?.Tools,
+            WorkingDirectory = source?.WorkingDirectory,
         };
     }
 
@@ -472,6 +606,7 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
             OutputTokenCount = (int?)(usageEvent.Data?.OutputTokens),
             TotalTokenCount = (int?)((usageEvent.Data?.InputTokens ?? 0) + (usageEvent.Data?.OutputTokens ?? 0)),
             CachedInputTokenCount = (int?)(usageEvent.Data?.CacheReadTokens),
+            ReasoningTokenCount = usageEvent.Data?.ReasoningTokens,
             AdditionalCounts = GetAdditionalCounts(usageEvent),
         };
 
@@ -632,33 +767,103 @@ public sealed class GitHubCopilotAgent : AIAgent, IAsyncDisposable
 
     private static async Task<(List<AttachmentFile>? Attachments, string? TempDir)> ProcessDataContentAttachmentsAsync(
         IEnumerable<ChatMessage> messages,
+        string? tempRoot,
         CancellationToken cancellationToken)
     {
         List<AttachmentFile>? attachments = null;
         string? tempDir = null;
-        foreach (ChatMessage message in messages)
+        try
         {
-            foreach (AIContent content in message.Contents)
+            foreach (ChatMessage message in messages)
             {
-                if (content is DataContent dataContent)
+                foreach (AIContent content in message.Contents)
                 {
-                    tempDir ??= Directory.CreateDirectory(
-                        Path.Combine(Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}")).FullName;
-
-                    string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
-
-                    attachments ??= [];
-                    attachments.Add(new AttachmentFile
+                    if (content is DataContent dataContent)
                     {
-                        Path = tempFilePath,
-                        DisplayName = Path.GetFileName(tempFilePath)
-                    });
+                        tempDir ??= CreateAttachmentTempDirectory(tempRoot);
+
+                        string tempFilePath = await dataContent.SaveToAsync(tempDir, cancellationToken).ConfigureAwait(false);
+                        ApplyOwnerOnlyFilePermissions(tempFilePath);
+
+                        attachments ??= [];
+                        attachments.Add(new AttachmentFile
+                        {
+                            Path = tempFilePath,
+                            DisplayName = Path.GetFileName(tempFilePath)
+                        });
+                    }
                 }
             }
+
+            return (attachments, tempDir);
+        }
+        catch
+        {
+            // The caller cannot receive tempDir when tuple construction fails, so cleanup must happen here.
+            CleanupTempDir(tempDir);
+            throw;
+        }
+    }
+
+    private static string CreateAttachmentTempDirectory(string? tempRoot)
+    {
+        string path = Path.Join(tempRoot ?? Path.GetTempPath(), $"af_copilot_{Guid.NewGuid():N}");
+        return OperatingSystem.IsWindows()
+            ? CreateAttachmentTempDirectoryOnWindows(path)
+            : Directory.CreateDirectory(path, OwnerOnlyDirectoryMode).FullName;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string CreateAttachmentTempDirectoryOnWindows(string path)
+    {
+        SecurityIdentifier owner = GetCurrentWindowsUser();
+        DirectorySecurity security = CreateOwnerOnlyWindowsSecurity<DirectorySecurity>(owner);
+        security.AddAccessRule(new FileSystemAccessRule(
+            owner,
+            FileSystemRights.FullControl,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None,
+            AccessControlType.Allow));
+        var directory = new DirectoryInfo(path);
+        directory.Create(security);
+        return directory.FullName;
+    }
+
+    private static void ApplyOwnerOnlyFilePermissions(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            ApplyOwnerOnlyFilePermissionsOnWindows(path);
+            return;
         }
 
-        return (attachments, tempDir);
+        // The owner-only directory prevents access while SaveToAsync creates the file.
+        File.SetUnixFileMode(path, OwnerOnlyFileMode);
     }
+
+    [SupportedOSPlatform("windows")]
+    private static void ApplyOwnerOnlyFilePermissionsOnWindows(string path)
+    {
+        SecurityIdentifier owner = GetCurrentWindowsUser();
+        FileSecurity security = CreateOwnerOnlyWindowsSecurity<FileSecurity>(owner);
+        security.AddAccessRule(new FileSystemAccessRule(owner, FileSystemRights.FullControl, AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(security);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static T CreateOwnerOnlyWindowsSecurity<T>(SecurityIdentifier owner)
+        where T : FileSystemSecurity, new()
+    {
+        T security = new();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(owner);
+        return security;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static SecurityIdentifier GetCurrentWindowsUser()
+        => WindowsIdentity.GetCurrent().User
+            ?? throw new InvalidOperationException("The current Windows user does not have a security identifier.");
 
     private static void CleanupTempDir(string? tempDir)
     {

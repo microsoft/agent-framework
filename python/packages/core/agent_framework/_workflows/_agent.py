@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import logging
-import sys
 import uuid
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Literal,
+    TypedDict,  # pragma: no cover
+    cast,
+    overload,
+)
 
 from .._agents import BaseAgent
 from .._sessions import (
@@ -29,7 +36,9 @@ from .._types import (
     Message,
     ResponseStream,
     UsageDetails,
+    _copy_operation_state,  # pyright: ignore[reportPrivateUsage]
     add_usage_details,
+    merge_additional_properties,
 )
 from ..exceptions import AgentException, AgentInvalidRequestException, AgentInvalidResponseException
 from ._checkpoint import CheckpointStorage
@@ -41,19 +50,77 @@ from ._events import (
 from ._message_utils import normalize_messages_input
 from ._typing_utils import is_instance_of, is_type_compatible
 
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
-
 if TYPE_CHECKING:
     from ._workflow import Workflow, WorkflowInvocationKwargs
 
 logger = logging.getLogger(__name__)
 
 
+_INTERNAL_CALL_CONTENT_TYPES = frozenset({"function_call", "function_approval_response"})
+
+
+def _contains_internal_call_content(contents: Sequence[Content] | None) -> bool:
+    """True when any content is a function-call envelope (a call or an approval response).
+
+    Informational-only calls are transcript records that intentionally have no tool
+    result, so they stay caller-facing instead of being treated as internal envelopes.
+    """
+    return any(
+        getattr(content, "type", None) in _INTERNAL_CALL_CONTENT_TYPES
+        and not getattr(content, "informational_only", False)
+        for content in contents or ()
+    )
+
+
+def _caller_facing_messages(messages: Iterable[Message]) -> list[Message]:
+    """Return the messages a workflow-as-agent caller should see.
+
+    Non-assistant messages are dropped: system prompts and tool results are internal
+    workflow artifacts, and user messages would be re-emitted (e.g. from GroupChat
+    orchestrators that yield full conversation history). Assistant messages carrying
+    function-call envelopes are dropped whole, reasoning included: their tool-role
+    results are excluded by the role policy, and a call without its result is an
+    invalid transcript for providers that validate call/result pairing on replay.
+    """
+    return [
+        message
+        for message in messages
+        if message.role == "assistant" and not _contains_internal_call_content(message.contents)
+    ]
+
+
+class _StreamingRoleGate:
+    """Track the declared role per streamed message across response updates.
+
+    Non-assistant streams may declare ``role`` only on their first delta and use
+    ``role=None`` continuation chunks. A declared role is remembered per message id, so
+    continuation chunks of a user stream cannot leak through the assistant-only filter
+    while an unrelated role-less message from another stream (or a later message of the
+    same run) is not stained by it. Updates without a message id share one fallback
+    slot, which stays conservative for streams that never identify their messages.
+    """
+
+    def __init__(self) -> None:
+        self._declared_roles: dict[str | None, str] = {}
+
+    def should_forward(self, role: str | None, message_id: str | None = None) -> bool:
+        if role is not None:
+            self._declared_roles[message_id] = role
+        effective_role = role if role is not None else self._declared_roles.get(message_id)
+        return effective_role is None or effective_role == "assistant"
+
+
 class WorkflowAgent(BaseAgent):
-    """An `Agent` subclass that wraps a workflow and exposes it as an agent."""
+    """An `Agent` subclass that wraps a workflow and exposes it as an agent.
+
+    A ``WorkflowAgent`` wraps one stateful workflow. The ``session`` passed to :meth:`run` applies to the
+    wrapper only. It is not passed to the executors inside the workflow, and an ``AgentExecutor`` keeps its
+    own session between runs. One instance must therefore not serve callers that need independent
+    state, and while one caller's request is pending, other runs of the same instance fail until it is
+    resolved. Create a new workflow and ``WorkflowAgent`` for each caller or conversation. Exposing a
+    ``WorkflowAgent`` as a tool with ``as_tool()`` is not supported, because every caller of the tool would share
+    this workflow.
+    """
 
     # Class variable for the request info function name
     REQUEST_INFO_FUNCTION_NAME: ClassVar[str] = "request_info"
@@ -113,8 +180,14 @@ class WorkflowAgent(BaseAgent):
             id: Unique identifier for the agent. If None, will be generated.
             name: Optional name for the agent.
             description: Optional description of the agent.
-            context_providers: Optional sequence of context providers for the agent.
-            **kwargs: Additional keyword arguments passed to BaseAgent.
+            context_providers: Optional sequence of context providers. Provider lifecycle hooks
+                run, and provider-contributed messages are passed to the workflow. Provider-
+                contributed instructions, tools, and chat or function middleware are not
+                propagated to executors; configure them on the agents or clients within the
+                workflow instead.
+            **kwargs: Additional keyword arguments passed to BaseAgent. Middleware stored by
+                BaseAgent is not executed by WorkflowAgent; configure middleware on the agents
+                or clients within the workflow instead.
 
         Note:
             Only output events (type='output') and request_info events (type='request_info') from
@@ -408,6 +481,7 @@ class WorkflowAgent(BaseAgent):
 
         session_messages: list[Message] = session_context.get_messages(include_input=True)
         all_updates: list[AgentResponseUpdate] = []
+        role_gate = _StreamingRoleGate()
         async for event in self._run_core(
             session_messages,
             checkpoint_id,
@@ -417,7 +491,7 @@ class WorkflowAgent(BaseAgent):
             function_invocation_kwargs=function_invocation_kwargs,
             client_kwargs=client_kwargs,
         ):
-            updates = self._convert_workflow_event_to_agent_response_updates(response_id, event)
+            updates = self._convert_workflow_event_to_agent_response_updates(response_id, event, role_gate)
             for update in updates:
                 all_updates.append(update)
                 yield update
@@ -581,8 +655,14 @@ class WorkflowAgent(BaseAgent):
                     )
 
                 if isinstance(data, AgentResponse):
-                    messages.extend(data.messages)
-                    raw_representations.append(data.raw_representation)
+                    # Only caller-facing assistant messages survive; see
+                    # _caller_facing_messages for the full policy. Usage and creation
+                    # time describe the billed child-agent call itself, so they merge
+                    # even when every message of the response was filtered out.
+                    assistant_messages = _caller_facing_messages(data.messages)
+                    messages.extend(assistant_messages)
+                    if assistant_messages:
+                        raw_representations.append(data.raw_representation)
                     merged_usage = add_usage_details(merged_usage, data.usage_details)
                     latest_created_at = (
                         data.created_at
@@ -592,12 +672,22 @@ class WorkflowAgent(BaseAgent):
                         else latest_created_at
                     )
                 elif isinstance(data, Message):
-                    messages.append(data)
-                    raw_representations.append(data.raw_representation)
+                    if data.role == "assistant" and not _contains_internal_call_content(data.contents):
+                        messages.append(data)
+                        raw_representations.append(data.raw_representation)
                 elif is_instance_of(data, list[Message]):
                     chat_messages = cast(list[Message], data)
-                    messages.extend(chat_messages)
-                    raw_representations.append(data)
+                    # Only caller-facing assistant messages survive; see
+                    # _caller_facing_messages for the full policy.
+                    assistant_messages = _caller_facing_messages(chat_messages)
+                    if assistant_messages:
+                        messages.extend(assistant_messages)
+                        # raw_representation of a filtered list must not leak the
+                        # non-assistant entries the public messages list dropped.
+                        if len(assistant_messages) == len(chat_messages):
+                            raw_representations.append(data)
+                        else:
+                            raw_representations.extend(msg.raw_representation for msg in assistant_messages)
                 else:
                     contents = self._extract_contents(data)
                     if not contents:
@@ -626,6 +716,7 @@ class WorkflowAgent(BaseAgent):
         self,
         response_id: str,
         event: WorkflowEvent[Any],
+        role_gate: _StreamingRoleGate,
     ) -> list[AgentResponseUpdate]:
         """Convert a workflow event to a list of AgentResponseUpdate objects.
 
@@ -648,31 +739,39 @@ class WorkflowAgent(BaseAgent):
             executor_id = event.executor_id
 
             if isinstance(data, AgentResponseUpdate):
+                # Filter out non-assistant updates (e.g. user input echoed back).
+                # Role-less continuation chunks inherit the last declared role from
+                # the gate, and updates carrying function-call envelopes are dropped
+                # so their orphaned calls cannot be persisted by from_updates.
+                if not role_gate.should_forward(data.role, data.message_id) or _contains_internal_call_content(
+                    data.contents
+                ):
+                    return []
                 # Construct a fresh AgentResponseUpdate so we don't mutate a payload
                 # that AgentExecutor still holds a reference to in its `updates` list.
-                return [
-                    AgentResponseUpdate(
-                        contents=list(data.contents),
-                        role=data.role,
-                        author_name=data.author_name or executor_id,
-                        agent_id=data.agent_id,
-                        response_id=data.response_id,
-                        message_id=data.message_id,
-                        created_at=data.created_at,
-                        # The attribute is typed wider than the constructor accepts (custom
-                        # connectors may set any string); forward the value unchanged.
-                        finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
-                        continuation_token=data.continuation_token,
-                        additional_properties=dict(data.additional_properties)
-                        if data.additional_properties is not None
-                        else None,
-                        raw_representation=data.raw_representation,
-                    )
-                ]
+                update = AgentResponseUpdate(
+                    contents=list(data.contents),
+                    role=data.role,
+                    author_name=data.author_name or executor_id,
+                    agent_id=data.agent_id,
+                    response_id=data.response_id,
+                    message_id=data.message_id,
+                    created_at=data.created_at,
+                    # The attribute is typed wider than the constructor accepts (custom
+                    # connectors may set any string); forward the value unchanged.
+                    finish_reason=cast(FinishReasonLiteral | FinishReason | None, data.finish_reason),
+                    continuation_token=data.continuation_token,
+                    additional_properties=dict(data.additional_properties)
+                    if data.additional_properties is not None
+                    else None,
+                    raw_representation=data.raw_representation,
+                )
+                _copy_operation_state(data, update)
+                return [update]
             if isinstance(data, AgentResponse):
-                # Convert each message in AgentResponse to an AgentResponseUpdate
+                # Convert each caller-facing assistant message to an AgentResponseUpdate
                 updates: list[AgentResponseUpdate] = []
-                for msg in data.messages:
+                for msg in _caller_facing_messages(data.messages):
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
@@ -685,8 +784,32 @@ class WorkflowAgent(BaseAgent):
                             raw_representation=msg,
                         )
                     )
+                if not updates and data.usage_details is not None:
+                    # No message is shown to the caller, but the tokens were still spent. Without a
+                    # message_id or author_name this update joins the message in progress instead of
+                    # starting a new one.
+                    updates.append(
+                        AgentResponseUpdate(
+                            contents=[],
+                            role="assistant",
+                            response_id=data.response_id or response_id,
+                            created_at=data.created_at
+                            or datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                        )
+                    )
+                if updates:
+                    updates[-1].agent_id = data.agent_id
+                    updates[-1].finish_reason = data.finish_reason
+                    updates[-1].continuation_token = data.continuation_token
+                    _copy_operation_state(cast(AgentResponse[Any], data), updates[-1])
+                    updates[-1].additional_properties = dict(data.additional_properties)
+                    # Updates carry usage as content; without it the streamed response loses the token counts.
+                    if data.usage_details is not None:
+                        updates[-1].contents.append(Content.from_usage(data.usage_details))
                 return updates
             if isinstance(data, Message):
+                if data.role != "assistant" or _contains_internal_call_content(data.contents):
+                    return []
                 return [
                     AgentResponseUpdate(
                         contents=list(data.contents),
@@ -699,10 +822,10 @@ class WorkflowAgent(BaseAgent):
                     )
                 ]
             if is_instance_of(data, list[Message]):
-                # Convert each Message to an AgentResponseUpdate
+                # Convert each caller-facing assistant Message to an AgentResponseUpdate
                 chat_messages = cast(list[Message], data)
                 updates = []
-                for msg in chat_messages:
+                for msg in _caller_facing_messages(chat_messages):
                     updates.append(
                         AgentResponseUpdate(
                             contents=list(msg.contents),
@@ -780,11 +903,11 @@ class WorkflowAgent(BaseAgent):
         input_messages: Sequence[Message],
         pending_requests: Mapping[str, WorkflowEvent[Any]] | None = None,
     ) -> dict[str, Any]:
-        """Extract function responses from input messages.
+        """Extract pending function or computer responses from input messages.
 
         The responses are for pending requests that the workflow is waiting on, and
         will be passed to the workflow. The pending requests are processed to either
-        `function_approval_request` or `function_call` content by `_process_request_info_event`.
+        specialized user-input content or a `function_call` by `_process_request_info_event`.
         """
         pending_requests = pending_requests or {}
         function_responses: dict[str, Any] = {}
@@ -820,6 +943,21 @@ class WorkflowAgent(BaseAgent):
                         else content.result
                     )
                     function_responses[response_request_id] = response_data
+                elif content.type == "computer_tool_result":
+                    if not content.call_id:
+                        raise AgentInvalidResponseException("Computer result is missing its call ID.")
+                    matching_requests = [
+                        pending_id
+                        for pending_id, pending_event in pending_requests.items()
+                        if isinstance(pending_event.data, Content)
+                        and pending_event.data.type == "computer_tool_call"
+                        and pending_event.data.call_id == content.call_id
+                    ]
+                    if len(matching_requests) != 1:
+                        raise AgentInvalidResponseException(
+                            f"Computer result for call {content.call_id!r} must match exactly one pending request."
+                        )
+                    function_responses[matching_requests[0]] = content
                 else:
                     raise AgentInvalidResponseException(
                         "Unexpected content type while awaiting request info responses."
@@ -928,7 +1066,10 @@ class WorkflowAgent(BaseAgent):
                 created_at=incoming.created_at or current.created_at,
                 usage_details=add_usage_details(current.usage_details, incoming.usage_details),
                 raw_representation=raw_list if raw_list else None,
-                additional_properties=incoming.additional_properties or current.additional_properties,
+                additional_properties=merge_additional_properties(
+                    current.additional_properties,
+                    incoming.additional_properties,
+                ),
             )
 
         # PHASE 2: CONVERT GROUPED UPDATES TO RESPONSES AND MERGE
@@ -967,9 +1108,10 @@ class WorkflowAgent(BaseAgent):
                 ):
                     latest_created_at = aggregated.created_at
                 if aggregated.additional_properties:
-                    if merged_additional_properties is None:
-                        merged_additional_properties = {}
-                    merged_additional_properties.update(aggregated.additional_properties)
+                    merged_additional_properties = merge_additional_properties(
+                        merged_additional_properties,
+                        aggregated.additional_properties,
+                    )
                 raw_value = aggregated.raw_representation
                 if raw_value:
                     cast_value = cast(object | list[object], raw_value)
@@ -991,9 +1133,10 @@ class WorkflowAgent(BaseAgent):
             ):
                 latest_created_at = flattened.created_at
             if flattened.additional_properties:
-                if merged_additional_properties is None:
-                    merged_additional_properties = {}
-                merged_additional_properties.update(flattened.additional_properties)
+                merged_additional_properties = merge_additional_properties(
+                    merged_additional_properties,
+                    flattened.additional_properties,
+                )
             flat_raw = flattened.raw_representation
             if flat_raw:
                 cast_flat = cast(object | list[object], flat_raw)

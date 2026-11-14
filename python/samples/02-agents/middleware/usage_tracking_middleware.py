@@ -90,8 +90,8 @@ async def print_usage(
                 print(f"\n[Streaming model call #{call_number}] Final usage: {result.usage_details}")
             return result
 
-        context.stream_transform_hooks.append(capture_usage_update)
-        context.stream_result_hooks.append(capture_final_usage)
+        context.stream_update_transforms.append(capture_usage_update)
+        context.stream_result_transforms.append(capture_final_usage)
         await call_next()
         return
 

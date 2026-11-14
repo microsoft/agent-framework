@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+import struct
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
-from typing import Any, ClassVar, Generic, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, TypedDict
+from urllib.parse import urlsplit, urlunsplit
 
 from agent_framework import (
     BaseEmbeddingClient,
@@ -18,13 +21,23 @@ from agent_framework import (
     UsageDetails,
     load_settings,
 )
-from agent_framework._telemetry import IS_TELEMETRY_ENABLED, get_user_agent, mark_feature_used
+from agent_framework._telemetry import IS_TELEMETRY_ENABLED, USER_AGENT_KEY, get_user_agent, mark_feature_used
+from agent_framework.exceptions import IntegrationInvalidResponseException
 from agent_framework.observability import EmbeddingTelemetryLayer
 from azure.ai.inference.aio import EmbeddingsClient, ImageEmbeddingsClient
 from azure.ai.inference.models import ImageEmbeddingInput
 from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials_async import AsyncTokenCredential
 
-from ._feature_usage import FeatureIndex, create_feature_usage_policy
+from ._feature_usage import (
+    FeatureIndex,
+    create_feature_usage_policy,
+    create_foundry_feature_usage_http_client,
+)
+
+if TYPE_CHECKING:
+    from azure.ai.projects.aio import AIProjectClient
+    from openai import AsyncOpenAI
 
 if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
@@ -37,10 +50,63 @@ logger = logging.getLogger("agent_framework.foundry")
 _IMAGE_MEDIA_PREFIXES = ("image/",)
 
 
-class FoundryEmbeddingOptions(EmbeddingGenerationOptions, total=False):
-    """Foundry inference-specific embedding options.
+def _get_openai_model_base_url(endpoint: str) -> str:
+    """Get the documented resource-scoped OpenAI model URL from a Foundry endpoint."""
+    parts = urlsplit(endpoint)
+    if not parts.scheme or not parts.netloc:
+        raise ValueError(f"Invalid Foundry endpoint: {endpoint!r}")
+    openai_netloc = parts.netloc.replace(".services.ai.", ".openai.", 1)
+    return urlunsplit((parts.scheme, openai_netloc, "/openai/v1/", "", ""))
 
-    Extends ``EmbeddingGenerationOptions`` with Foundry inference-specific fields.
+
+def _injected_client_endpoint(client: Any) -> str | None:
+    """Return the endpoint configured on an injected Azure AI Inference client.
+
+    ``EmbeddingsClient`` and ``ImageEmbeddingsClient`` store the endpoint passed to
+    their constructor on ``_config.endpoint``. The pipeline base URL is an unresolved
+    ``{endpoint}`` template, so it is not a service URL. Non-string values, including
+    those produced by test doubles, are ignored.
+    """
+    config = getattr(client, "_config", None)
+    endpoint = getattr(config, "endpoint", None) if config is not None else None
+    if not isinstance(endpoint, str):
+        return None
+    endpoint = endpoint.strip()
+    return endpoint or None
+
+
+def _service_url_for_inference_clients(
+    *,
+    text_client: Any,
+    image_client: Any,
+    explicit_endpoint: str | None,
+    resolved_endpoint: str | None,
+) -> str:
+    """Choose a service URL without letting ambient settings replace an injected transport."""
+    if text_client is not None or image_client is not None:
+        for client in (text_client, image_client):
+            if client is None:
+                continue
+            if endpoint := _injected_client_endpoint(client):
+                return endpoint
+        return explicit_endpoint or ""
+    return resolved_endpoint or ""
+
+
+_MISSING_TEXT_EMBEDDING_TRANSPORT = (
+    "Text embeddings require an injected 'text_client' or enough Foundry Models settings to create one. "
+    "Set 'endpoint' or 'FOUNDRY_MODELS_ENDPOINT', and 'api_key', 'credential', or 'FOUNDRY_MODELS_API_KEY'."
+)
+_MISSING_IMAGE_EMBEDDING_TRANSPORT = (
+    "Image embeddings require an injected 'image_client' or enough Foundry Models settings to create one. "
+    "Set 'endpoint' or 'FOUNDRY_MODELS_ENDPOINT', and 'api_key', 'credential', or 'FOUNDRY_MODELS_API_KEY'."
+)
+
+
+class FoundryEmbeddingOptions(EmbeddingGenerationOptions, total=False):
+    """Foundry-specific embedding options.
+
+    Extends ``EmbeddingGenerationOptions`` with Foundry-specific fields.
 
     Examples:
         .. code-block:: python
@@ -81,8 +147,9 @@ FoundryEmbeddingOptionsT = TypeVar(
 
 
 class FoundryEmbeddingSettings(TypedDict, total=False):
-    """Foundry inference embedding settings."""
+    """Foundry embedding settings."""
 
+    project_endpoint: str | None
     models_endpoint: str | None
     models_api_key: SecretString | None
     embedding_model: str | None
@@ -95,10 +162,10 @@ class RawFoundryEmbeddingClient(
 ):
     """Raw Foundry embedding client without telemetry.
 
-    Accepts both text (``str``) and image (``Content``) inputs. Text and image
-    inputs within a single batch are separated and dispatched to
-    ``EmbeddingsClient`` and ``ImageEmbeddingsClient`` respectively. Results
-    are reassembled in the original input order.
+    Text embeddings can be generated through OpenAI model deployments in a
+    Foundry project or through a Foundry Models inference endpoint. Image
+    embeddings use the Foundry Models inference endpoint. Results are
+    reassembled in the original input order.
 
     Keyword Args:
         model: The text embedding model (e.g. "text-embedding-3-small").
@@ -106,17 +173,33 @@ class RawFoundryEmbeddingClient(
         image_model: The image embedding model (e.g. "Cohere-embed-v3-english").
             Can also be set via environment variable FOUNDRY_IMAGE_EMBEDDING_MODEL.
             Falls back to ``model`` if not provided.
+        project_endpoint: The Foundry project endpoint URL used for OpenAI
+            embedding deployments. Can also be set via environment variable
+            FOUNDRY_PROJECT_ENDPOINT.
+        project_client: An existing ``AIProjectClient``. If provided, its
+            OpenAI-compatible client is used for text embeddings unless ``text_client`` is supplied.
         endpoint: The Foundry inference endpoint URL.
             Can also be set via environment variable FOUNDRY_MODELS_ENDPOINT.
         api_key: API key for authentication.
             Can also be set via environment variable FOUNDRY_MODELS_API_KEY.
-        text_client: Optional pre-configured ``EmbeddingsClient``.
-        image_client: Optional pre-configured ``ImageEmbeddingsClient``.
-        credential: Optional ``AzureKeyCredential`` or token credential. If not provided,
-            one is created from ``api_key``.
+        text_client: Optional pre-configured ``EmbeddingsClient``. When supplied,
+            it is the text-embedding transport: endpoint, API key, credential,
+            and Foundry environment settings are not required and do not replace it.
+        image_client: Optional pre-configured ``ImageEmbeddingsClient``. When supplied,
+            it is the image-embedding transport: endpoint, API key, credential,
+            and Foundry environment settings are not required and do not replace it.
+        credential: Async Azure credential. Required when using
+            ``project_endpoint`` without a ``project_client``. For a Foundry
+            Models endpoint, an ``AzureKeyCredential`` is created from
+            ``api_key`` when a client still needs to be created.
+        allow_preview: Enables preview opt-in on an internally created
+            ``AIProjectClient``.
+        default_headers: Additional HTTP headers for project OpenAI requests.
         env_file_path: Path to .env file for settings.
         env_file_encoding: Encoding for .env file.
     """
+
+    INJECTABLE: ClassVar[set[str]] = {"image_client", "project_client", "text_client"}
 
     def __init__(
         self,
@@ -124,19 +207,42 @@ class RawFoundryEmbeddingClient(
         model: str | None = None,
         image_model: str | None = None,
         endpoint: str | None = None,
+        project_endpoint: str | None = None,
+        project_client: AIProjectClient | None = None,
         api_key: str | SecretString | None = None,
         text_client: EmbeddingsClient | None = None,
         image_client: ImageEmbeddingsClient | None = None,
-        credential: AzureKeyCredential | None = None,
+        credential: AzureKeyCredential | AsyncTokenCredential | None = None,
+        allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
         env_file_encoding: str | None = None,
     ) -> None:
         """Initialize a raw Foundry embedding client."""
+        if project_endpoint is not None:
+            project_endpoint = project_endpoint.strip() or None
+        if endpoint is not None:
+            endpoint = endpoint.strip() or None
+        if (isinstance(api_key, str) and not api_key.strip()) or (
+            isinstance(api_key, SecretString) and not api_key.get_secret_value().strip()
+        ):
+            api_key = None
+
+        has_injected_client = text_client is not None or image_client is not None
+        explicit_project_source = project_client is not None or project_endpoint is not None
+        explicit_inference_source = endpoint is not None or api_key is not None
+        if not has_injected_client and explicit_project_source and explicit_inference_source:
+            raise ValueError(
+                "Foundry project embedding configuration cannot be combined with Foundry Models "
+                "'endpoint' or 'api_key' configuration."
+            )
+
         settings = load_settings(
             FoundryEmbeddingSettings,
             env_prefix="FOUNDRY_",
-            required_fields=["models_endpoint", "embedding_model"],
+            required_fields=["embedding_model"],
+            project_endpoint=project_endpoint,
             models_endpoint=endpoint,
             models_api_key=api_key,
             embedding_model=model,
@@ -147,37 +253,92 @@ class RawFoundryEmbeddingClient(
 
         self.model = settings["embedding_model"]  # type: ignore[reportTypedDictNotRequiredAccess]
         self.image_model: str = settings.get("image_embedding_model") or self.model  # type: ignore[assignment]
-        resolved_endpoint = settings["models_endpoint"]  # type: ignore[reportTypedDictNotRequiredAccess]
-
-        if credential is None and (models_api_key := settings.get("models_api_key")):
-            credential = AzureKeyCredential(models_api_key.get_secret_value())
-
-        if credential is None and text_client is None and image_client is None:
-            raise ValueError("Either 'api_key', 'credential', or pre-configured client(s) must be provided.")
-
-        client_kwargs: dict[str, Any] = {
-            "endpoint": resolved_endpoint,
-            "credential": credential,
-        }
-        if IS_TELEMETRY_ENABLED:
-            client_kwargs["user_agent"] = get_user_agent()
-        self._text_client = text_client or EmbeddingsClient(
-            **client_kwargs,
-            per_retry_policies=[create_feature_usage_policy()],
+        resolved_models_endpoint = settings.get("models_endpoint") or None
+        resolved_project_endpoint = settings.get("project_endpoint") or None
+        # Only an injected text client overrides project-backed text embeddings.
+        use_project_client = text_client is None and (
+            explicit_project_source
+            or (
+                not explicit_inference_source
+                and resolved_models_endpoint is None
+                and resolved_project_endpoint is not None
+            )
         )
-        self._image_client = image_client or ImageEmbeddingsClient(
-            **client_kwargs,
-            per_retry_policies=[create_feature_usage_policy()],
+
+        self.project_client: AIProjectClient | None = project_client if use_project_client else None
+        self._project_endpoint = resolved_project_endpoint if use_project_client else None
+        self._project_credential = credential
+        self._project_allow_preview = allow_preview
+        self._project_default_headers = default_headers
+        self._owns_project_client = False
+        self._openai_client: AsyncOpenAI | None = None
+        self._text_client = text_client
+        self._image_client = image_client
+        self._inference_client_kwargs: dict[str, Any] | None = None
+        self._endpoint = _service_url_for_inference_clients(
+            text_client=text_client,
+            image_client=image_client,
+            explicit_endpoint=endpoint,
+            resolved_endpoint=resolved_models_endpoint,
         )
-        self._endpoint = resolved_endpoint
+        self.default_headers = (
+            {key: value for key, value in default_headers.items() if key != USER_AGENT_KEY} if default_headers else None
+        )
+
+        if use_project_client:
+            # Image-only operations must not initialize or validate the unrelated text transport.
+            if not has_injected_client:
+                self._endpoint = str(self._ensure_openai_client().base_url)
+        else:
+            # An injected SDK client is a complete transport. Connection settings are
+            # required only for a text or image operation that still needs a client created.
+            if not resolved_models_endpoint and text_client is None and image_client is None:
+                raise ValueError(
+                    "Either 'project_endpoint', 'project_client', or 'endpoint' is required. "
+                    "Set a Foundry project endpoint via 'FOUNDRY_PROJECT_ENDPOINT' or a Foundry Models "
+                    "endpoint via 'FOUNDRY_MODELS_ENDPOINT'."
+                )
+
+            if credential is None and (models_api_key := settings.get("models_api_key")):
+                credential = AzureKeyCredential(models_api_key.get_secret_value())
+
+            if credential is None and text_client is None and image_client is None:
+                raise ValueError("Either 'api_key', 'credential', or pre-configured client(s) must be provided.")
+
+            client_kwargs: dict[str, Any] | None = None
+            if resolved_models_endpoint and credential is not None:
+                client_kwargs = {
+                    "endpoint": resolved_models_endpoint,
+                    "credential": credential,
+                }
+                if IS_TELEMETRY_ENABLED:
+                    client_kwargs["user_agent"] = get_user_agent()
+
+            self._inference_client_kwargs = client_kwargs
+            # Create missing clients immediately only when the caller supplied no transport.
+            # An injected client must not be replaced, and an unrelated or invalid ambient
+            # endpoint must not fail construction of the transport the caller already provided.
+            # The other modality is created later, when a request needs it and settings allow it.
+            if client_kwargs is not None and text_client is None and image_client is None:
+                self._ensure_text_client()
+                self._ensure_image_client()
+
         super().__init__(additional_properties=additional_properties)
 
     async def close(self) -> None:
         """Close the underlying SDK clients and release resources."""
-        with suppress(Exception):
-            await self._text_client.close()
-        with suppress(Exception):
-            await self._image_client.close()
+        if self._openai_client is not None:
+            with suppress(Exception):
+                await self._openai_client.close()
+        if self._owns_project_client and self.project_client is not None:
+            with suppress(Exception):
+                await self.project_client.close()
+        if self._text_client is not None:
+            with suppress(Exception):
+                await self._text_client.close()
+        if self._image_client is not None:
+            with suppress(Exception):
+                await self._image_client.close()
 
     async def __aenter__(self) -> RawFoundryEmbeddingClient[FoundryEmbeddingOptionsT]:
         """Enter the async context manager."""
@@ -188,8 +349,89 @@ class RawFoundryEmbeddingClient(
         await self.close()
 
     def service_url(self) -> str:
-        """Get the URL of the service."""
+        """Get the URL of the service.
+
+        When a text or image SDK client is injected, the URL is taken from that client
+        when its endpoint can be read. An explicit ``endpoint`` argument is used if the
+        injected client does not expose one. Ambient endpoint settings are not substituted
+        for an injected transport; an unknown endpoint is reported as an empty string.
+        """
         return self._endpoint or ""
+
+    def _ensure_openai_client(self) -> AsyncOpenAI:
+        """Return the project text transport, initializing it from retained settings when needed."""
+        if self._openai_client is not None:
+            return self._openai_client
+        project_client = self.project_client
+        if project_client is None:
+            if not self._project_endpoint:
+                raise ValueError(
+                    "Foundry project endpoint is required. Set via 'project_endpoint' parameter "
+                    "or 'FOUNDRY_PROJECT_ENDPOINT' environment variable."
+                )
+            if self._project_credential is None:
+                raise ValueError("Azure credential is required when using project_endpoint without a project_client.")
+            if isinstance(self._project_credential, AzureKeyCredential):
+                raise ValueError("A token credential is required when using a Foundry project endpoint.")
+
+            from azure.ai.projects.aio import AIProjectClient
+
+            project_client_kwargs: dict[str, Any] = {
+                "endpoint": self._project_endpoint,
+                "credential": self._project_credential,
+                "per_retry_policies": [create_feature_usage_policy()],
+            }
+            if IS_TELEMETRY_ENABLED:
+                project_client_kwargs["user_agent"] = get_user_agent()
+            if self._project_allow_preview is not None:
+                project_client_kwargs["allow_preview"] = self._project_allow_preview
+            project_client = AIProjectClient(**project_client_kwargs)
+            self.project_client = project_client
+            self._owns_project_client = True
+
+        openai_kwargs: dict[str, Any] = {}
+        if self._project_default_headers:
+            openai_kwargs["default_headers"] = self._project_default_headers
+        if self._owns_project_client:
+            openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
+
+        openai_client = project_client.get_openai_client(**openai_kwargs)
+        openai_client.base_url = _get_openai_model_base_url(str(openai_client.base_url))
+        self._openai_client = openai_client
+        return openai_client
+
+    def _ensure_text_client(self) -> EmbeddingsClient:
+        """Return the text embeddings transport, creating it from stored settings when needed."""
+        if self._text_client is not None:
+            return self._text_client
+        client_kwargs = self._inference_client_kwargs
+        if client_kwargs is None:
+            raise ValueError(_MISSING_TEXT_EMBEDDING_TRANSPORT)
+        created = EmbeddingsClient(
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
+        )
+        self._text_client = created
+        return created
+
+    def _ensure_image_client(self) -> ImageEmbeddingsClient:
+        """Return the image embeddings transport, creating it from stored settings when needed."""
+        if self._image_client is not None:
+            return self._image_client
+        if self.project_client is not None or self._openai_client is not None:
+            raise ValueError(
+                "Image embeddings require a Foundry Models inference endpoint. "
+                "Configure 'endpoint' or 'FOUNDRY_MODELS_ENDPOINT' instead of a project endpoint."
+            )
+        client_kwargs = self._inference_client_kwargs
+        if client_kwargs is None:
+            raise ValueError(_MISSING_IMAGE_EMBEDDING_TRANSPORT)
+        created = ImageEmbeddingsClient(
+            **client_kwargs,
+            per_retry_policies=[create_feature_usage_policy()],
+        )
+        self._image_client = created
+        return created
 
     async def get_embeddings(
         self,
@@ -212,7 +454,9 @@ class RawFoundryEmbeddingClient(
             Generated embeddings with usage metadata.
 
         Raises:
-            ValueError: If model is not provided or an unsupported content type is encountered.
+            ValueError: If model is not provided, an unsupported content type is encountered,
+                or the requested text or image operation has neither an injected transport nor
+                enough settings to create one.
         """
         if not values:
             return GeneratedEmbeddings([], options=options)
@@ -263,56 +507,114 @@ class RawFoundryEmbeddingClient(
         embeddings: list[Embedding[list[float]] | None] = [None] * len(values)
         usage_details: UsageDetails = {}
 
+        # Resolve an image transport before any request so a mixed batch cannot send text
+        # and then fail to embed the images.
+        image_client: ImageEmbeddingsClient | None = None
+        if image_items:
+            image_client = self._ensure_image_client()
+
         # Embed text inputs.
         if text_items:
             if not (text_model := opts.get("model") or self.model):
                 raise ValueError("A model is required, either in the client or options, for text inputs.")
             text_inputs = [t for _, t in text_items]
-            response = await self._text_client.embed(
-                input=text_inputs,
-                model=text_model,
-                **common_kwargs,
-            )
-            for i, item in enumerate(response.data):
-                original_idx = text_items[i][0]
-                vector: list[float] = [float(v) for v in item.embedding]
-                embeddings[original_idx] = Embedding(
-                    vector=vector,
-                    dimensions=len(vector),
-                    model=response.model or text_model,
+            openai_client = self._openai_client
+            if openai_client is None and (self.project_client is not None or self._project_endpoint is not None):
+                openai_client = self._ensure_openai_client()
+            if openai_client is not None:
+                openai_kwargs: dict[str, Any] = {
+                    "input": text_inputs,
+                    "model": text_model,
+                }
+                if dimensions := opts.get("dimensions"):
+                    openai_kwargs["dimensions"] = dimensions
+                if encoding_format := opts.get("encoding_format"):
+                    openai_kwargs["encoding_format"] = encoding_format
+
+                extra_body = dict(opts.get("extra_parameters") or {})
+                if input_type := opts.get("input_type"):
+                    extra_body["input_type"] = input_type
+                if extra_body:
+                    openai_kwargs["extra_body"] = extra_body
+
+                openai_response = await openai_client.embeddings.create(**openai_kwargs)
+                encoding = openai_kwargs.get("encoding_format", "float")
+                for item in sorted(openai_response.data, key=lambda value: value.index):
+                    original_idx = text_items[item.index][0]
+                    if encoding == "base64" and isinstance(item.embedding, str):
+                        # base64.b64decode raises binascii.Error for bad padding/alphabet and
+                        # UnicodeEncodeError for non-ASCII input; both are ValueError subclasses.
+                        try:
+                            raw = base64.b64decode(item.embedding)
+                        except ValueError as exc:
+                            raise IntegrationInvalidResponseException(
+                                f"The base64 embedding returned for input index {original_idx} could not be "
+                                f"decoded: {exc}"
+                            ) from exc
+                        if len(raw) % 4 != 0:
+                            # struct.unpack would fail with a bare "unpack requires a buffer of N bytes",
+                            # which says nothing about which input broke or why.
+                            raise IntegrationInvalidResponseException(
+                                f"The base64 embedding returned for input index {original_idx} decoded to "
+                                f"{len(raw)} bytes, which is not a multiple of the 4 bytes a float32 value occupies."
+                            )
+                        vector = list(struct.unpack(f"<{len(raw) // 4}f", raw))
+                    else:
+                        vector = [float(value) for value in item.embedding]
+                    embeddings[original_idx] = Embedding(
+                        vector=vector,
+                        dimensions=len(vector),
+                        model=openai_response.model or text_model,
+                    )
+                if openai_response.usage:
+                    usage_details["input_token_count"] = openai_response.usage.prompt_tokens
+                    usage_details["total_token_count"] = openai_response.usage.total_tokens
+            else:
+                inference_response = await self._ensure_text_client().embed(
+                    input=text_inputs,
+                    model=text_model,
+                    **common_kwargs,
                 )
-            if response.usage:
-                usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
-                    response.usage.prompt_tokens or 0
-                )
-                usage_details["output_token_count"] = (usage_details.get("output_token_count") or 0) + (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+                for i, item in enumerate(inference_response.data):
+                    original_idx = text_items[i][0]
+                    vector = [float(value) for value in item.embedding]
+                    embeddings[original_idx] = Embedding(
+                        vector=vector,
+                        dimensions=len(vector),
+                        model=inference_response.model or text_model,
+                    )
+                if inference_response.usage:
+                    usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
+                        inference_response.usage.prompt_tokens or 0
+                    )
+                    usage_details["output_token_count"] = (usage_details.get("output_token_count") or 0) + (
+                        getattr(inference_response.usage, "completion_tokens", 0) or 0
+                    )
 
         # Embed image inputs.
-        if image_items:
+        if image_client is not None:
             if not (image_model := opts.get("image_model") or self.image_model):
                 raise ValueError("An image_model is required, either in the client or options, for image inputs.")
             image_inputs = [img for _, img in image_items]
-            response = await self._image_client.embed(
+            image_response = await image_client.embed(
                 input=image_inputs,
                 model=image_model,
                 **common_kwargs,
             )
-            for i, item in enumerate(response.data):
+            for i, item in enumerate(image_response.data):
                 original_idx = image_items[i][0]
                 image_vector: list[float] = [float(v) for v in item.embedding]
                 embeddings[original_idx] = Embedding(
                     vector=image_vector,
                     dimensions=len(image_vector),
-                    model=response.model or image_model,
+                    model=image_response.model or image_model,
                 )
-            if response.usage:
+            if image_response.usage:
                 usage_details["input_token_count"] = (usage_details.get("input_token_count") or 0) + (
-                    response.usage.prompt_tokens or 0
+                    image_response.usage.prompt_tokens or 0
                 )
                 usage_details["output_token_count"] = (usage_details.get("output_token_count") or 0) + (
-                    getattr(response.usage, "completion_tokens", 0) or 0
+                    getattr(image_response.usage, "completion_tokens", 0) or 0
                 )
         return GeneratedEmbeddings(
             [embedding for embedding in embeddings if embedding is not None],
@@ -328,9 +630,8 @@ class FoundryEmbeddingClient(
 ):
     """Foundry embedding client with telemetry support.
 
-    Supports both text and image inputs in a single client. Pass plain strings
-    or ``Content`` instances created with ``Content.from_text()`` or
-    ``Content.from_data()``.
+    Supports OpenAI text embedding deployments through a Foundry project and
+    text or image models through a Foundry Models inference endpoint.
 
     Keyword Args:
         model: The text embedding model (e.g. "text-embedding-3-small").
@@ -338,13 +639,24 @@ class FoundryEmbeddingClient(
         image_model: The image embedding model
             (e.g. "Cohere-embed-v3-english"). Can also be set via environment variable
             FOUNDRY_IMAGE_EMBEDDING_MODEL. Falls back to ``model``.
+        project_endpoint: The Foundry project endpoint URL used for OpenAI
+            embedding deployments. Can also be set via environment variable
+            FOUNDRY_PROJECT_ENDPOINT.
+        project_client: An existing ``AIProjectClient``.
         endpoint: The Foundry inference endpoint URL.
             Can also be set via environment variable FOUNDRY_MODELS_ENDPOINT.
         api_key: API key for authentication.
             Can also be set via environment variable FOUNDRY_MODELS_API_KEY.
-        text_client: Optional pre-configured ``EmbeddingsClient``.
-        image_client: Optional pre-configured ``ImageEmbeddingsClient``.
-        credential: Optional ``AzureKeyCredential`` or token credential.
+        text_client: Optional pre-configured ``EmbeddingsClient``. When supplied,
+            it is the text-embedding transport and does not require endpoint, API key,
+            credential, or Foundry environment settings.
+        image_client: Optional pre-configured ``ImageEmbeddingsClient``. When supplied,
+            it is the image-embedding transport and does not require endpoint, API key,
+            credential, or Foundry environment settings.
+        credential: Async Azure credential.
+        allow_preview: Enables preview opt-in on an internally created
+            ``AIProjectClient``.
+        default_headers: Additional HTTP headers for project OpenAI requests.
         otel_provider_name: Override for the OpenTelemetry provider name.
         env_file_path: Path to .env file for settings.
         env_file_encoding: Encoding for .env file.
@@ -354,12 +666,16 @@ class FoundryEmbeddingClient(
 
             from agent_framework_foundry import FoundryEmbeddingClient
 
-            # Using environment variables
+            # OpenAI embedding deployment in a Foundry project
+            # Set FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
+            # Set FOUNDRY_EMBEDDING_MODEL=text-embedding-3-small
+            client = FoundryEmbeddingClient(credential=azure_credential)
+
+            # Foundry Models inference endpoint (required for image embeddings)
             # Set FOUNDRY_MODELS_ENDPOINT=https://your-endpoint.inference.ai.azure.com
             # Set FOUNDRY_MODELS_API_KEY=your-key
-            # Set FOUNDRY_EMBEDDING_MODEL=text-embedding-3-small
             # Set FOUNDRY_IMAGE_EMBEDDING_MODEL=Cohere-embed-v3-english
-            client = FoundryEmbeddingClient()
+            image_client = FoundryEmbeddingClient()
 
             # Text embeddings
             result = await client.get_embeddings(["Hello, world!"])
@@ -368,10 +684,10 @@ class FoundryEmbeddingClient(
             from agent_framework import Content
 
             image = Content.from_data(data=image_bytes, media_type="image/png")
-            result = await client.get_embeddings([image])
+            result = await image_client.get_embeddings([image])
 
             # Mixed text and image
-            result = await client.get_embeddings(["hello", image])
+            result = await image_client.get_embeddings(["hello", image])
     """
 
     OTEL_PROVIDER_NAME: ClassVar[str] = "azure.ai.inference"
@@ -382,10 +698,14 @@ class FoundryEmbeddingClient(
         model: str | None = None,
         image_model: str | None = None,
         endpoint: str | None = None,
+        project_endpoint: str | None = None,
+        project_client: AIProjectClient | None = None,
         api_key: str | SecretString | None = None,
         text_client: EmbeddingsClient | None = None,
         image_client: ImageEmbeddingsClient | None = None,
-        credential: AzureKeyCredential | None = None,
+        credential: AzureKeyCredential | AsyncTokenCredential | None = None,
+        allow_preview: bool | None = None,
+        default_headers: Mapping[str, str] | None = None,
         otel_provider_name: str | None = None,
         additional_properties: dict[str, Any] | None = None,
         env_file_path: str | None = None,
@@ -396,12 +716,18 @@ class FoundryEmbeddingClient(
             model=model,
             image_model=image_model,
             endpoint=endpoint,
+            project_endpoint=project_endpoint,
+            project_client=project_client,
             api_key=api_key,
             text_client=text_client,
             image_client=image_client,
             credential=credential,
+            allow_preview=allow_preview,
+            default_headers=default_headers,
             additional_properties=additional_properties,
             otel_provider_name=otel_provider_name,
             env_file_path=env_file_path,
             env_file_encoding=env_file_encoding,
         )
+        if otel_provider_name is None and self.project_client is not None:
+            self.otel_provider_name = "azure.ai.foundry"

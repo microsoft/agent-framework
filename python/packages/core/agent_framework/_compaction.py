@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable, Mapping, Sequence
 from typing import (
     TYPE_CHECKING,
@@ -16,12 +17,20 @@ from typing import (
     runtime_checkable,
 )
 
+from ._feature_stage import ExperimentalFeature, experimental
 from ._sessions import ContextProvider
 from ._telemetry import FeatureIndex, mark_feature_used
-from ._types import ChatResponse, Content, Message
+from ._types import (
+    _APPROVAL_REJECTION_RESULT_KEY,  # pyright: ignore[reportPrivateUsage]
+    SKILL_CONTEXT_NAME_KEY,
+    ChatResponse,
+    Content,
+    Message,
+)
 
 if TYPE_CHECKING:
     from ._clients import SupportsChatGetResponse
+    from ._tools import ApprovalMode, FunctionTool
 
 GroupKind: TypeAlias = Literal["system", "user", "assistant_text", "tool_call"]
 GROUP_ANNOTATION_KEY = "_group"
@@ -41,16 +50,21 @@ EXCLUDE_REASON_KEY = "_exclude_reason"
 SUMMARY_OF_MESSAGE_IDS_KEY = "_summary_of_message_ids"
 SUMMARY_OF_GROUP_IDS_KEY = "_summary_of_group_ids"
 SUMMARIZED_BY_SUMMARY_ID_KEY = "_summarized_by_summary_id"
+_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY = "_agent_compaction_trigger_consumed"
+_SKILL_UNLOAD_SELECTION_KEY = "_skill_unload_selection"
+_SKILL_CONTEXT_TOOL_NAMES: Final[frozenset[str]] = frozenset({"load_skill", "read_skill_resource"})
 
 
 logger = logging.getLogger("agent_framework")
 
 _TOOL_CALL_CONTENT_TYPES: Final[set[str]] = {
     "function_call",
+    "computer_tool_call",
     "mcp_server_tool_call",
     "code_interpreter_tool_call",
     "shell_tool_call",
     "image_generation_tool_call",
+    "search_tool_call",
 }
 
 
@@ -103,7 +117,12 @@ class TokenizerProtocol(Protocol):
 
 @runtime_checkable
 class CompactionStrategy(Protocol):
-    """Protocol for in-place message compaction strategies."""
+    """Protocol for in-place message compaction strategies.
+
+    Strategies that require local/client-managed message history should expose
+    ``requires_client_managed_history = True``. Wrappers and compositions must
+    propagate that optional capability from nested strategies.
+    """
 
     async def __call__(self, messages: list[Message]) -> bool:
         """Mutate message annotations and/or list contents in place.
@@ -146,20 +165,64 @@ def _is_reasoning_only_assistant(message: Message) -> bool:
     return all(content.type == "text_reasoning" for content in message.contents)
 
 
-def _unambiguous_function_call_result_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
-    unmatched_declaration_indices: dict[str, list[int]] = {}
+def _approval_request_identity(content: Content) -> str | None:
+    """Return the shared identity of an approval request/response wrapper."""
+    function_call = getattr(content, "function_call", None)
+    identity = getattr(function_call, "call_id", None) or getattr(function_call, "id", None)
+    if not isinstance(identity, str) or not identity:
+        identity = content.id
+    return identity if isinstance(identity, str) and identity else None
+
+
+def _unambiguous_approval_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair approval responses with their latest matching request occurrence."""
+    unmatched_request_indices: dict[str, list[int]] = {}
+    resolved_identities: set[str] = set()
+    pairs: list[tuple[int, int]] = []
+    for message_index in range(len(messages)):
+        message = messages[message_index]
+        for content in message.contents:
+            if message.role == "assistant" and content.type == "function_approval_request":
+                identity = _approval_request_identity(content)
+                if identity:
+                    unmatched_request_indices.setdefault(identity, []).append(message_index)
+            elif content.type == "function_approval_response":
+                identity = _approval_request_identity(content)
+                candidates = unmatched_request_indices.get(identity) if identity else None
+                if candidates and identity is not None and identity not in resolved_identities:
+                    pairs.append((candidates[-1], message_index))
+                    resolved_identities.add(identity)
+    return pairs
+
+
+def _unambiguous_tool_call_output_pairs(messages: Sequence[Message]) -> list[tuple[int, int]]:
+    """Pair tool results and approval requests with unambiguous declaration occurrences."""
+    unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     pairs: list[tuple[int, int]] = []
 
     for message_index, message in enumerate(messages):
         if message.role not in ("assistant", "tool"):
             continue
         for content in message.contents:
-            if message.role == "assistant" and content.type == "function_call" and content.call_id:
-                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+            if (
+                message.role == "assistant"
+                and content.type in ("function_call", "computer_tool_call")
+                and content.call_id
+            ):
+                unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
                 continue
-            if content.type != "function_result" or not content.call_id:
+            if message.role == "assistant" and content.type == "function_approval_request":
+                function_call = getattr(content, "function_call", None)
+                call_id = getattr(function_call, "call_id", None)
+                candidates = unmatched_declaration_indices.get(("function_call", call_id)) if call_id else None
+                if candidates is not None and len(candidates) == 1:
+                    # The same declaration also owns the later tool result.
+                    pairs.append((candidates[0], message_index))
                 continue
-            candidates = unmatched_declaration_indices.get(content.call_id)
+            if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
+                continue
+            call_type = "function_call" if content.type == "function_result" else "computer_tool_call"
+            candidates = unmatched_declaration_indices.get((call_type, content.call_id))
             if candidates is None or len(candidates) != 1:
                 continue
             pairs.append((candidates.pop(), message_index))
@@ -191,8 +254,8 @@ def _group_id_for(message: Message, group_index: int) -> str:
     return f"group_index_{group_index}"
 
 
-def _link_function_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
-    """Link non-adjacent function results to unambiguous declaration occurrences."""
+def _link_tool_call_result_spans(messages: Sequence[Message], spans: list[dict[str, Any]]) -> None:
+    """Link non-adjacent tool results to unambiguous declaration occurrences."""
     if len(spans) < 2:
         return
 
@@ -222,7 +285,8 @@ def _link_function_call_result_spans(messages: Sequence[Message], spans: list[di
         return True
 
     linked = False
-    for declaration_message_index, result_message_index in _unambiguous_function_call_result_pairs(messages):
+    pairs = [*_unambiguous_tool_call_output_pairs(messages), *_unambiguous_approval_pairs(messages)]
+    for declaration_message_index, result_message_index in pairs:
         declaration_span_index = span_by_message_index[declaration_message_index]
         result_span_index = span_by_message_index[result_message_index]
         if declaration_span_index < result_span_index and union(result_span_index, declaration_span_index):
@@ -260,7 +324,7 @@ def group_messages(
     Returns:
         Ordered list of lightweight span dicts with keys:
         ``group_id``, ``kind``, ``start_index``, ``end_index``, ``has_reasoning``.
-        Non-contiguous function-call declaration and result spans share a group id.
+        Non-contiguous function or computer call/result spans share a group id.
     """
     _ensure_message_ids(messages, id_offset=id_offset, reserved_ids=reserved_ids)
     spans: list[dict[str, Any]] = []
@@ -365,7 +429,7 @@ def group_messages(
         i += 1
         group_index += 1
 
-    _link_function_call_result_spans(messages, spans)
+    _link_tool_call_result_spans(messages, spans)
     return spans
 
 
@@ -423,9 +487,94 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
     source_messages: list[Message],
     working_messages: Sequence[Message],
     source_message_identities: set[int],
+    *,
+    message_replacements: Sequence[tuple[Message, Sequence[Message]]] = (),
+    warn_on_rejection: bool = False,
 ) -> None:
-    """Reconcile summaries supported by source-owned messages without persisting unrelated rewrites."""
+    """Reconcile summaries rooted in source-owned messages without persisting unrelated rewrites."""
+    source_messages_by_identity = {id(message): message for message in source_messages}
+    source_messages_by_id: dict[str, list[Message]] = {}
+    for source_message in source_messages:
+        if source_message.message_id:
+            source_messages_by_id.setdefault(source_message.message_id, []).append(source_message)
     source_message_ids = {message.message_id for message in source_messages if message.message_id}
+
+    replacement_messages_by_identity: dict[int, Message] = {}
+    replacement_dependencies: dict[int, set[int]] = {}
+    for replacement, sources in message_replacements:
+        replacement_identity = id(replacement)
+        replacement_messages_by_identity[replacement_identity] = replacement
+        replacement_dependencies.setdefault(replacement_identity, set()).update(id(source) for source in sources)
+
+    roots_by_identity = {
+        source_identity: {source_identity}
+        for source_identity in source_message_identities
+        if source_identity in source_messages_by_identity
+    }
+    pending_replacement_identities = set(replacement_dependencies).difference(roots_by_identity)
+    while pending_replacement_identities:
+        newly_supported_replacements = {
+            replacement_identity
+            for replacement_identity in pending_replacement_identities
+            if replacement_dependencies[replacement_identity]
+            and replacement_dependencies[replacement_identity].issubset(roots_by_identity)
+        }
+        if not newly_supported_replacements:
+            break
+        for replacement_identity in newly_supported_replacements:
+            roots_by_identity[replacement_identity] = set().union(
+                *(
+                    roots_by_identity[source_identity]
+                    for source_identity in replacement_dependencies[replacement_identity]
+                )
+            )
+        pending_replacement_identities.difference_update(newly_supported_replacements)
+
+    resolved_replacement_identities = set(replacement_messages_by_identity).intersection(roots_by_identity)
+    superseded_replacement_identities = {
+        source_identity
+        for replacement_identity in resolved_replacement_identities
+        for source_identity in replacement_dependencies[replacement_identity]
+        if source_identity in resolved_replacement_identities
+    }
+    leaf_replacement_identities = resolved_replacement_identities.difference(superseded_replacement_identities)
+    required_leaves_by_source_identity: dict[int, set[int]] = {}
+    for replacement_identity in leaf_replacement_identities:
+        for source_identity in roots_by_identity[replacement_identity]:
+            required_leaves_by_source_identity.setdefault(source_identity, set()).add(replacement_identity)
+
+    roots_by_supported_id: dict[str, set[int]] = {}
+    leaves_by_supported_id: dict[str, set[int]] = {}
+    ambiguous_supported_ids: set[str] = set()
+
+    def add_supported_id(message_id: str, roots: set[int], leaves: set[int]) -> None:
+        if message_id in ambiguous_supported_ids:
+            return
+        existing_roots = roots_by_supported_id.get(message_id)
+        existing_leaves = leaves_by_supported_id.get(message_id)
+        if existing_roots is not None and (existing_roots != roots or existing_leaves != leaves):
+            roots_by_supported_id.pop(message_id, None)
+            leaves_by_supported_id.pop(message_id, None)
+            ambiguous_supported_ids.add(message_id)
+            return
+        roots_by_supported_id[message_id] = roots
+        leaves_by_supported_id[message_id] = leaves
+
+    for source_message in source_messages:
+        if source_message.message_id:
+            add_supported_id(source_message.message_id, {id(source_message)}, set())
+
+    resolved_replacements_by_id: dict[str, list[tuple[Message, set[int]]]] = {}
+    for replacement_identity, replacement in replacement_messages_by_identity.items():
+        roots = roots_by_identity.get(replacement_identity)
+        if roots is None or not replacement.message_id:
+            continue
+        replacement_leaves: set[int] = (
+            {replacement_identity} if replacement_identity in leaf_replacement_identities else set()
+        )
+        add_supported_id(replacement.message_id, roots, replacement_leaves)
+        resolved_replacements_by_id.setdefault(replacement.message_id, []).append((replacement, roots))
+
     candidates: list[tuple[Message, set[str]]] = []
     for message in working_messages:
         if id(message) in source_message_identities:
@@ -443,17 +592,125 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
         ):
             candidates.append((message, set(cast("list[str]", summarized_message_ids))))
 
-    dependencies = {message.message_id: summary_ids for message, summary_ids in candidates if message.message_id}
-    supported_ids = set(source_message_ids)
-    pending_ids = set(dependencies)
-    while pending_ids:
-        newly_supported = {summary_id for summary_id in pending_ids if dependencies[summary_id].issubset(supported_ids)}
-        if not newly_supported:
-            break
-        supported_ids.update(newly_supported)
-        pending_ids.difference_update(newly_supported)
+    dependencies: dict[str, set[str]] = {}
+    ambiguous_summary_ids: set[str] = set()
+    for message, summary_ids in candidates:
+        if not message.message_id:
+            continue
+        if message.message_id in dependencies:
+            ambiguous_summary_ids.add(message.message_id)
+            continue
+        dependencies[message.message_id] = summary_ids
 
-    accepted_ids = set(dependencies).difference(pending_ids)
+    resolved_summary_roots: dict[str, set[int]] = {}
+    resolved_summary_leaves: dict[str, set[int]] = {}
+    pending_summary_ids = set(dependencies).difference(ambiguous_summary_ids)
+    while pending_summary_ids:
+        newly_supported_summaries: dict[str, tuple[set[int], set[int]]] = {}
+        for summary_id in pending_summary_ids:
+            dependency_roots: list[set[int]] = []
+            dependency_leaves: list[set[int]] = []
+            for dependency_id in dependencies[summary_id]:
+                if dependency_id in ambiguous_supported_ids:
+                    break
+                roots: set[int] | None = resolved_summary_roots.get(dependency_id)
+                dependency_leaf_ids: set[int] | None = resolved_summary_leaves.get(dependency_id)
+                if roots is None:
+                    roots = roots_by_supported_id.get(dependency_id)
+                    dependency_leaf_ids = leaves_by_supported_id.get(dependency_id)
+                if roots is None:
+                    break
+                dependency_roots.append(roots)
+                dependency_leaves.append(dependency_leaf_ids or set())
+            else:
+                summary_roots: set[int] = set()
+                for roots in dependency_roots:
+                    summary_roots.update(roots)
+                summary_leaves: set[int] = set()
+                for leaves in dependency_leaves:
+                    summary_leaves.update(leaves)
+                existing_roots = roots_by_supported_id.get(summary_id)
+                existing_leaves = leaves_by_supported_id.get(summary_id)
+                if summary_id not in ambiguous_supported_ids and (
+                    existing_roots is None or (existing_roots == summary_roots and existing_leaves == summary_leaves)
+                ):
+                    newly_supported_summaries[summary_id] = (summary_roots, summary_leaves)
+
+        if not newly_supported_summaries:
+            break
+        for summary_id, (summary_roots, summary_leaves) in newly_supported_summaries.items():
+            resolved_summary_roots[summary_id] = summary_roots
+            resolved_summary_leaves[summary_id] = summary_leaves
+            roots_by_supported_id[summary_id] = summary_roots
+            leaves_by_supported_id[summary_id] = summary_leaves
+        pending_summary_ids.difference_update(newly_supported_summaries)
+
+    accepted_ids = {
+        summary_id
+        for summary_id, summary_roots in resolved_summary_roots.items()
+        if all(
+            required_leaves_by_source_identity.get(source_identity, set()).issubset(resolved_summary_leaves[summary_id])
+            for source_identity in summary_roots
+        )
+    }
+
+    def nested_summary_ids(summary_id: str) -> set[str]:
+        nested_ids: set[str] = set()
+        pending_ids = [summary_id]
+        while pending_ids:
+            current_id = pending_ids.pop()
+            for dependency_id in dependencies[current_id]:
+                if dependency_id not in resolved_summary_roots or dependency_id in nested_ids:
+                    continue
+                nested_ids.add(dependency_id)
+                pending_ids.append(dependency_id)
+        return nested_ids
+
+    consumed_accepted_ids: set[str] = set()
+    used_summary_ids = set(accepted_ids)
+    for summary_id in accepted_ids:
+        nested_ids = nested_summary_ids(summary_id)
+        used_summary_ids.update(nested_ids)
+        consumed_accepted_ids.update(nested_ids.intersection(accepted_ids))
+    endpoint_summary_ids = accepted_ids.difference(consumed_accepted_ids)
+
+    def transfer_summary_exclusions(summary_id: str, durable_summary_id: str, visited_ids: set[str]) -> None:
+        if summary_id in visited_ids:
+            return
+        visited_ids.add(summary_id)
+        for dependency_id in dependencies[summary_id]:
+            if dependency_id in resolved_summary_roots:
+                transfer_summary_exclusions(dependency_id, durable_summary_id, visited_ids)
+
+            for source_message in source_messages_by_id.get(dependency_id, ()):
+                source_annotation = _read_group_annotation_raw(source_message)
+                if (
+                    source_annotation is None
+                    or source_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) != summary_id
+                    or source_message.additional_properties.get(EXCLUDED_KEY) is not True
+                ):
+                    continue
+                _set_group_summarized_by_summary_id(source_message, durable_summary_id)
+
+            for replacement, roots in resolved_replacements_by_id.get(dependency_id, ()):
+                replacement_annotation = _read_group_annotation_raw(replacement)
+                if (
+                    replacement_annotation is None
+                    or replacement_annotation.get(SUMMARIZED_BY_SUMMARY_ID_KEY) != summary_id
+                    or replacement.additional_properties.get(EXCLUDED_KEY) is not True
+                ):
+                    continue
+                exclusion_reason = replacement.additional_properties.get(EXCLUDE_REASON_KEY)
+                for source_identity in roots:
+                    source_message = source_messages_by_identity[source_identity]
+                    _set_group_summarized_by_summary_id(source_message, durable_summary_id)
+                    source_message.additional_properties[EXCLUDED_KEY] = True
+                    if isinstance(exclusion_reason, str):
+                        source_message.additional_properties[EXCLUDE_REASON_KEY] = exclusion_reason
+
+    for summary_id in endpoint_summary_ids:
+        transfer_summary_exclusions(summary_id, summary_id, set())
+
     for message in [*source_messages, *(candidate for candidate, _ in candidates)]:
         annotation = _read_group_annotation_raw(message)
         if annotation is None:
@@ -465,24 +722,25 @@ def _reconcile_compaction_summaries(  # pyright: ignore[reportUnusedFunction]
         message.additional_properties.pop(EXCLUDED_KEY, None)
         message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
 
-    def source_dependencies(summary_id: str) -> set[str]:
-        expanded: set[str] = set()
-        for dependency_id in dependencies[summary_id]:
-            if dependency_id in source_message_ids:
-                expanded.add(dependency_id)
-            elif dependency_id in accepted_ids:
-                expanded.update(source_dependencies(dependency_id))
-        return expanded
+    if warn_on_rejection:
+        rejected_count = sum(message.message_id not in used_summary_ids for message, _ in candidates)
+        if rejected_count:
+            logger.warning(
+                "Rejected %d compaction summary message(s) because their dependencies were not fully rooted in "
+                "caller-owned messages or registered middleware replacements.",
+                rejected_count,
+                extra={"compaction_rejected_summary_count": rejected_count},
+            )
 
     for message, _ in candidates:
         if message.message_id not in accepted_ids:
             continue
-        summarized_source_ids = source_dependencies(message.message_id)
+        summarized_source_identities = resolved_summary_roots[message.message_id]
         insertion_index = min(
             (
                 index
                 for index, source_message in enumerate(source_messages)
-                if source_message.message_id in summarized_source_ids
+                if id(source_message) in summarized_source_identities
             ),
             default=len(source_messages),
         )
@@ -634,19 +892,24 @@ def _reannotation_start(messages: Sequence[Message], index: int) -> int:
     return previous_index
 
 
-def _function_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
-    unmatched_declaration_indices: dict[str, list[int]] = {}
+def _tool_pair_reannotation_start(messages: Sequence[Message], start_index: int) -> int:
+    unmatched_declaration_indices: dict[tuple[str, str], list[int]] = {}
     matching_indices: list[int] = []
     for message_index, message in enumerate(messages):
         if message.role not in ("assistant", "tool"):
             continue
         for content in message.contents:
-            if message.role == "assistant" and content.type == "function_call" and content.call_id:
-                unmatched_declaration_indices.setdefault(content.call_id, []).append(message_index)
+            if (
+                message.role == "assistant"
+                and content.type in ("function_call", "computer_tool_call")
+                and content.call_id
+            ):
+                unmatched_declaration_indices.setdefault((content.type, content.call_id), []).append(message_index)
                 continue
-            if content.type != "function_result" or not content.call_id:
+            if content.type not in ("function_result", "computer_tool_result") or not content.call_id:
                 continue
-            candidates = unmatched_declaration_indices.get(content.call_id)
+            call_type = "function_call" if content.type == "function_result" else "computer_tool_call"
+            candidates = unmatched_declaration_indices.get((call_type, content.call_id))
             if not candidates:
                 continue
             if message_index >= start_index:
@@ -700,7 +963,7 @@ def annotate_message_groups(
         start_index = min(candidate_starts)
 
     start_index = _reannotation_start(messages, start_index)
-    start_index = _function_pair_reannotation_start(messages, start_index)
+    start_index = _tool_pair_reannotation_start(messages, start_index)
 
     # Linked groups can be non-contiguous, so the last prefix message does not
     # necessarily carry the highest group index.
@@ -808,11 +1071,9 @@ def _serialize_content(content: Content) -> dict[str, Any]:
     else:
         payload.pop("protected_data", None)
     additional_properties = payload.get("additional_properties")
-    if isinstance(additional_properties, dict) and "encrypted_content" in additional_properties:
-        typed_properties = cast("dict[str, Any]", additional_properties)
-        payload["additional_properties"] = {
-            key: value for key, value in typed_properties.items() if key != "encrypted_content"
-        }
+    if isinstance(additional_properties, dict) and additional_properties:
+        filtered_properties = _strip_opaque_reasoning_payload(additional_properties)
+        payload["additional_properties"] = filtered_properties or {}
     return payload
 
 
@@ -975,6 +1236,532 @@ def _count_included_messages(messages: list[Message]) -> int:
 
 def _count_included_tokens(messages: list[Message]) -> int:
     return included_token_count(messages)
+
+
+def _latest_group(messages: list[Message], *, include_excluded: bool) -> list[Message]:
+    grouped = _group_messages_by_id(messages)
+    for message in reversed(messages):
+        if not include_excluded and message.additional_properties.get(EXCLUDED_KEY, False):
+            continue
+        group_id = _group_id(message)
+        if group_id is not None:
+            return grouped.get(group_id, [])
+    return []
+
+
+def _latest_included_group(messages: list[Message]) -> list[Message]:
+    return _latest_group(messages, include_excluded=False)
+
+
+def _function_call_result_pairs(
+    messages: Sequence[Message],
+    *,
+    include_excluded: bool = False,
+) -> list[tuple[Content, Content]]:
+    candidate_messages = (
+        list(messages)
+        if include_excluded
+        else [message for message in messages if not message.additional_properties.get(EXCLUDED_KEY, False)]
+    )
+    open_calls_by_call_id: dict[str, deque[Content]] = {}
+    open_calls_by_occurrence_id: dict[tuple[str, str], deque[Content]] = {}
+    closed_call_identities: set[int] = set()
+    pairs: list[tuple[Content, Content]] = []
+
+    for message in candidate_messages:
+        for content in message.contents:
+            if content.type == "function_call" and content.call_id:
+                open_calls_by_call_id.setdefault(content.call_id, deque()).append(content)
+                if content.id:
+                    open_calls_by_occurrence_id.setdefault((content.id, content.call_id), deque()).append(content)
+                continue
+            if content.type != "function_result" or not content.call_id:
+                continue
+
+            matched_call: Content | None = None
+            if content.id is not None:
+                occurrence_queue = open_calls_by_occurrence_id.get((content.id, content.call_id))
+                while occurrence_queue and id(occurrence_queue[0]) in closed_call_identities:
+                    occurrence_queue.popleft()
+                if occurrence_queue:
+                    matched_call = occurrence_queue.popleft()
+            else:
+                call_queue = open_calls_by_call_id.get(content.call_id)
+                while call_queue and id(call_queue[0]) in closed_call_identities:
+                    call_queue.popleft()
+                if call_queue:
+                    matched_call = call_queue.popleft()
+            if matched_call is None:
+                continue
+
+            closed_call_identities.add(id(matched_call))
+            pairs.append((matched_call, content))
+
+    return pairs
+
+
+def _completed_function_call_pairs(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[tuple[Content, Content]]:
+    return [
+        (call, result)
+        for call, result in _function_call_result_pairs(messages, include_excluded=include_excluded)
+        if (
+            call.name == tool_name
+            and result.exception is None
+            and result.additional_properties.get(_APPROVAL_REJECTION_RESULT_KEY) is not True
+            and (include_consumed or call.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is not True)
+        )
+    ]
+
+
+def _completed_function_calls(
+    messages: Sequence[Message],
+    *,
+    tool_name: str,
+    include_consumed: bool = False,
+    include_excluded: bool = False,
+) -> list[Content]:
+    return [
+        call
+        for call, _ in _completed_function_call_pairs(
+            messages,
+            tool_name=tool_name,
+            include_consumed=include_consumed,
+            include_excluded=include_excluded,
+        )
+    ]
+
+
+def _requires_client_managed_history(strategy: object | None) -> bool:
+    return getattr(strategy, "requires_client_managed_history", False) is True
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
+class AgentTriggeredCompactionStrategy:
+    """Run an existing compaction strategy after an agent invokes a trigger tool.
+
+    The trigger tool must be registered explicitly on the agent alongside this
+    strategy. A completed trigger call in the latest included message group is
+    consumed once, then the wrapped strategy runs before the next model call.
+    Wrapped strategies may provide ``create_trigger_tool()`` to replace the
+    default ``compact_context`` tool with one specialized for their inputs.
+
+    The consumed marker is stored on the completed trigger call occurrence
+    rather than on this strategy instance, so one strategy can be shared safely
+    by concurrent runs and composed trigger tools do not suppress each other.
+
+    This strategy requires client-managed history (for example ``store=False``).
+    Chat clients reject it when service-side storage or a service-managed
+    conversation ID is active because local compaction cannot remove remote
+    conversation context.
+    """
+
+    DEFAULT_TOOL_NAME: Final[str] = "compact_context"
+    requires_client_managed_history = True
+
+    def __init__(
+        self,
+        strategy: CompactionStrategy,
+        *,
+        tool_name: str = DEFAULT_TOOL_NAME,
+        approval_mode: ApprovalMode = "never_require",
+        exclude_trigger: bool = False,
+    ) -> None:
+        """Create an agent-triggered wrapper around one compaction strategy.
+
+        Args:
+            strategy: Existing strategy to invoke after a completed trigger call.
+
+        Keyword Args:
+            tool_name: Name for the default trigger tool when the wrapped
+                strategy does not provide ``create_trigger_tool()``.
+            approval_mode: Approval mode for the generated default trigger tool.
+            exclude_trigger: Whether to exclude the completed trigger call/result
+                group before the next model call. Defaults to False so the model
+                can observe that compaction completed. A trigger group containing
+                unrelated tool calls is always retained atomically.
+        """
+        if not callable(strategy):
+            raise TypeError("strategy must be callable.")
+        if not tool_name.strip():
+            raise ValueError("tool_name must not be empty.")
+
+        trigger_tool_factory = getattr(strategy, "create_trigger_tool", None)
+        tool = (
+            trigger_tool_factory()
+            if callable(trigger_tool_factory)
+            else self._create_default_tool(tool_name, approval_mode)
+        )
+        from ._tools import FunctionTool
+
+        if not isinstance(tool, FunctionTool):
+            raise TypeError("create_trigger_tool() must return a FunctionTool.")
+        if not tool.name.strip():
+            raise ValueError("trigger tool name must not be empty.")
+
+        self.strategy = strategy
+        self.tool = tool
+        self.exclude_trigger = exclude_trigger
+
+    @property
+    def tokenizer(self) -> TokenizerProtocol | None:
+        """Return the wrapped strategy's tokenizer, when it exposes one."""
+        tokenizer = getattr(self.strategy, "tokenizer", None)
+        return tokenizer if isinstance(tokenizer, TokenizerProtocol) else None
+
+    @staticmethod
+    def _create_default_tool(tool_name: str, approval_mode: ApprovalMode) -> FunctionTool:
+        from ._tools import FunctionTool
+
+        def request_compaction(reason: str | None = None) -> str:
+            """Request configured context compaction before the next model call."""
+            message = "Compaction requested. The configured strategy will run before the next model call."
+            normalized_reason = reason.strip() if isinstance(reason, str) else ""
+            return f"{message} Reason: {normalized_reason}" if normalized_reason else message
+
+        return FunctionTool(
+            name=tool_name,
+            description=(
+                "Request that the configured context compaction strategy run before the next model call. "
+                "Call this tool by itself, after any other tool calls whose results should be eligible for compaction; "
+                "do not call it in parallel with other tools."
+            ),
+            func=request_compaction,
+            approval_mode=approval_mode,
+            input_model={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Why the agent is requesting compaction before the next model call.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        )
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Run the wrapped strategy once for the latest completed trigger call."""
+        original_messages = list(messages)
+        annotate_message_groups(messages)
+        grouped = _group_messages_by_id(messages)
+        trigger_group = _latest_included_group(messages)
+        trigger_calls = _completed_function_calls(
+            trigger_group,
+            tool_name=self.tool.name,
+        )
+        if not trigger_calls:
+            return False
+
+        groups_to_hide: list[list[Message]] = [trigger_group]
+        trigger_group_ids = {id(message) for message in trigger_group}
+        for group in grouped.values():
+            if any(id(message) in trigger_group_ids for message in group):
+                continue
+            if not any(
+                content.type == "function_call"
+                and content.name == self.tool.name
+                and content.additional_properties.get(_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY) is True
+                for message in group
+                if not message.additional_properties.get(EXCLUDED_KEY, False)
+                for content in message.contents
+            ):
+                continue
+            if self._is_trigger_only_group(group):
+                groups_to_hide.append(group)
+
+        hidden_messages = [message for group in groups_to_hide for message in group]
+        trigger_state = [
+            (
+                message,
+                EXCLUDED_KEY in message.additional_properties,
+                message.additional_properties.get(EXCLUDED_KEY),
+                EXCLUDE_REASON_KEY in message.additional_properties,
+                message.additional_properties.get(EXCLUDE_REASON_KEY),
+            )
+            for message in hidden_messages
+        ]
+        for message in hidden_messages:
+            set_excluded(message, excluded=True, reason="agent_compaction_trigger")
+
+        try:
+            changed = await self.strategy(messages)
+        except BaseException:
+            self._restore_hidden_messages(messages, original_messages, trigger_state)
+            raise
+
+        for trigger_call in trigger_calls:
+            trigger_call.additional_properties[_AGENT_COMPACTION_TRIGGER_CONSUMED_KEY] = True
+
+        has_unrelated_tool_calls = not self._is_trigger_only_group(trigger_group, include_excluded=True)
+        trigger_message_ids = {id(message) for message in trigger_group}
+        has_other_included_context = any(
+            id(message) not in trigger_message_ids and not message.additional_properties.get(EXCLUDED_KEY, False)
+            for message in messages
+        )
+        trigger_changed = self.exclude_trigger and not has_unrelated_tool_calls and has_other_included_context
+        prior_trigger_state = [state for state in trigger_state if id(state[0]) not in trigger_message_ids]
+        self._restore_hidden_messages(messages, original_messages, prior_trigger_state)
+        if not trigger_changed:
+            current_trigger_state = [state for state in trigger_state if id(state[0]) in trigger_message_ids]
+            self._restore_hidden_messages(messages, original_messages, current_trigger_state)
+        return changed or trigger_changed
+
+    def _is_trigger_only_group(
+        self,
+        group: Sequence[Message],
+        *,
+        include_excluded: bool = False,
+    ) -> bool:
+        tool_calls = [
+            content
+            for message in group
+            if include_excluded or not message.additional_properties.get(EXCLUDED_KEY, False)
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
+        ]
+        return bool(tool_calls) and all(
+            content.type == "function_call" and content.name == self.tool.name for content in tool_calls
+        )
+
+    @staticmethod
+    def _restore_trigger_group(
+        trigger_state: Sequence[tuple[Message, bool, Any, bool, Any]],
+    ) -> None:
+        for message, had_excluded, excluded, had_reason, reason in trigger_state:
+            if had_excluded:
+                message.additional_properties[EXCLUDED_KEY] = excluded
+            else:
+                message.additional_properties.pop(EXCLUDED_KEY, None)
+            if had_reason:
+                message.additional_properties[EXCLUDE_REASON_KEY] = reason
+            else:
+                message.additional_properties.pop(EXCLUDE_REASON_KEY, None)
+
+    @classmethod
+    def _restore_hidden_messages(
+        cls,
+        messages: list[Message],
+        original_messages: Sequence[Message],
+        trigger_state: Sequence[tuple[Message, bool, Any, bool, Any]],
+    ) -> None:
+        restore_ids = {id(state[0]) for state in trigger_state}
+        present_ids = {id(message) for message in messages}
+        original_index_by_id = {id(message): index for index, message in enumerate(original_messages)}
+
+        for original_message in original_messages:
+            message_id = id(original_message)
+            if message_id not in restore_ids or message_id in present_ids:
+                continue
+            original_index = original_index_by_id[message_id]
+            next_anchor_id = next(
+                (
+                    id(candidate)
+                    for candidate in original_messages[original_index + 1 :]
+                    if id(candidate) in present_ids
+                ),
+                None,
+            )
+            if next_anchor_id is not None:
+                insert_index = next(
+                    index for index, candidate in enumerate(messages) if id(candidate) == next_anchor_id
+                )
+            else:
+                previous_anchor_id = next(
+                    (
+                        id(candidate)
+                        for candidate in reversed(original_messages[:original_index])
+                        if id(candidate) in present_ids
+                    ),
+                    None,
+                )
+                if previous_anchor_id is None:
+                    insert_index = len(messages)
+                else:
+                    insert_index = (
+                        next(index for index, candidate in enumerate(messages) if id(candidate) == previous_anchor_id)
+                        + 1
+                    )
+            messages.insert(insert_index, original_message)
+            present_ids.add(message_id)
+
+        cls._restore_trigger_group(trigger_state)
+
+
+@experimental(feature_id=ExperimentalFeature.AGENT_TRIGGERED_COMPACTION)
+class UnloadSkillsCompactionStrategy:
+    """Exclude loaded skill bodies and resources selected by an unload tool.
+
+    This strategy targets complete tool-call groups containing only
+    ``load_skill`` and ``read_skill_resource`` calls. The latest completed
+    ``unload_skill`` request selects one skill by name, or all skills when its
+    ``skill_name`` argument is omitted or blank. Skill identity comes from
+    successful load/resource result provenance, not the original model arguments.
+    Groups without that provenance are retained.
+
+    Use this as the wrapped strategy of :class:`AgentTriggeredCompactionStrategy`.
+    The wrapper obtains the specialized ``unload_skill`` tool through
+    :meth:`create_trigger_tool` and exposes that single tool to the caller.
+    """
+
+    DEFAULT_TOOL_NAME: Final[str] = "unload_skill"
+
+    def __init__(
+        self,
+        *,
+        tool_name: str = DEFAULT_TOOL_NAME,
+        approval_mode: ApprovalMode = "never_require",
+    ) -> None:
+        """Create a skill-unloading strategy and its trigger tool.
+
+        Keyword Args:
+            tool_name: Name of the tool that requests skill unloading.
+            approval_mode: Approval mode for the generated unload tool.
+        """
+        if not tool_name.strip():
+            raise ValueError("tool_name must not be empty.")
+        self.tool_name: str = tool_name
+        self.approval_mode: ApprovalMode = approval_mode
+
+    def create_trigger_tool(self) -> FunctionTool:
+        """Create the ``unload_skill`` trigger tool used by the wrapper."""
+        from ._tools import FunctionTool
+
+        def request_skill_unload(skill_name: str | Sequence[str] | None = None) -> list[Content]:
+            """Unload the full instructions and resources for selected skills."""
+            if skill_name is None:
+                requested_names: Sequence[str] = []
+            elif isinstance(skill_name, str):
+                requested_names = [skill_name]
+            elif isinstance(skill_name, Sequence) and not isinstance(skill_name, (bytes, bytearray)):
+                if any(not isinstance(name, str) for name in skill_name):
+                    raise TypeError("skill_name must contain only strings.")
+                requested_names = skill_name
+            else:
+                raise TypeError("skill_name must be a string, a sequence of strings, or None.")
+            normalized_names = [name.strip() for name in requested_names if name.strip()]
+            if normalized_names:
+                formatted_names = ", ".join(f"'{name}'" for name in normalized_names)
+                message = f"Skill(s) {formatted_names} will be unloaded before the next model call."
+            else:
+                message = "All loaded skills will be unloaded before the next model call."
+            return [
+                Content.from_text(
+                    message,
+                    additional_properties={_SKILL_UNLOAD_SELECTION_KEY: normalized_names},
+                )
+            ]
+
+        return FunctionTool(
+            name=self.tool_name,
+            description=(
+                "Unloads the full instructions and resources for one or more loaded skills. "
+                "Omit skill_name to unload all loaded skills. Call this tool by itself after the relevant skill work "
+                "is complete; do not call it in parallel with other tools."
+            ),
+            func=request_skill_unload,
+            approval_mode=self.approval_mode,
+            input_model={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "The name of a skill to unload, a list of skill names to unload, "
+                            "or omit to unload all loaded skills."
+                        ),
+                    },
+                },
+                "additionalProperties": False,
+            },
+        )
+
+    def _requested_skill_names(self, messages: list[Message]) -> set[str] | None:
+        requests = _completed_function_call_pairs(
+            _latest_group(messages, include_excluded=True),
+            tool_name=self.tool_name,
+            include_consumed=True,
+            include_excluded=True,
+        )
+        if not requests:
+            return set()
+
+        requested_names: set[str] = set()
+        for _, result in requests:
+            selections = [
+                item.additional_properties[_SKILL_UNLOAD_SELECTION_KEY]
+                for item in (result.items or [])
+                if item.type == "text" and _SKILL_UNLOAD_SELECTION_KEY in item.additional_properties
+            ]
+            if len(selections) != 1 or not isinstance(selections[0], list):
+                return set()
+            skill_names = cast("list[Any]", selections[0])
+            if any(not isinstance(skill_name, str) for skill_name in skill_names):
+                return set()
+            normalized_names = {skill_name.strip().casefold() for skill_name in skill_names if skill_name.strip()}
+            if not normalized_names:
+                return None
+            requested_names.update(normalized_names)
+        return requested_names
+
+    @staticmethod
+    def _skill_names_for_removable_group(group: Sequence[Message]) -> set[str] | None:
+        included_messages = [message for message in group if not message.additional_properties.get(EXCLUDED_KEY, False)]
+        tool_calls = [
+            content
+            for message in included_messages
+            for content in message.contents
+            if content.type in _TOOL_CALL_CONTENT_TYPES
+        ]
+        if not tool_calls or any(
+            call.type != "function_call" or call.name not in _SKILL_CONTEXT_TOOL_NAMES for call in tool_calls
+        ):
+            return None
+        calls = tool_calls
+
+        results_by_call_identity = {id(call): result for call, result in _function_call_result_pairs(included_messages)}
+        skill_names: set[str] = set()
+        for call in calls:
+            result = results_by_call_identity.get(id(call))
+            if (
+                result is None
+                or result.exception is not None
+                or result.additional_properties.get(_APPROVAL_REJECTION_RESULT_KEY) is True
+            ):
+                return None
+            skill_name = result.additional_properties.get(SKILL_CONTEXT_NAME_KEY)
+            if not isinstance(skill_name, str) or not skill_name.strip():
+                return None
+            skill_names.add(skill_name.strip().casefold())
+        return skill_names
+
+    async def __call__(self, messages: list[Message]) -> bool:
+        """Exclude matching loaded skill context groups."""
+        ordered_group_ids = annotate_message_groups(messages)
+        requested_skill_names = self._requested_skill_names(messages)
+        if requested_skill_names == set():
+            return False
+
+        grouped = _group_messages_by_id(messages)
+        changed = False
+        for group_id in ordered_group_ids:
+            group = grouped.get(group_id, [])
+            skill_names = self._skill_names_for_removable_group(group)
+            if skill_names is None:
+                continue
+            if requested_skill_names is not None and not skill_names.issubset(requested_skill_names):
+                continue
+            for message in group:
+                changed = set_excluded(message, excluded=True, reason="skill_unload") or changed
+        return changed
 
 
 class TruncationStrategy:
@@ -1226,7 +2013,11 @@ class ToolResultCompactionStrategy:
                 for content in msg.contents:
                     if content.type == "function_call" and content.call_id and content.name:
                         call_id_to_name[content.call_id] = content.name
-                    elif content.type == "mcp_server_tool_call" and content.call_id and content.tool_name:
+                    elif (
+                        content.type in ("mcp_server_tool_call", "search_tool_call")
+                        and content.call_id
+                        and content.tool_name
+                    ):
                         call_id_to_name[content.call_id] = content.tool_name
 
             # Collect tool results with the tool name for context.
@@ -1242,6 +2033,11 @@ class ToolResultCompactionStrategy:
                         tool_results.append(label.strip())
                     elif content.type == "mcp_server_tool_result":
                         result_text = _tool_result_text(content.output)
+                        tool_name = call_id_to_name.get(content.call_id or "", "")
+                        label = f"{tool_name}: {result_text}" if tool_name else result_text
+                        tool_results.append(label.strip())
+                    elif content.type == "search_tool_result":
+                        result_text = _tool_result_text(content.result if content.result is not None else content.items)
                         tool_name = call_id_to_name.get(content.call_id or "", "")
                         label = f"{tool_name}: {result_text}" if tool_name else result_text
                         tool_results.append(label.strip())
@@ -1391,6 +2187,14 @@ def _format_summary_content(content: Content) -> str:
         if content.call_id:
             call += f" [call_id={content.call_id}]"
         return call
+    if content.type == "computer_tool_call":
+        actions = _tool_result_text(content.actions) if content.actions is not None else "no actions"
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        return f"computer_tool_call: {actions}{call_id_suffix}"
+    if content.type == "computer_tool_result":
+        call_id_suffix = f" [call_id={content.call_id}]" if content.call_id else ""
+        screenshot_label = ": screenshot" if content.screenshot is not None else ""
+        return f"computer_tool_result{screenshot_label}{call_id_suffix}"
     if content.type == "function_result":
         result_text = _format_summary_result_items(content.items) if content.items else ""
         if not result_text:
@@ -1751,6 +2555,11 @@ class TokenBudgetComposedStrategy:
         self.tokenizer = tokenizer
         self.strategies = list(strategies)
         self.early_stop = early_stop
+
+    @property
+    def requires_client_managed_history(self) -> bool:
+        """Return whether any nested strategy requires client-managed history."""
+        return any(_requires_client_managed_history(strategy) for strategy in self.strategies)
 
     async def __call__(self, messages: list[Message]) -> bool:
         annotate_message_groups(messages)
@@ -2158,6 +2967,7 @@ __all__ = [
     "SUMMARIZED_BY_SUMMARY_ID_KEY",
     "SUMMARY_OF_GROUP_IDS_KEY",
     "SUMMARY_OF_MESSAGE_IDS_KEY",
+    "AgentTriggeredCompactionStrategy",
     "CharacterEstimatorTokenizer",
     "CompactionProvider",
     "CompactionStrategy",
@@ -2170,6 +2980,7 @@ __all__ = [
     "TokenizerProtocol",
     "ToolResultCompactionStrategy",
     "TruncationStrategy",
+    "UnloadSkillsCompactionStrategy",
     "annotate_message_groups",
     "annotate_token_counts",
     "append_compaction_message",

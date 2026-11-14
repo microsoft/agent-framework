@@ -154,6 +154,7 @@ def _assemble_context_providers(
     disable_file_memory: bool,
     file_memory_store: AgentFileStore | None,
     file_access_store: AgentFileStore | None,
+    file_access_session_scoped: bool,
     file_access_disable_write_tools: bool,
     file_access_disable_readonly_tool_approval: bool,
     file_access_disable_write_tool_approval: bool,
@@ -196,6 +197,7 @@ def _assemble_context_providers(
                 disable_write_tools=file_access_disable_write_tools,
                 disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
                 disable_write_tool_approval=file_access_disable_write_tool_approval,
+                session_scoped=file_access_session_scoped,
             )
         )
 
@@ -330,6 +332,7 @@ def create_harness_agent(
     disable_file_memory: bool = False,
     file_memory_store: AgentFileStore | None = None,
     file_access_store: AgentFileStore | None = None,
+    file_access_session_scoped: bool = False,
     file_access_disable_write_tools: bool = False,
     file_access_disable_readonly_tool_approval: bool = False,
     file_access_disable_write_tool_approval: bool = False,
@@ -346,6 +349,7 @@ def create_harness_agent(
     loop_should_continue: ShouldContinueCallable | None = None,
     loop_next_message: NextMessageCallable | None = None,
     loop_max_iterations: int | None = DEFAULT_MAX_ITERATIONS,
+    loop_return_final_only: bool = False,
     otel_provider_name: str | None = None,
     context_providers: Sequence[ContextProvider] | None = None,
     middleware: Sequence[MiddlewareTypes] | None = None,
@@ -454,6 +458,10 @@ def create_harness_agent(
             opt-in: when None (default), no FileAccessProvider is added and the agent has no
             file access tools. When set, a FileAccessProvider is added, giving the agent shared
             read/write file tools backed by the supplied store.
+        file_access_session_scoped: When True, the FileAccessProvider confines tool operations
+            to a working folder derived from the active session id, so files are isolated per
+            session instead of shared across sessions. When False (default), the shared-store
+            semantics are preserved. Only used when file_access_store is set.
         file_access_disable_write_tools: When True, the FileAccessProvider advertises only its
             read-only tools (read, read_lines, ls, grep); the write tools (write, delete, replace,
             replace_lines) are hidden. When False (default), all tools are advertised. Only
@@ -527,6 +535,10 @@ def create_harness_agent(
             a positive integer caps the loop (defaults to the loop middleware's default cap). Only
             takes effect when ``loop_should_continue`` is set (otherwise no loop is added and this
             is ignored).
+        loop_return_final_only: When True, return only the final loop iteration's response for
+            non-streaming runs. When False (default), aggregate all iterations and injected loop
+            prompts. Streaming runs still yield every iteration's updates. Only takes effect when
+            ``loop_should_continue`` is set; otherwise this is ignored.
         otel_provider_name: Custom OpenTelemetry provider/source name for telemetry.
         context_providers: Additional context providers to include after the built-in ones.
         middleware: Additional middleware to include.
@@ -608,6 +620,7 @@ def create_harness_agent(
         disable_file_memory=disable_file_memory,
         file_memory_store=file_memory_store,
         file_access_store=file_access_store,
+        file_access_session_scoped=file_access_session_scoped,
         file_access_disable_write_tools=file_access_disable_write_tools,
         file_access_disable_readonly_tool_approval=file_access_disable_readonly_tool_approval,
         file_access_disable_write_tool_approval=file_access_disable_write_tool_approval,
@@ -665,6 +678,7 @@ def create_harness_agent(
                 loop_should_continue,
                 max_iterations=loop_max_iterations,
                 next_message=loop_next_message,
+                return_final_only=loop_return_final_only,
             ),
         )
     # Message injection is always on. It is a no-op when no messages are queued for the session,

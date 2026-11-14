@@ -2,15 +2,49 @@
 
 **FIDES**  is a comprehensive security system for AI agents. This developer guide describes the deterministic prompt injection defense system implemented in the agent framework. The system provides label-based security mechanisms to defend against prompt injection attacks by tracking integrity and confidentiality of content throughout agent execution.
 
+> [!WARNING]
+> **Combining FIDES with CodeAct providers is currently unsupported**, including
+> [Monty](../../../packages/monty/README.md) and
+> [Hyperlight](../../../packages/hyperlight/README.md). CodeAct is optimized for
+> combining many tool calls inside one generated-code execution and consumes
+> native tool values with `skip_parsing=True`. That bypasses the normalized
+> `Content` boundary where operation-scoped FIDES labels are attached. FIDES
+> instead depends on granular inspection, labeling, and enforcement for each
+> function result. Nested calls and intermediate code values therefore do not
+> receive its policy enforcement or label tracking.
+>
+> CodeAct logs a warning for recognized FIDES tool metadata, but this is diagnostic
+> only: execution is not blocked, and defaults can apply to unannotated tools.
+> No warning does not imply support or safety. Keep tools that require FIDES as
+> direct agent tools rather than CodeAct-managed tools, or disable CodeAct for
+> workflows requiring those guarantees. Host functions must independently enforce
+> authorization and destination restrictions. If one coarse policy for the
+> complete CodeAct output is sufficient, set `additional_properties` on the
+> CodeAct provider or execute-code tool:
+>
+> ```python
+> codeact = MontyCodeActProvider(
+>     tools=[search, fetch],
+>     additional_properties={
+>         "source_integrity": "untrusted",
+>         "confidentiality": "private",
+>     },
+> )
+> ```
+>
+> FIDES then labels the outer `execute_code` result as a whole. It still does
+> not inspect nested tool results, intermediate values, or side effects that
+> happen before the outer result exists.
+
 ## Context Provider Pattern with SecureAgentConfig!
 
-**`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. No security knowledge required from developers.
+**`SecureAgentConfig` is now a `ContextProvider`** — add it to any agent with a single `context_providers=[config]` line. It automatically injects security tools, instructions, and middleware via the `before_run()` hook. Applications remain responsible for classifying data injected by their own history and context providers.
 
 **Key Features:**
 - **Context Provider Pattern** - `SecureAgentConfig` extends `ContextProvider`, injecting everything automatically
 - **Automatic Variable Hiding** - UNTRUSTED content is automatically stored and replaced with references
 - **Per-Item Embedded Labels** - Tools return `list[Content]` with `Content.from_text()` for proper label propagation
-- **Zero-Config Security** - `context_providers=[config]` replaces manual `middleware=`, `tools=`, and `instructions=` wiring
+- **Minimal Security Wiring** - `context_providers=[config]` replaces manual `middleware=`, `tools=`, and `instructions=` wiring
 - **Variable ID Support** - `quarantined_llm` now accepts `variable_ids` to directly reference hidden content
 - **Security Instructions** - Built-in `SECURITY_TOOL_INSTRUCTIONS` automatically injected into agent context
 
@@ -209,7 +243,89 @@ When declared, `source_integrity` establishes the local integrity fallback. Embe
 - Context label starts as **TRUSTED + PUBLIC** on first call
 - Gets updated (tainted) when untrusted content enters the context
 - Hidden content does NOT taint the context (it never enters LLM context)
+- Newly supplied caller messages are folded into the label before the first model call. Unstamped assistant/tool data
+  and data-bearing function results are treated as **UNTRUSTED + PRIVATE**, regardless of the role assigned during
+  input normalization and even when the session already has persisted FIDES state.
+- Framework-authenticated approval requests and responses remain control-plane content. Their embedded function-call
+  arguments still add confidentiality restrictions. Caller-only unbound controls are reconstructed conservatively.
+- Stored `HistoryProvider` messages are folded into the label each time they are loaded. Unstamped assistant/tool
+  content is reconstructed as **UNTRUSTED + PRIVATE**. Explicit replay labels are restriction-only: they can make
+  content less trusted or more confidential, but cannot promote replayed content to trusted. An application-provided
+  `SecureAgentConfig.message_labeler` is a separate, authoritative classification boundary.
 - Policy enforcement uses the context label for validation
+
+### History and Context Provider Trust Boundary
+
+`HistoryProvider` and `ContextProvider` implementations are trusted application
+plugins. FIDES cannot infer provenance from arbitrary provider behavior, but the
+application can classify provider messages centrally:
+
+```python
+def classify_provider_message(source_id: str, message: Message) -> ContentLabel:
+    if source_id == "internal_memory":
+        return ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        )
+    return ContentLabel(
+        integrity=IntegrityLabel.UNTRUSTED,
+        confidentiality=ConfidentialityLabel.PUBLIC,
+    )
+
+
+security = SecureAgentConfig(message_labeler=classify_provider_message)
+agent = Agent(
+    client=client,
+    context_providers=[
+        internal_memory,
+        external_search,
+        security,
+    ],
+)
+```
+
+`message_labeler` receives the authoritative `source_id` from the
+`SessionContext.context_messages` bucket and the message in that bucket.
+Its returned `ContentLabel` is the complete application-owned classification
+for that exact message, including permission to mark data trusted. The
+synchronous callback result replaces any embedded message label when FIDES
+folds that message into the current run. FIDES caches the result for the exact
+message object and does not mutate or stamp the message. Register
+`SecureAgentConfig` as the last context provider when `message_labeler` is set.
+It must return `ContentLabel`; invalid results and callback failures stop the run.
+
+The callback does not classify caller input messages and does not authenticate
+approval controls, hidden references, or other control-plane structures. Those
+checks remain independent.
+
+- Unstamped history is classified conservatively every time FIDES loads it.
+- Rewriting, deduplicating, compacting, merging, or externally truncating a
+  transcript does not preserve or infer trust. Retained unstamped messages are
+  reconstructed conservatively as **UNTRUSTED + PRIVATE**.
+- Do not combine session-managed history with caller-supplied full-transcript
+  replay unless the history provider explicitly preserves FIDES provenance.
+- Messages from non-history context providers are not automatically folded into
+  the FIDES context label unless `message_labeler` classifies them.
+- Local per-service-call history is prepared before approval execution and
+  reused for the first service call. Service-owned continuation still requires
+  authoritative FIDES state when no complete local snapshot is available.
+- Audit chat middleware used with `SecureAgentConfig`. Per-service-call history
+  persistence observes `context.messages` after downstream middleware returns.
+  Middleware that rewrites messages before `call_next()` and restores the
+  original list afterward can therefore persist a different request from the
+  one sent to the model. Avoid that rewrite-and-restore pattern when exact
+  durable request history is required.
+
+This fail-closed behavior can block protected tools after an unsupported
+provider transformation. That is preferable to inferring trust from message
+shape or role.
+
+See
+[`provider_message_labeling_example.py`](provider_message_labeling_example.py)
+for one classifier applied to existing history, memory, and context providers.
+Providers that use extra lifecycle hooks, service-side continuation,
+cross-session merges, or custom transcript rewriting should classify data
+inside their own implementation.
 
 **Automatic Hiding:**
 - UNTRUSTED results/items are automatically hidden in variable store
@@ -491,14 +607,34 @@ async def run_secure_github_mcp(github_pat: str, endpoint: str) -> None:
 - Per-result label mapping from `_meta.ifc` into FIDES `security_label`; by default, remote labels are combined with
   local policy and can only add restrictions
 
-Set `trust_server_ifc=True` only when the MCP server is an authenticated authority for result labels. In that mode,
-a complete valid `_meta.ifc` label is authoritative for that result, including permitted relaxation of the local
-fallback. Missing, partial, or malformed labels still use current local policy. This opt-in does not make
-ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain restriction-only hints.
+Choose how result `_meta.ifc` is handled with `server_ifc_policy`:
 
 ```python
-secure_mcp = SecureMCPToolProxy(url="https://trusted.example.com/mcp/", trust_server_ifc=True)
+secure_mcp = SecureMCPToolProxy(
+    url="https://trusted.example.com/mcp/",
+    server_ifc_policy="authoritative",
+)
 ```
+
+- `"ignore"` uses local policy only.
+- `"restrict"` (the default) lets valid server labels add restrictions but never relax local policy.
+- `"authoritative"` accepts a complete valid server label as authoritative, including permitted relaxation of the
+  local fallback. Use it only when the MCP server is an authenticated label authority.
+
+Missing labels use local policy. Partial, malformed, oversized, or unretainable labels fail closed when server IFC is
+processed. This setting does not make ToolAnnotations authoritative: `readOnlyHint` and `openWorldHint` remain
+restriction-only hints.
+The deprecated `trust_server_ifc=True` and `False` values map to `"authoritative"` and `"restrict"` respectively.
+
+Use the same proxy for MCP Skills so each `resources/read` result keeps its own IFC label:
+
+```python
+async with SecureMCPToolProxy(url="https://trusted.example.com/mcp/") as secure_mcp:
+    skills_provider = SkillsProvider(secure_mcp.skills_source())
+```
+
+Pass `skills_provider` in the agent's `context_providers`. Direct `MCPSkillsSource(...)` construction does not apply
+FIDES labels.
 
 `annotation_overrides` supplies explicit local policy keyed by remote MCP tool name. It applies only to the
 `MCPTool` passed to `apply_mcp_security_labels`, or the connection wrapped by `SecureMCPToolProxy`; the mapping
@@ -510,10 +646,11 @@ reusing it; a shared tool name does not establish shared trust.
 
 1. Prefer `async with SecureMCPToolProxy(...)` so connection and label application happen together.
 2. Pass `secure_mcp.tools` into `Agent(..., tools=...)`.
-3. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
-4. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
-5. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
-6. Leave `trust_server_ifc=False` unless the connected server is explicitly trusted to label result data.
+3. For MCP Skills, create `SkillsProvider(secure_mcp.skills_source())`.
+4. Use `context_providers=[SecureAgentConfig(...)]` instead of manual security wiring.
+5. Keep `auto_hide_untrusted=True` unless you have a very specific reason to expose untrusted content.
+6. If write-like actions are blocked, inspect `config.get_audit_log(session)` first.
+7. Leave `server_ifc_policy="restrict"` unless the connected server is explicitly trusted as a label authority.
 
 
 ### 7. Security Tools
@@ -625,6 +762,7 @@ agent = Agent(
 - `auto_hide_untrusted` → Automatically hide UNTRUSTED content in variable store
 - `allow_untrusted_tools` → Set of tools that can run in untrusted context
 - `block_on_violation` → Block tool calls that violate security policies
+- `message_labeler` → Authoritatively classify messages added by context providers
 - `quarantine_chat_client` → Provide a separate chat client for real LLM calls in `quarantined_llm`. Without this, `quarantined_llm` returns placeholder responses.
 
 **SecureAgentConfig Methods:**
@@ -780,7 +918,9 @@ response = await agent.run(messages=[
 
 Reusable manual middleware uses one private security scope for the complete run when `session` is omitted, so tool
 chains within that run share hidden variables while separate runs remain isolated. Pass an explicit `AgentSession`
-when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run` calls. Ordinary tool approval responses retain their no-session pass-through behavior.
+when labels, variables, audit records, or FIDES policy-approval authority must survive across distinct `Agent.run`
+calls. The core function loop can still pass ordinary approval responses without a session, but `SecureAgentConfig`
+treats caller-only unbound approval transcripts as untrusted replay rather than approval authority.
 
 ### Example 3: Agent Processing Hidden Content
 
@@ -1077,10 +1217,18 @@ Configure tool security requirements in the `@tool` decorator:
 ```
 
 Hidden variable references in tool arguments are expanded recursively, but their stored labels remain attached to
-the invocation. A tool with `accepts_untrusted=False` is blocked, audited, or sent for policy approval before it can
-receive hidden untrusted data. `accepts_untrusted=True` permits blind forwarding without exposing that data to the
-model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to a public
-sink. Argument labels do not rewrite result labels.
+the invocation. FIDES resolves a detached copy for label and approval binding, then blocks, audits, or requests policy
+approval before it mutates the live arguments or runs Pydantic validators. Validators and the tool body receive hidden
+values only after the policy permits the call. `accepts_untrusted=True` permits blind forwarding without exposing that
+data to the model context. It does not bypass `max_allowed_confidentiality`; hidden private data still cannot flow to
+a public sink. Argument labels do not rewrite result labels. After a policy violation is approved, validator
+normalization must preserve the approved resolved invocation; a changed value fails closed before the tool body runs.
+
+FIDES metadata keys and values are exact and case-sensitive. Misspelled or incorrectly cased FIDES-like keys,
+unknown label values, and non-boolean `accepts_untrusted` declarations are blocked as an `invalid_policy`
+configuration violation instead of falling back to a less restrictive policy. Unrelated integration metadata remains
+allowed. FIDES binds the exact tool object, normalized policy, and canonical USER_IDENTITY principal set through
+terminal execution and retries, so later middleware cannot replace the authorization policy after preflight.
 
 **Approval model:**
 - Use `approval_mode="always_require"` for normal human-in-the-loop approval on a specific tool.
@@ -1253,6 +1401,8 @@ config = SecureAgentConfig(
     enable_policy_enforcement: bool = True,   # Toggle policy middleware
     quarantine_chat_client: SupportsChatGetResponse | None = None,
     source_id: str | None = None,
+    *,
+    message_labeler: Callable[[str, Message], ContentLabel] | None = None,
 )
 
 # Methods

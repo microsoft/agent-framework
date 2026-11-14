@@ -2,8 +2,8 @@
 
 """File-access harness provider exposing CRUD/search tools backed by an ``AgentFileStore``.
 
-Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-session-scoped memory that may be isolated per session, :class:`FileAccessProvider`
+Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+isolated per session by default, :class:`FileAccessProvider`
 operates on a shared, persistent storage area whose contents are visible across
 sessions and agents. The provider exposes tools — ``file_access_write``,
 ``file_access_read``, ``file_access_read_lines``, ``file_access_delete``,
@@ -26,16 +26,21 @@ import errno
 import fnmatch
 import logging
 import os
-import re
+import sys
+import threading
+import time
+import unicodedata
+import weakref
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Mapping, MutableMapping
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, cast
+from typing import Annotated, Any, ClassVar, Final, Protocol, cast
 
+import regex
 from pydantic import BaseModel, Field
 
 from .._feature_stage import ExperimentalFeature, experimental
-from .._filesystem import _is_link_or_reparse_point  # pyright: ignore[reportPrivateUsage]
+from .._filesystem import _is_link_or_reparse_point, _storage_key_segment  # pyright: ignore[reportPrivateUsage]
 from .._serialization import SerializationMixin
 from .._sessions import AgentSession, ContextProvider, SessionContext
 from .._telemetry import FeatureIndex, mark_feature_used
@@ -64,19 +69,59 @@ DEFAULT_FILE_ACCESS_INSTRUCTIONS = (
     "`file_access_replace_lines`. Reading the whole file first is rarely necessary."
 )
 
+# Prefix for session-derived working folders in session-scoped mode. Kept
+# distinct from the other component prefixes so the same identifier under a
+# different component never shares a storage location.
+_ENCODED_FILE_ACCESS_SESSION_PREFIX: Final[str] = "~access-"
+# Fixed namespace directory that wraps every session-scoped working folder.
+# _storage_key_segment returns literal-safe identifiers (such as "session-1")
+# unchanged, so without this outer segment a FileMemoryProvider and a
+# session-scoped FileAccessProvider sharing one store root would derive the
+# same working folder and could overwrite each other's files.
+_FILE_ACCESS_WORKSPACE_NAMESPACE: Final[str] = "~access-"
+
+# Instruction suffix appended when session-scoped mode is enabled, so the model
+# does not assume files are shared outside the resolved workspace.
+_SESSION_SCOPED_INSTRUCTIONS_SUFFIX = (
+    "\n- Your file workspace is isolated to the current session or configured scope: files written "
+    "here are not visible outside that workspace."
+)
+
 # Maximum number of characters of context to include on either side of the first
 # regex match when building a result snippet.
 _SEARCH_SNIPPET_RADIUS = 50
 
-# Hard cap on the length of a user-supplied search regex. Python's ``re`` module
-# has no built-in timeout, so a catastrophic-backtracking pattern (such as
-# ``(a+)+$``) submitted by the model could spin the CPU indefinitely. The cap
-# alone does not stop short pathological patterns, so :meth:`search`
-# additionally executes the regex scan in a worker thread and bounds the wall
-# clock with :data:`_SEARCH_TIMEOUT_SECONDS`. The thread itself cannot be
-# safely interrupted from Python, so a runaway scan continues until the
-# regex engine returns, but the caller and event loop stay responsive.
+# Path complexity bounds shared by every store backend. Real filesystems cap
+# these too (PATH_MAX and practical directory depth); the in-memory store's
+# directory index materializes the full key of every ancestor directory, so an
+# unbounded path would let a single write retain quadratic space in the path
+# depth. Bounding here keeps that retention constant regardless of input, and
+# rejects the same extremes the filesystem backend's OS layer would refuse.
+_MAX_PATH_SEGMENTS: Final[int] = 255
+_MAX_PATH_LENGTH: Final[int] = 4096
+
+# Windows path length limits, counted the way Windows counts them: in UTF-16 code
+# units, not Python code points (a supplementary character is two units). They are
+# consulted only to explain an error the OS already raised (see
+# :func:`_raise_if_path_too_long`); they never gate a path up front. ``MAX_PATH`` is
+# 260 of those units including the drive, the separators and the terminating NUL, and
+# ``CreateDirectory`` needs room for the 8.3 name it may have to synthesize, which is
+# where the 248-unit directory limit comes from.
+# https://learn.microsoft.com/windows/win32/fileio/maximum-file-path-limitation
+_WINDOWS_MAX_PATH_CHARS: Final[int] = 260
+_WINDOWS_MAX_DIRECTORY_PATH_CHARS: Final[int] = 248
+# Pinned in a constant so tests can exercise both branches on any platform.
+_WINDOWS_PATH_LIMITS_APPLY: Final[bool] = sys.platform == "win32"
+
+# Hard cap on the length of a user-supplied search regex. The cap is a coarse bound on
+# how much work a single pattern can describe; it does not stop a short pathological
+# pattern, which is what :class:`_BoundedSearchPattern` is for.
 _MAX_SEARCH_PATTERN_LENGTH = 256
+
+# Wall-clock budget for one search, covering the whole call: every file read and every
+# line matched. Enforced twice over, by :class:`_BoundedSearchPattern` inside the match
+# and by :func:`_run_search_with_timeout` around the call. See
+# :func:`_compile_search_regex` for why the inner bound is the one that matters.
 _SEARCH_TIMEOUT_SECONDS = 10.0
 
 # How much file content :meth:`AgentFileStore.search` accumulates before handing a batch
@@ -97,24 +142,120 @@ _SCAN_BATCH_FILES = 10_000
 _ELOOP = errno.ELOOP
 
 
-def _compile_search_regex(pattern: str) -> re.Pattern[str]:
-    """Compile a case-insensitive search regex, enforcing the length cap.
+class _SearchMatch(Protocol):
+    """The part of a match object :func:`_search_file_content` uses."""
 
-    An invalid ``pattern`` raises :class:`re.error` unchanged so the search
-    tools surface it to the calling model, which can correct the pattern and
-    retry.
+    def start(self) -> int: ...
+
+    def end(self) -> int: ...
+
+
+class _SearchPattern(Protocol):
+    """The part of a compiled pattern the scan pipeline uses.
+
+    Both :class:`re.Pattern` and :class:`_BoundedSearchPattern` satisfy this, which is
+    what lets :meth:`AgentFileStore.scan_content` keep accepting a plain ``re.Pattern``
+    from a third-party store while the built-in stores pass a deadline-bounded one.
+    """
+
+    @property
+    def pattern(self) -> str: ...
+
+    def search(self, string: str) -> _SearchMatch | None: ...
+
+
+class _SearchTimeout(Exception):
+    """Raised when a scan exhausts its deadline.
+
+    Deliberately not an :class:`OSError` subclass. ``regex`` signals its own timeout with
+    the builtin :class:`TimeoutError`, which *is* an ``OSError``, and the grep tools catch
+    ``OSError`` around the search to report unreadable files -- so letting that escape as-is
+    would have the timeout silently reported as a file error. This is converted to the
+    documented :class:`ValueError` at the boundary by :func:`_run_search_with_timeout`.
+    """
+
+
+class _BoundedSearchPattern:
+    """A compiled pattern that enforces one deadline across every match it performs.
+
+    The deadline is shared rather than per-call: a pattern is matched once per line of
+    every searched file, so a per-match timeout would reset thousands of times over and
+    bound nothing in aggregate.
+    """
+
+    def __init__(self, compiled: Any, pattern: str, deadline: float) -> None:
+        self._compiled = compiled
+        self._pattern = pattern
+        self._deadline = deadline
+
+    @property
+    def pattern(self) -> str:
+        """The pattern string this was compiled from."""
+        return self._pattern
+
+    def search(self, string: str) -> Any:
+        """Search ``string``, charging the elapsed time against the shared deadline.
+
+        Raises:
+            _SearchTimeout: When the deadline has passed, or passes mid-match.
+        """
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise _SearchTimeout
+        try:
+            return self._compiled.search(string, timeout=remaining)
+        except TimeoutError as exc:
+            raise _SearchTimeout from exc
+
+
+def _compile_search_regex(pattern: str) -> _BoundedSearchPattern:
+    """Compile a case-insensitive search regex, enforcing the length cap and a deadline.
+
+    Compiled with ``regex`` rather than the standard library's ``re``. A search pattern
+    comes from the model, so it is attacker-influenced: a request can carry an indirect
+    prompt injection that asks for a catastrophically backtracking pattern such as
+    ``(a|a)*$``. ``re`` offers no way to bound a match -- it holds the GIL for the whole
+    operation and has no interruption point -- so wrapping the scan in a worker thread and
+    an ``asyncio`` timeout bounds nothing: the timer cannot be scheduled, the thread cannot
+    be cancelled, and the host process stops servicing unrelated work until the match
+    finally returns. ``regex`` checks a deadline mid-match and releases the GIL while
+    matching, which is what makes the bound real and keeps the event loop responsive.
+
+    An invalid ``pattern`` raises :class:`regex.error` unchanged so the search tools surface
+    it to the calling model, which can correct the pattern and retry. Note that
+    ``regex.error`` is *not* a subclass of the standard library's ``re.error``.
 
     Raises:
         ValueError: When ``pattern`` exceeds ``_MAX_SEARCH_PATTERN_LENGTH``
             characters.
-        re.error: When ``pattern`` is not a valid regular expression.
+        regex.error: When ``pattern`` is not a valid regular expression.
     """
     if len(pattern) > _MAX_SEARCH_PATTERN_LENGTH:
         raise ValueError(
             f"Regex pattern is too long ({len(pattern)} characters). "
             f"Maximum supported length is {_MAX_SEARCH_PATTERN_LENGTH} characters."
         )
-    return re.compile(pattern, flags=re.IGNORECASE)
+    # VERSION1 is selected explicitly rather than left to ``regex.DEFAULT_VERSION``, which is
+    # a mutable process global: any library in the process can flip it and silently change how
+    # these patterns parse.
+    compiled = regex.compile(pattern, flags=regex.IGNORECASE | regex.VERSION1)
+    # The deadline starts here, not at first match: the budget covers the whole search,
+    # including the file reads the scan is interleaved with.
+    return _BoundedSearchPattern(compiled, pattern, time.monotonic() + _SEARCH_TIMEOUT_SECONDS)
+
+
+def _search_timeout_message() -> str:
+    """Build the message for a search that ran out of budget.
+
+    Built on demand rather than stored as a constant so it reflects the current value of
+    :data:`_SEARCH_TIMEOUT_SECONDS`, which tests patch.
+    """
+    return (
+        f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
+        "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
+        "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
+        "pattern, or search a smaller directory."
+    )
 
 
 async def _run_search_with_timeout(
@@ -122,11 +263,9 @@ async def _run_search_with_timeout(
 ) -> list[FileSearchResult]:
     """Await ``work`` under a bounded wall-clock timeout.
 
-    The one bound covers both shapes of search: a whole scan offloaded with
-    :func:`asyncio.to_thread` (what the stores in this package do) and the base
-    :meth:`AgentFileStore.search` pipeline, which keeps store I/O on the event
-    loop and offloads only the per-file regex work. In both cases the
-    model-supplied pattern executes in a worker thread, never on the loop.
+    A backstop around the deadline :func:`_compile_search_regex` binds into the pattern
+    itself. The inner bound covers time spent matching; this one also covers a store too
+    slow to read its files, which no regex deadline would catch.
 
     Raises:
         ValueError: When the search does not complete within
@@ -134,17 +273,17 @@ async def _run_search_with_timeout(
     """
     try:
         return await asyncio.wait_for(work, timeout=_SEARCH_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError as exc:
-        # On Python 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``
-        # which is distinct from the builtin ``TimeoutError`` (the two were
-        # unified in 3.11). Catching the asyncio alias works on every
-        # supported version.
-        raise ValueError(
-            f"Search did not complete within {_SEARCH_TIMEOUT_SECONDS:g} seconds. The bound covers "
-            "the whole search, so this is either a pathological pattern (avoid nested quantifiers "
-            "such as '(a+)+') or a store too slow to read this many files in time. Narrow the "
-            "pattern, or search a smaller directory."
-        ) from exc
+    except (_SearchTimeout, TimeoutError) as exc:
+        raise ValueError(_search_timeout_message()) from exc
+
+
+def _combine_paths(base_path: str, relative_path: str) -> str:
+    """Join a working-folder path with a relative path using forward slashes."""
+    if not base_path:
+        return relative_path
+    if not relative_path:
+        return base_path
+    return f"{base_path.rstrip('/')}/{relative_path.lstrip('/')}"
 
 
 def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
@@ -180,6 +319,10 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
         ValueError: When the path is rooted, starts with a drive letter, contains
             ``.``/``..`` segments, is empty for a file path, or ends with a
             separator for a file path.
+        OSError: With :data:`errno.ENAMETOOLONG` when the normalized path
+            exceeds ``_MAX_PATH_SEGMENTS`` segments or ``_MAX_PATH_LENGTH``
+            characters, matching what a real filesystem raises for the same
+            input.
     """
     if not path or not path.strip():
         if not is_directory:
@@ -217,6 +360,9 @@ def _normalize_relative_path(path: str, *, is_directory: bool = False) -> str:
     result = "/".join(clean_segments)
     if not is_directory and not result:
         raise ValueError(f"Invalid path: {path!r}. A file path must not be empty.")
+    if len(clean_segments) > _MAX_PATH_SEGMENTS or len(result) > _MAX_PATH_LENGTH:
+        # Check before any caller materializes ancestor prefixes of this path.
+        raise OSError(errno.ENAMETOOLONG, "File name too long", path)
     return result
 
 
@@ -595,7 +741,7 @@ class FileStoreEntry(SerializationMixin):
         return f"FileStoreEntry(name={self.name!r}, type={self.type!r})"
 
 
-def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+def _search_file_content(file_name: str, content: str, search_pattern: _SearchPattern) -> FileSearchResult | None:
     r"""Search one file's content and return a :class:`FileSearchResult` if any lines match.
 
     Lines are split by :func:`_split_lines_keepends` and reported verbatim, terminator
@@ -617,7 +763,7 @@ def _search_file_content(file_name: str, content: str, regex: re.Pattern[str]) -
         # Same rule as _strip_line_terminator: a lone \r is content, so only a whole
         # \r\n comes off.
         scanned = line[:-2] if line.endswith("\r\n") else line.removesuffix("\n")
-        match = regex.search(scanned)
+        match = search_pattern.search(scanned)
         if match is not None:
             matching_lines.append(FileSearchMatch(line_number=line_number, line=line))
             if first_snippet is None:
@@ -729,7 +875,7 @@ class AgentFileStore(ABC):
         return _split_lines_keepends(content)
 
     @staticmethod
-    def scan_content(file_name: str, content: str, regex: re.Pattern[str]) -> FileSearchResult | None:
+    def scan_content(file_name: str, content: str, regex: _SearchPattern) -> FileSearchResult | None:
         """Find every line of ``content`` matching ``regex``, numbered by :meth:`split_lines`.
 
         This is the numbering primitive the base :meth:`search` uses, published so a
@@ -741,7 +887,11 @@ class AgentFileStore(ABC):
             file_name: The name recorded on the result, relative to the searched directory.
             content: The file's full text.
             regex: A compiled pattern, normally from the same source string passed
-                to :meth:`search`.
+                to :meth:`search`. Anything exposing ``pattern`` and ``search`` works,
+                including a plain :class:`re.Pattern`. Note that a store passing its own
+                ``re.Pattern`` here opts out of the deadline the built-in stores apply,
+                and so must bound a model-supplied pattern by other means -- see
+                :func:`_compile_search_regex` for why ``re`` cannot be interrupted.
 
         Returns:
             The match metadata, or ``None`` when no line matches.
@@ -860,13 +1010,15 @@ class AgentFileStore(ABC):
             ValueError: When the search does not complete within
                 :data:`_SEARCH_TIMEOUT_SECONDS` seconds.
         """
-        regex = _compile_search_regex(regex_pattern)
-        return await _run_search_with_timeout(self._scan_candidate_files(directory, regex, glob_pattern, recursive))
+        search_pattern = _compile_search_regex(regex_pattern)
+        return await _run_search_with_timeout(
+            self._scan_candidate_files(directory, search_pattern, glob_pattern, recursive)
+        )
 
     async def _scan_candidate_files(
         self,
         directory: str,
-        regex: re.Pattern[str],
+        search_pattern: _SearchPattern,
         glob_pattern: str | None,
         recursive: bool,
     ) -> list[FileSearchResult]:
@@ -876,7 +1028,7 @@ class AgentFileStore(ABC):
         over-returns (which :meth:`find_matching_files` explicitly permits)
         cannot widen the caller's scope.
         """
-        names = await self.find_matching_files(directory, regex.pattern, glob_pattern, recursive=recursive)
+        names = await self.find_matching_files(directory, search_pattern.pattern, glob_pattern, recursive=recursive)
         results: list[FileSearchResult] = []
         batch: list[tuple[str, str]] = []
         batch_chars = 0
@@ -887,7 +1039,7 @@ class AgentFileStore(ABC):
                 # Called on the class, not the instance: a store that overrides the public
                 # scan_content must not be able to skew the numbers while still counting as
                 # aligned by construction.
-                result = AgentFileStore.scan_content(candidate_name, candidate_content, regex)
+                result = AgentFileStore.scan_content(candidate_name, candidate_content, search_pattern)
                 if result is not None:
                     found.append(result)
             return found
@@ -926,6 +1078,23 @@ class AgentFileStore(ABC):
     async def create_directory(self, path: str) -> None:
         """Ensure ``path`` exists as a directory, creating it if necessary."""
 
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Args:
+            path: The relative path of the directory to delete.
+
+        Returns:
+            ``True`` if an empty directory was removed; ``False`` if it did not
+            exist, was not a directory, or still held entries. Backends that
+            cannot remove directories return ``False`` rather than raising.
+
+        ``delete`` stays file-only so backends remain interchangeable; this is
+        the supported way to release an explicitly created directory (for
+        example a session-scoped working folder) once it is empty.
+        """
+        return False
+
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class InMemoryAgentFileStore(AgentFileStore):
@@ -945,11 +1114,23 @@ class InMemoryAgentFileStore(AgentFileStore):
         # wrote, mirroring how :class:`FileSystemAgentFileStore` preserves the
         # on-disk casing.
         self._files: dict[str, tuple[str, str]] = {}
+        self._dir_counts: dict[str, int] = {}
+        self._explicit_dirs: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
     def _key(path: str) -> str:
         return _normalize_relative_path(path).lower()
+
+    @staticmethod
+    def _ancestor_keys(key: str) -> list[str]:
+        """Return all strict ancestor directory keys in top-down order in linear time."""
+        ancestors: list[str] = []
+        idx = key.find("/")
+        while idx != -1:
+            ancestors.append(key[:idx])
+            idx = key.find("/", idx + 1)
+        return ancestors
 
     async def write(self, path: str, content: str, *, overwrite: bool = True) -> None:
         """Write ``content`` to the file at ``path``.
@@ -961,9 +1142,19 @@ class InMemoryAgentFileStore(AgentFileStore):
         display = _normalize_relative_path(path)
         key = display.lower()
         async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise NotADirectoryError(f"Not a directory: {path!r}")
+            if self._dir_counts.get(key, 0) > 0 or key in self._explicit_dirs:
+                raise IsADirectoryError(f"Is a directory: {path!r}")
             if not overwrite and key in self._files:
                 raise FileExistsError(f"File already exists: {path!r}")
+            is_new_file = key not in self._files
             self._files[key] = (display, content)
+            if is_new_file:
+                for ancestor in ancestors:
+                    self._dir_counts[ancestor] = self._dir_counts.get(ancestor, 0) + 1
 
     async def read(self, path: str) -> str | None:
         """Return the file content, or ``None`` if the file does not exist."""
@@ -973,10 +1164,53 @@ class InMemoryAgentFileStore(AgentFileStore):
         return entry[1] if entry is not None else None
 
     async def delete(self, path: str) -> bool:
-        """Delete the file and return whether anything was removed."""
+        """Delete the file and return whether anything was removed.
+
+        Deleting is file-only, matching :class:`FileSystemAgentFileStore`: a
+        path that names a directory (explicitly created or holding stored
+        descendants) is never removed and returns ``False``. Use
+        :meth:`delete_directory` to release an empty explicitly created
+        directory.
+        """
         key = self._key(path)
         async with self._lock:
-            return self._files.pop(key, None) is not None
+            if key in self._explicit_dirs or self._dir_counts.get(key, 0) > 0:
+                return False
+            removed = self._files.pop(key, None)
+            if removed is None:
+                return False
+            for ancestor in self._ancestor_keys(key):
+                new_count = self._dir_counts[ancestor] - 1
+                if new_count <= 0:
+                    del self._dir_counts[ancestor]
+                else:
+                    self._dir_counts[ancestor] = new_count
+            return True
+
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty explicitly created directory at ``path``.
+
+        The directory is removed only when it is empty: nothing is stored under
+        it and no other explicit directory is nested below it. This keeps the
+        file-only ``delete`` contract while giving session-scoped directories a
+        lifecycle instead of staying in the shared map forever.
+        """
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path is the store root, which is not an explicitly
+            # created directory this method releases.
+            return False
+        key = normalized.lower()
+        async with self._lock:
+            if key not in self._explicit_dirs:
+                return False
+            if self._dir_counts.get(key, 0) > 0:
+                return False
+            prefix = key + "/"
+            if any(other != key and other.startswith(prefix) for other in self._explicit_dirs):
+                return False
+            del self._explicit_dirs[key]
+            return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
         """Return the direct child files and subdirectories of ``directory``.
@@ -994,26 +1228,39 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
+        prefix_depth = prefix.count("/")
         async with self._lock:
-            entries = [(key, display) for key, (display, _) in self._files.items()]
+            file_entries = [(key, display) for key, (display, _) in self._files.items()]
+            dir_entries = list(self._explicit_dirs.items())
         files: list[str] = []
         directories: list[str] = []
         seen_dirs: set[str] = set()
-        for key, display in entries:
+        for key, display in file_entries:
             if not key.startswith(prefix):
                 continue
-            remainder = key[len(prefix) :]
-            separator_index = remainder.find("/")
-            if separator_index == -1:
-                # ``display`` is the original-case normalized path; strip the
-                # directory prefix using the same length we matched on ``key``.
-                files.append(display[len(prefix) :])
-            elif separator_index > 0:
-                segment_key = remainder[:separator_index]
+            # Unicode lowercasing can change character counts, so key offsets
+            # cannot be used to slice the original display path.
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, separator, _ = remainder.partition("/")
+            if not separator:
+                files.append(remainder)
+            elif segment:
+                segment_key = segment.lower()
                 if segment_key in seen_dirs:
                     continue
                 seen_dirs.add(segment_key)
-                directories.append(display[len(prefix) : len(prefix) + separator_index])
+                directories.append(segment)
+        for key, display in dir_entries:
+            if not key.startswith(prefix) or key == prefix.rstrip("/"):
+                continue
+            remainder = display.split("/", prefix_depth)[-1]
+            segment, _, _ = remainder.partition("/")
+            if segment:
+                segment_key = segment.lower()
+                if segment_key in seen_dirs:
+                    continue
+                seen_dirs.add(segment_key)
+                directories.append(segment)
         results: list[FileStoreEntry] = [FileStoreEntry(name, FileStoreEntry.DIRECTORY) for name in directories]
         results.extend(FileStoreEntry(name, FileStoreEntry.FILE) for name in files)
         return results
@@ -1046,7 +1293,8 @@ class InMemoryAgentFileStore(AgentFileStore):
         prefix = _normalize_relative_path(directory, is_directory=True).lower()
         if prefix and not prefix.endswith("/"):
             prefix += "/"
-        regex = _compile_search_regex(regex_pattern)
+        prefix_depth = prefix.count("/")
+        search_pattern = _compile_search_regex(regex_pattern)
 
         async with self._lock:
             entries = [(key, display, content) for key, (display, content) in self._files.items()]
@@ -1059,10 +1307,10 @@ class InMemoryAgentFileStore(AgentFileStore):
                 relative_key = key[len(prefix) :]
                 if not recursive and "/" in relative_key:
                     continue
-                relative_display = display[len(prefix) :]
+                relative_display = display.split("/", prefix_depth)[-1]
                 if not _matches_glob(relative_display, glob_pattern):
                     continue
-                result = AgentFileStore.scan_content(relative_display, file_content, regex)
+                result = AgentFileStore.scan_content(relative_display, file_content, search_pattern)
                 if result is not None:
                     results.append(result)
             return results
@@ -1070,8 +1318,74 @@ class InMemoryAgentFileStore(AgentFileStore):
         return await _run_search_with_timeout(asyncio.to_thread(scan))
 
     async def create_directory(self, path: str) -> None:
-        """No-op: directories are implicit from file paths in the in-memory store."""
-        del path
+        """Ensure the directory at ``path`` exists."""
+        display = _normalize_relative_path(path, is_directory=True)
+        key = display.lower()
+        if not key:
+            return
+        async with self._lock:
+            ancestors = self._ancestor_keys(key)
+            for ancestor in ancestors:
+                if ancestor in self._files:
+                    raise FileExistsError(f"File already exists: {ancestor!r}")
+            if key in self._files:
+                raise FileExistsError(f"File already exists: {key!r}")
+            if key not in self._explicit_dirs:
+                idx_display = 0
+                for ancestor in ancestors:
+                    next_slash = display.find("/", idx_display)
+                    if next_slash != -1:
+                        ancestor_display = display[:next_slash]
+                        idx_display = next_slash + 1
+                    else:
+                        ancestor_display = display
+                    if ancestor not in self._explicit_dirs:
+                        self._explicit_dirs[ancestor] = ancestor_display
+                self._explicit_dirs[key] = display
+
+
+def _windows_path_length(path: Path) -> int:
+    """Return the length Windows measures for *path*, in UTF-16 code units.
+
+    Windows path limits are expressed in UTF-16 code units, while ``len`` on a Python
+    string counts Unicode code points. A supplementary character such as an emoji is one
+    code point but two UTF-16 units, so counting code points would understate the path
+    and could miss a genuine length failure.
+    """
+    return len(str(path).encode("utf-16-le", "surrogatepass")) // 2
+
+
+def _raise_if_path_too_long(exc: OSError, path: Path, *, limit: int) -> None:
+    """Re-raise an over-long Windows path failure as :data:`errno.ENAMETOOLONG`.
+
+    Without long-path support Windows reports a path past its limit as a missing path,
+    which CPython surfaces as :class:`FileNotFoundError`. Callers then go looking for a
+    bug in their own path handling instead of shortening the key.
+
+    Only that missing-path symptom is rewritten. A collision or a permission failure has
+    its own exception type and must keep it, even when the path happens to be over the
+    limit: with long-path support enabled Windows reports those directly, and relabeling
+    them as a length problem would hide the real cause.
+
+    The length is used only to explain an error that already happened. Nothing here
+    rejects a path before it is used, so a host with long-path support behaves exactly as
+    before and every in-limit path stays untouched. The rewrite additionally requires a
+    prefix inside the limit to exist; without one the path is missing for an ordinary
+    reason and the original error is the accurate one.
+    """
+    if not _WINDOWS_PATH_LIMITS_APPLY or not isinstance(exc, FileNotFoundError):
+        return
+    if _windows_path_length(path) < limit:
+        return
+    prefix = path
+    while _windows_path_length(prefix) >= limit:
+        parent = prefix.parent
+        if parent == prefix:
+            return
+        prefix = parent
+    if not prefix.exists():
+        return
+    raise OSError(errno.ENAMETOOLONG, "File name too long", str(path)) from exc
 
 
 @experimental(feature_id=ExperimentalFeature.HARNESS)
@@ -1095,7 +1409,19 @@ class FileSystemAgentFileStore(AgentFileStore):
     symlink between the probe and the file open. This store is designed for
     single-tenant or co-operating-tenant use; it is not a sandbox against a
     hostile process that shares the root directory.
+
+    On Windows the length of the resolved path (root plus key) is limited to 260 UTF-16
+    code units for a file and 248 for a directory unless long-path support is enabled
+    (``LongPathsEnabled``). :meth:`write` reports that limit as :class:`OSError` with
+    :data:`errno.ENAMETOOLONG` instead of the ``FileNotFoundError`` the OS raises, so a
+    caller can tell "too long" apart from "missing". The limit only renames a failure
+    the OS already produced; paths are never rejected up front, and a host with
+    long-path support behaves exactly as before. :class:`InMemoryAgentFileStore` has no
+    such limit, so the two backends still differ at that bound.
     """
+
+    # Case aliases can identify the same file while having different Path hashes.
+    _DELETE_LOCK: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self, root_directory: str | os.PathLike[str]) -> None:
         """Initialize the file-system store.
@@ -1198,6 +1524,8 @@ class FileSystemAgentFileStore(AgentFileStore):
                 is_link = _is_link_or_reparse_point(current)
             except FileNotFoundError:
                 break
+            except NotADirectoryError as exc:
+                raise NotADirectoryError(f"Parent path is not a directory: {current}") from exc
             except OSError as exc:
                 # Fail closed: if we cannot verify whether a segment is a
                 # symlink/reparse point we refuse the operation rather than
@@ -1224,7 +1552,28 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _write_file_sync(full_path: Path, content: str, overwrite: bool) -> None:
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+        except FileExistsError as exc:
+            # ``mkdir(parents=True)`` reports FileExistsError when an existing
+            # file blocks any parent segment. Surface the path type so callers
+            # can distinguish this from an existing target file.
+            parent_file = next(
+                (
+                    candidate
+                    for candidate in (full_path.parent, *full_path.parent.parents)
+                    if candidate.exists() and not candidate.is_dir()
+                ),
+                None,
+            )
+            if parent_file is not None:
+                raise NotADirectoryError(f"Parent path is not a directory: {parent_file}") from exc
+            raise
+        except OSError as exc:
+            # Windows reports an over-long absolute path as FileNotFoundError; name the
+            # real cause before the caller reads it as a missing parent directory.
+            _raise_if_path_too_long(exc, full_path.parent, limit=_WINDOWS_MAX_DIRECTORY_PATH_CHARS)
+            raise
         encoded = content.encode("utf-8")
         flags = os.O_WRONLY | os.O_CREAT
         if overwrite:
@@ -1239,6 +1588,11 @@ class FileSystemAgentFileStore(AgentFileStore):
         try:
             fd = os.open(full_path, flags, 0o644)
         except OSError as exc:
+            _raise_if_path_too_long(exc, full_path, limit=_WINDOWS_MAX_PATH_CHARS)
+            # Windows reports PermissionError when opening a directory for
+            # writing; POSIX exclusive creation can report FileExistsError.
+            if isinstance(exc, (FileExistsError, PermissionError)) and full_path.is_dir():
+                raise IsADirectoryError(f"Path is a directory: {full_path}") from exc
             if not overwrite and isinstance(exc, FileExistsError):
                 raise
             # ``ELOOP`` (POSIX): the open refused because the leaf is a
@@ -1284,11 +1638,39 @@ class FileSystemAgentFileStore(AgentFileStore):
         full_path = self._resolve_safe_path(path)
         return await asyncio.to_thread(self._delete_file_sync, full_path)
 
-    @staticmethod
-    def _delete_file_sync(full_path: Path) -> bool:
-        if not full_path.is_file():
+    @classmethod
+    def _delete_file_sync(cls, full_path: Path) -> bool:
+        with cls._DELETE_LOCK:
+            if not full_path.is_file():
+                return False
+            try:
+                full_path.unlink()
+            except FileNotFoundError:
+                return False
+        return True
+
+    async def delete_directory(self, path: str) -> bool:
+        """Delete the empty directory at ``path``.
+
+        Returns ``True`` only when an empty directory was removed; a directory
+        that is missing, is a file, or still holds entries returns ``False``
+        instead of raising, matching :class:`InMemoryAgentFileStore`.
+        """
+        normalized = _normalize_relative_path(path, is_directory=True)
+        if not normalized:
+            # The empty path resolves to the configured store root, which is
+            # not an explicitly created directory this method releases.
             return False
-        full_path.unlink()
+        full_path = self._resolve_safe_directory_path(normalized)
+        return await asyncio.to_thread(self._delete_directory_sync, full_path)
+
+    @staticmethod
+    def _delete_directory_sync(full_path: Path) -> bool:
+        try:
+            full_path.rmdir()
+        except OSError:
+            # Missing path, a file, or a directory that still holds entries.
+            return False
         return True
 
     async def list_children(self, directory: str = "") -> list[FileStoreEntry]:
@@ -1350,9 +1732,9 @@ class FileSystemAgentFileStore(AgentFileStore):
         children.
         """
         full_dir = self._resolve_safe_directory_path(directory)
-        regex = _compile_search_regex(regex_pattern)
+        search_pattern = _compile_search_regex(regex_pattern)
         return await _run_search_with_timeout(
-            asyncio.to_thread(self._search_files_sync, full_dir, regex, glob_pattern, recursive)
+            asyncio.to_thread(self._search_files_sync, full_dir, search_pattern, glob_pattern, recursive)
         )
 
     @staticmethod
@@ -1387,7 +1769,7 @@ class FileSystemAgentFileStore(AgentFileStore):
 
     @staticmethod
     def _search_files_sync(
-        full_dir: Path, regex: re.Pattern[str], glob_pattern: str | None, recursive: bool
+        full_dir: Path, search_pattern: _SearchPattern, glob_pattern: str | None, recursive: bool
     ) -> list[FileSearchResult]:
         if not full_dir.is_dir():
             return []
@@ -1418,7 +1800,7 @@ class FileSystemAgentFileStore(AgentFileStore):
                 logger.warning("Skipping unreadable file during search: %s", entry)
                 skipped.append(relative_name)
                 continue
-            result = AgentFileStore.scan_content(relative_name, file_content, regex)
+            result = AgentFileStore.scan_content(relative_name, file_content, search_pattern)
             if result is not None:
                 results.append(result)
         if skipped:
@@ -1527,8 +1909,9 @@ class _LineEdit(BaseModel):
             default=None,
             description=(
                 "Optional: the text you believe is currently on that line, as reported by "
-                "file_access_grep. Give the line's own text only: file_access_read_lines prefixes "
-                "each line with its number and a tab, and that prefix is not part of the line. "
+                "`file_access_grep`, which may have the same configured prefix as the enclosing tool. "
+                "Give the line's own text only: `file_access_read_lines`, with the same optional prefix, "
+                "prefixes each line with its number and a tab, and that prefix is not part of the line. "
                 "When supplied, the edit is rejected unless it matches, which catches an "
                 "out-of-date line number or a file that changed since you looked. The trailing "
                 "newline is ignored in the comparison."
@@ -1567,6 +1950,52 @@ class _SearchFilesInput(BaseModel):
     ] = None
 
 
+# Locks handed out by ``_store_write_lock``. Values are held weakly, so an entry lasts only while an
+# edit holds or awaits its lock, and the map never grows with the number of paths ever edited.
+_STORE_WRITE_LOCKS: weakref.WeakValueDictionary[tuple[int, asyncio.AbstractEventLoop, str], asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _store_write_lock(store: AgentFileStore, folder: str) -> asyncio.Lock:
+    """Return the lock that serializes edits of the files directly inside ``folder`` in ``store``.
+
+    Mutating tools hold it across their read-modify-write. It belongs to the store
+    instance rather than to one provider, so two providers sharing a store cannot both
+    read a file before either writes it back and silently drop one of the edits.
+    File-access tools lock the folder of the file they edit (see ``_parent_folder``) and
+    file-memory tools lock their working folder, so the two kinds of provider also wait
+    for each other when they edit the same file. Edits of different files in one folder
+    therefore run one at a time.
+
+    The folder name is folded to NFC and lowercased because a store can treat such
+    spellings as one folder: :class:`InMemoryAgentFileStore` ignores case, and macOS
+    file systems resolve the NFC and NFD forms of a name to one entry. Elsewhere two
+    spellings merely share a lock.
+
+    Locks are per event loop, because an :class:`asyncio.Lock` that has had a waiter on
+    one loop raises when a caller has to wait for it on another. The key holds
+    ``id(store)`` rather than the store, so a store need not be hashable (a default
+    ``@dataclass`` is not) and is never kept alive by this map; the id cannot be reused
+    while its lock is in use, because whoever holds or awaits the lock still references
+    the store.
+
+    The lock is process-local: other processes, and other store instances over the same
+    backing storage, are not coordinated.
+    """
+    key = (id(store), asyncio.get_running_loop(), unicodedata.normalize("NFC", folder).lower())
+    lock = _STORE_WRITE_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _STORE_WRITE_LOCKS[key] = lock
+    return lock
+
+
+def _parent_folder(path: str) -> str:
+    """Return the folder of a normalized store path (``""`` for a file at the root)."""
+    return path.rpartition("/")[0]
+
+
 @experimental(feature_id=ExperimentalFeature.HARNESS)
 class FileAccessProvider(ContextProvider):
     """Context provider that gives an agent CRUD/search access to a shared file store.
@@ -1589,12 +2018,14 @@ class FileAccessProvider(ContextProvider):
     When ``disable_write_tools`` is set, only the read-only tools (``file_access_read``,
     ``file_access_read_lines``, ``file_access_ls``, ``file_access_grep``) are advertised.
 
-    Unlike :class:`~agent_framework.MemoryContextProvider`, which provides
-    session-scoped memory that may be isolated per session,
-    :class:`FileAccessProvider` operates on a shared, persistent store whose
-    contents are visible across sessions and agents. The store is passed in by
-    the caller and should already be scoped to the desired folder or storage
-    location.
+    Unlike :class:`~agent_framework.FileMemoryProvider`, which provides memory
+    isolated per session by default,
+    :class:`FileAccessProvider` operates by default on a shared, persistent
+    store whose contents are visible across sessions and agents. Pass
+    ``session_scoped=True`` (with an optional explicit ``scope``) to confine
+    tool operations to a workspace derived from the session id or scope
+    instead. The store is passed in by the caller and should already be scoped
+    to the desired folder or storage location.
 
     By default all tools require approval: each is registered with
     ``approval_mode="always_require"`` so the host must approve every file
@@ -1674,6 +2105,9 @@ class FileAccessProvider(ContextProvider):
         disable_write_tools: bool = False,
         disable_readonly_tool_approval: bool = False,
         disable_write_tool_approval: bool = False,
+        session_scoped: bool = False,
+        scope: str | None = None,
+        tool_name_prefix: str | None = None,
     ) -> None:
         """Initialize the file access provider.
 
@@ -1700,33 +2134,78 @@ class FileAccessProvider(ContextProvider):
                 ``file_access_replace``, ``file_access_replace_lines``) are
                 registered with ``approval_mode="never_require"`` so they run
                 without host approval. Defaults to ``False`` (approval required).
+            session_scoped: When ``True``, tool operations are confined to a
+                working folder derived from the active session id (or the
+                explicit ``scope``), so files are isolated to that workspace:
+                per session by default, or shared across sessions when an
+                explicit ``scope`` is set. Defaults to ``False``, preserving
+                the shared-store semantics. Passing a non-empty ``scope``
+                also enables scoped mode.
+            scope: The namespace that logically groups and isolates files
+                (for example, a user or tenant id). A non-empty ``scope``
+                enables scoped mode by itself; when ``None`` (the default)
+                and ``session_scoped`` is ``True``, the active session's
+                ``session_id`` is used. The value is treated as an opaque
+                key rather than a path: it is mapped onto exactly one folder
+                by :func:`~agent_framework._filesystem._storage_key_segment`.
+            tool_name_prefix: Optional prefix for tool names to avoid collisions.
         """
         super().__init__(source_id)
         self.store = store
-        self.instructions = instructions or DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        self.instructions = instructions or (
+            DEFAULT_FILE_ACCESS_INSTRUCTIONS.replace("file_access_", f"{tool_name_prefix}_file_access_")
+            if tool_name_prefix
+            else DEFAULT_FILE_ACCESS_INSTRUCTIONS
+        )
         self.disable_write_tools = disable_write_tools
         self.disable_readonly_tool_approval = disable_readonly_tool_approval
         self.disable_write_tool_approval = disable_write_tool_approval
-        # Serializes mutating tool operations (write/delete/replace/replace_lines).
-        # The provider is shared across sessions/agents, so read-modify-write tools
-        # (replace/replace_lines) could otherwise interleave and lose updates. Note
-        # this only serializes within a single event loop/process, not across
-        # processes sharing a FileSystemAgentFileStore on disk.
-        self._write_lock = asyncio.Lock()
+        self.session_scoped = session_scoped
+        self.scope = scope
+        self.tool_name_prefix = tool_name_prefix
+
+    def _resolve_session_key(self, context: SessionContext) -> str:
+        """Resolve the working folder key for session-scoped mode.
+
+        Uses the configured ``scope`` when set, otherwise the session id. The
+        value is an opaque namespace key, not a path: it is mapped to exactly
+        one folder name by :func:`~agent_framework._filesystem._storage_key_segment`.
+        That derivation is injective except for pathologically long values,
+        which fall back to a collision-resistant digest. Two byte-distinct
+        scopes or session ids therefore do not resolve to the same working
+        folder, so a caller authorized for one of them cannot reach another's
+        files. The derived segment is placed inside a fixed ``~access-``
+        namespace directory, so a session-scoped file-access working folder
+        can never collide with a file-memory working folder even when both
+        providers share one store root and a literal-safe identifier.
+
+        Raises:
+            ValueError: When neither ``scope`` nor the session id yields a
+                namespace. Without one there is nothing to isolate on, and
+                falling back to the store root would expose every other
+                session's files.
+        """
+        raw_scope = self.scope or context.session_id or ""
+        if not raw_scope:
+            raise ValueError(
+                "FileAccessProvider session-scoped mode requires a scope: pass an explicit 'scope' or run with a "
+                "session that has a 'session_id'. Without one, files cannot be isolated from other sessions."
+            )
+        segment = _storage_key_segment(raw_scope, encoded_prefix=_ENCODED_FILE_ACCESS_SESSION_PREFIX)
+        return _combine_paths(_FILE_ACCESS_WORKSPACE_NAMESPACE, segment)
 
     @staticmethod
     def _is_local_tool_call(function_call: Content) -> bool:
         """Return whether a function call targets this provider's local tools.
 
-        Hosted-tool calls carry a ``server_label`` in their
-        ``additional_properties`` and are a separate server-scoped approval
+        Hosted-tool calls set ``hosted=True`` and are a separate server-scoped approval
         boundary that must be passed through untouched (see
         :func:`agent_framework._tools._is_hosted_tool_approval`). These rules
         only ever auto-approve the provider's own local tools, so any call that
-        carries a ``server_label`` is rejected even if its name collides with a
+        is hosted is rejected even if its name collides with a
         file-access tool name.
         """
-        return not function_call.additional_properties.get("server_label")
+        return not function_call.hosted
 
     @staticmethod
     def read_only_tools_auto_approval_rule(function_call: Content) -> bool:
@@ -1740,7 +2219,7 @@ class FileAccessProvider(ContextProvider):
         the tools that modify it (``file_access_write``, ``file_access_delete``,
         ``file_access_replace``, and ``file_access_replace_lines``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
@@ -1777,7 +2256,7 @@ class FileAccessProvider(ContextProvider):
         ``file_access_delete``, ``file_access_replace``, and
         ``file_access_replace_lines``).
 
-        Hosted-tool calls (those carrying a ``server_label``) are never
+        Hosted-tool calls are never
         auto-approved, even when their name matches a file-access tool, so the
         rule stays scoped to this provider's local tools.
 
@@ -1804,6 +2283,27 @@ class FileAccessProvider(ContextProvider):
             and function_call.name in FileAccessProvider._ALL_TOOL_NAMES
         )
 
+    def _prefixed_tool_name(self, name: str) -> str:
+        return f"{self.tool_name_prefix}_{name}" if self.tool_name_prefix else name
+
+    def get_read_only_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for this provider's read-only tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._READ_ONLY_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
+
+    def get_all_tools_auto_approval_rule(self) -> Callable[[Content], bool]:
+        """Create an auto-approval rule for all of this provider's tool names."""
+        tool_names = frozenset(self._prefixed_tool_name(name) for name in self._ALL_TOOL_NAMES)
+
+        def rule(function_call: Content) -> bool:
+            return self._is_local_tool_call(function_call) and function_call.name in tool_names
+
+        return rule
+
     async def before_run(
         self,
         *,
@@ -1817,13 +2317,39 @@ class FileAccessProvider(ContextProvider):
         readonly_approval: ApprovalMode = "never_require" if self.disable_readonly_tool_approval else "always_require"
         write_approval: ApprovalMode = "never_require" if self.disable_write_tool_approval else "always_require"
 
-        @tool(name=FileAccessProvider.WRITE_TOOL_NAME, schema=_WriteFileInput, approval_mode=write_approval)
+        session_key = self._resolve_session_key(context) if (self.session_scoped or bool(self.scope)) else ""
+        if session_key:
+            logger.debug("Session-scoped file access using working folder %r.", session_key)
+            await self.store.create_directory(session_key)
+
+        def _session_path(relative_path: str) -> str:
+            return _combine_paths(session_key, relative_path)
+
+        instructions = self.instructions
+        if session_key:
+            instructions += _SESSION_SCOPED_INSTRUCTIONS_SUFFIX
+
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.WRITE_TOOL_NAME),
+            schema=_WriteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_write(file_name: str, content: str, overwrite: bool = False) -> str:
             """Write a file with the given name and content. By default, does not overwrite an existing file unless overwrite is set to true."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                async with self._write_lock:
-                    await self.store.write(normalized, content, overwrite=overwrite)
+                store_path = _session_path(normalized)
+                # Every mutating tool takes the lock of the file's folder, which all providers
+                # on the store share, so a write cannot land between another edit's read and write.
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
+                    await self.store.write(store_path, content, overwrite=overwrite)
+            except NotADirectoryError:
+                return f"Could not write file '{file_name}': a parent path is already a file. Choose a different path."
+            except IsADirectoryError:
+                return (
+                    f"Could not write file '{file_name}': this path is already a directory. "
+                    "Choose a different file name."
+                )
             except FileExistsError:
                 return f"File '{file_name}' already exists. To replace it, write again with overwrite set to true."
             except ValueError as exc:
@@ -1832,12 +2358,16 @@ class FileAccessProvider(ContextProvider):
                 return f"Could not write file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' written."
 
-        @tool(name=FileAccessProvider.READ_TOOL_NAME, schema=_ReadFileInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.READ_TOOL_NAME),
+            schema=_ReadFileInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_read(file_name: str) -> str:
             r"""Read the content of a file by name. Returns the file content or a message indicating the file could not be read. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read(normalized)
+                content = await self.store.read(_session_path(normalized))
             except ValueError as exc:
                 return f"Could not read file '{file_name}': {exc}"
             except OSError as exc:
@@ -1845,15 +2375,15 @@ class FileAccessProvider(ContextProvider):
             return content if content is not None else f"File '{file_name}' not found."
 
         @tool(
-            name=FileAccessProvider.READ_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.READ_LINES_TOOL_NAME),
             schema=_ReadLinesInput,
             approval_mode=readonly_approval,
         )
         async def file_access_read_lines(file_name: str, start_line: int, end_line: int | None = None) -> str:
-            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a file_access_replace_lines new_line. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
+            r"""Read part of a file by 1-based inclusive line number; omit end_line to read to the end of the file, and an end_line past the last line is clamped. Each line is prefixed with its number and a tab; everything after that tab is verbatim, including the line's own terminator, so it can be reused as a `new_line` value by `file_access_replace_lines`, which may have the same configured prefix as this tool. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                content = await self.store.read(normalized)
+                content = await self.store.read(_session_path(normalized))
                 if content is None:
                     return f"File '{file_name}' not found."
                 sliced = _slice_lines(content, start_line, end_line)
@@ -1864,20 +2394,29 @@ class FileAccessProvider(ContextProvider):
             # Each line keeps its terminator, so it doubles as the row separator.
             return "".join(f"{number}\t{line}" for number, line in enumerate(sliced, start_line))
 
-        @tool(name=FileAccessProvider.DELETE_TOOL_NAME, schema=_DeleteFileInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.DELETE_TOOL_NAME),
+            schema=_DeleteFileInput,
+            approval_mode=write_approval,
+        )
         async def file_access_delete(file_name: str) -> str:
             """Delete a file by name."""
             try:
                 normalized = _normalize_relative_path(file_name)
-                async with self._write_lock:
-                    deleted = await self.store.delete(normalized)
+                store_path = _session_path(normalized)
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
+                    deleted = await self.store.delete(store_path)
             except ValueError as exc:
                 return f"Could not delete file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not delete file '{file_name}': {exc.strerror or exc}"
             return f"File '{file_name}' deleted." if deleted else f"File '{file_name}' not found."
 
-        @tool(name=FileAccessProvider.LS_TOOL_NAME, schema=_ListInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.LS_TOOL_NAME),
+            schema=_ListInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_ls(
             directory: str | None = None,
             glob_pattern: str | None = None,
@@ -1885,7 +2424,12 @@ class FileAccessProvider(ContextProvider):
             """List the direct child files and subdirectories of a directory. Omit ``directory`` (or pass an empty string) to list the root. To enumerate a subdirectory, pass its relative path, for example ``"reports"`` or ``"reports/2024"``. Optionally filter entries with a ``glob_pattern`` (e.g. ``"*.md"``). Subdirectories are listed before files, and each entry is ``{"name": <name>, "type": "file"|"directory"}``."""  # ruff:ignore[line-too-long]
             target = directory if directory and directory.strip() else ""
             try:
-                listed = await self.store.list_children(target)
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    store_target = target
+                listed = await self.store.list_children(store_target)
             except ValueError as exc:
                 return f"Could not list directory '{directory or ''}': {exc}"
             except OSError as exc:
@@ -1894,7 +2438,11 @@ class FileAccessProvider(ContextProvider):
                 {"name": entry.name, "type": entry.type} for entry in listed if _matches_glob(entry.name, glob_pattern)
             ]
 
-        @tool(name=FileAccessProvider.REPLACE_TOOL_NAME, schema=_ReplaceInput, approval_mode=write_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_TOOL_NAME),
+            schema=_ReplaceInput,
+            approval_mode=write_approval,
+        )
         async def file_access_replace(
             file_name: str,
             old_string: str,
@@ -1904,12 +2452,13 @@ class FileAccessProvider(ContextProvider):
             """Replace occurrences of old_string with new_string in a file. Fails if old_string is not found, or if it occurs more than once and replace_all is false. Returns the number of occurrences replaced."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                async with self._write_lock:
-                    content = await self.store.read(normalized)
+                store_path = _session_path(normalized)
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
+                    content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content, count = _apply_replace(content, old_string, new_string, replace_all)
-                    await self.store.write(normalized, new_content, overwrite=True)
+                    await self.store.write(store_path, new_content, overwrite=True)
             except ValueError as exc:
                 return f"Could not replace in file '{file_name}': {exc}"
             except OSError as exc:
@@ -1917,7 +2466,7 @@ class FileAccessProvider(ContextProvider):
             return f"Replaced {count} occurrence(s) in '{file_name}'."
 
         @tool(
-            name=FileAccessProvider.REPLACE_LINES_TOOL_NAME,
+            name=self._prefixed_tool_name(FileAccessProvider.REPLACE_LINES_TOOL_NAME),
             schema=_ReplaceLinesInput,
             approval_mode=write_approval,
         )
@@ -1925,19 +2474,24 @@ class FileAccessProvider(ContextProvider):
             r"""Replace lines in a file. Provide a list of edits, each with a 1-based line_number and a literal new_line (include your own trailing newline); an empty new_line deletes the line, including its line break. Fails on out-of-range or duplicate line numbers. Line numbers count lines split on \n only: a lone \r never starts a new line, each line keeps its own terminator, and content ending in a newline has a final empty line."""  # ruff:ignore[line-too-long]
             try:
                 normalized = _normalize_relative_path(file_name)
-                async with self._write_lock:
-                    content = await self.store.read(normalized)
+                store_path = _session_path(normalized)
+                async with _store_write_lock(self.store, _parent_folder(store_path)):
+                    content = await self.store.read(store_path)
                     if content is None:
                         return f"File '{file_name}' not found."
                     new_content = _apply_replace_lines(content, _line_edits(edits))
-                    await self.store.write(normalized, new_content, overwrite=True)
+                    await self.store.write(store_path, new_content, overwrite=True)
             except ValueError as exc:
                 return f"Could not edit file '{file_name}': {exc}"
             except OSError as exc:
                 return f"Could not edit file '{file_name}': {exc.strerror or exc}"
             return f"Replaced {len(edits)} line(s) in '{file_name}'."
 
-        @tool(name=FileAccessProvider.GREP_TOOL_NAME, schema=_SearchFilesInput, approval_mode=readonly_approval)
+        @tool(
+            name=self._prefixed_tool_name(FileAccessProvider.GREP_TOOL_NAME),
+            schema=_SearchFilesInput,
+            approval_mode=readonly_approval,
+        )
         async def file_access_grep(
             regex_pattern: str,
             glob_pattern: str | None = None,
@@ -1953,10 +2507,12 @@ class FileAccessProvider(ContextProvider):
             or ``"reports/*"`` to restrict the search to the ``reports`` subtree.
             Leave empty or omit to search all files.
             Returns matching results whose file_name values are paths relative to the store root
-            (directly usable with file_access_read), along with snippets and matching lines with line numbers.
+            (directly usable with `file_access_read`, which may have the same configured prefix as this tool),
+            along with snippets and matching lines with line numbers.
             Stores are expected to report each matching line verbatim, including its own line
-            terminator, so it can normally be reused as a file_access_replace_lines new_line; a
-            custom store may not, so prefer file_access_read_lines when the exact text matters.
+            terminator, so it can normally be reused as a `new_line` value by `file_access_replace_lines`
+            with the same optional prefix; a custom store may not, so prefer `file_access_read_lines`
+            with the same optional prefix when the exact text matters.
             Line numbers count lines split on \n only, with a final empty line when content ends in a
             newline.
             The regex_pattern must be 256 characters or fewer.
@@ -1964,14 +2520,20 @@ class FileAccessProvider(ContextProvider):
             glob_filter = glob_pattern if glob_pattern and glob_pattern.strip() else None
             target = directory if directory and directory.strip() else ""
             try:
-                results = await self.store.search(target, regex_pattern, glob_filter, recursive=True)
+                if session_key:
+                    normalized_target = _normalize_relative_path(target, is_directory=True) if target else ""
+                    store_target = _session_path(normalized_target) if normalized_target else session_key
+                else:
+                    normalized_target = target
+                    store_target = target
+                results = await self.store.search(store_target, regex_pattern, glob_filter, recursive=True)
             except ValueError as exc:
                 return f"Could not search files: {exc}"
             except OSError as exc:
                 return f"Could not search files: {exc.strerror or exc}"
             # ``store.search`` returns ``file_name`` relative to ``target``; re-root it to the store
             # root so the names compose directly with file_access_read/replace/delete.
-            prefix = target.strip("/")
+            prefix = normalized_target.strip("/")
             output: list[dict[str, Any]] = []
             for result in results:
                 entry = result.to_dict()
@@ -1980,7 +2542,7 @@ class FileAccessProvider(ContextProvider):
                 output.append(entry)
             return output
 
-        context.extend_instructions(self.source_id, [self.instructions])
+        context.extend_instructions(self.source_id, [instructions])
         tools = [file_access_read, file_access_read_lines, file_access_ls, file_access_grep]
         if not self.disable_write_tools:
             tools.extend([file_access_write, file_access_delete, file_access_replace, file_access_replace_lines])

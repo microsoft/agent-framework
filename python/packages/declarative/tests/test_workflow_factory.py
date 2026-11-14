@@ -2,16 +2,28 @@
 
 """Unit tests for WorkflowFactory."""
 
+import os
+import warnings
+from collections import UserDict
+from collections.abc import Iterator, ValuesView
+from copy import deepcopy
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from agent_framework import Message
+from agent_framework._feature_stage import ExperimentalWarning
 
+from agent_framework_declarative import AgentFactory, WorkflowFactory
 from agent_framework_declarative._feature_usage import FeatureIndex
+from agent_framework_declarative._workflows._declarative_base import (
+    DeclarativeActionExecutor,
+    discover_env_references,
+)
 from agent_framework_declarative._workflows._errors import DeclarativeWorkflowError
-from agent_framework_declarative._workflows._factory import WorkflowFactory
 
 try:
     import powerfx  # noqa: F401
@@ -87,6 +99,116 @@ actions:
             })
 
         mark_feature_used.assert_called_once_with(FeatureIndex.DECLARATIVE_WORKFLOW)
+
+
+class TestWorkflowEnvironmentDiscovery:
+    """Environment discovery preserves shared definitions without expanding them repeatedly."""
+
+    def test_shared_containers_are_scanned_once(self) -> None:
+        class CountingMapping(UserDict[str, Any]):
+            visits = 0
+
+            def values(self) -> ValuesView[Any]:
+                self.visits += 1
+                return super().values()
+
+        class CountingList(list[Any]):
+            visits = 0
+
+            def __iter__(self) -> Iterator[Any]:
+                self.visits += 1
+                return super().__iter__()
+
+        leaf = CountingMapping({"expression": "=Env.SHARED & Env.SHARED"})
+        shared_list = CountingList([leaf])
+        shared = [shared_list, shared_list, leaf, {"expression": "=Env.OTHER"}]
+        tree = [[dict(leaf)], [dict(leaf)], dict(leaf), {"expression": "=Env.OTHER"}]
+
+        assert discover_env_references(shared) == discover_env_references(tree) == {"SHARED", "OTHER"}
+        assert leaf.visits == 1
+        assert shared_list.visits == 1
+        assert shared == tree
+        assert shared[0] is shared[1]
+        assert shared_list[0] is leaf
+
+    def test_only_expression_values_contribute_names(self) -> None:
+        definition = {
+            "=Env.KEY": "Env.PLAIN",
+            "nested": [MappingProxyType({"value": "=Env.FIRST & Env.SECOND"}), {"value": "=Env.FIRST"}],
+            "ignored": [None, 7, False, " =Env.LEADING", "Env.TEXT"],
+        }
+
+        assert discover_env_references(definition) == {"FIRST", "SECOND"}
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("cycle_kind", ["mapping", "list"])
+    def test_cycles_raise_definition_error(self, source: str, cycle_kind: str) -> None:
+        metadata: dict[str, Any] = {"value": "not-for-error-output"}
+        if cycle_kind == "mapping":
+            metadata["child"] = {"parent": metadata}
+        else:
+            child: list[Any] = []
+            child.append(child)
+            metadata["child"] = child
+        definition = {
+            "name": "cycle-check",
+            "actions": [{"kind": "SendActivity", "activity": "done"}],
+            "metadata": metadata,
+        }
+        factory = WorkflowFactory()
+
+        with pytest.raises(DeclarativeWorkflowError) as exc_info:
+            if source == "yaml":
+                factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+            else:
+                factory.create_workflow_from_definition(definition)
+
+        assert str(exc_info.value) == "Cyclic mappings or lists are not supported in workflow definitions."
+        assert metadata["value"] == "not-for-error-output"
+        if cycle_kind == "mapping":
+            mapping_child = metadata["child"]
+            assert isinstance(mapping_child, dict)
+            assert mapping_child["parent"] is metadata
+        else:
+            list_child = metadata["child"]
+            assert isinstance(list_child, list)
+            assert list_child[0] is list_child
+
+    @pytest.mark.parametrize("source", ["definition", "yaml"])
+    @pytest.mark.parametrize("restrict_env", [True, False])
+    def test_shared_aliases_preserve_env_configuration(
+        self, source: str, restrict_env: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DISCOVERY_CONFIG", "environment")
+        monkeypatch.setenv("DISCOVERY_FALLBACK", "fallback")
+        monkeypatch.setenv("DISCOVERY_UNREFERENCED", "not-exposed")
+        shared = {"value": "=Env.DISCOVERY_CONFIG & Env.DISCOVERY_FALLBACK"}
+        definition: dict[str, Any] = {
+            "name": "shared-references",
+            "trigger": {"actions": [{"kind": "SendActivity", "activity": "done"}]},
+            "metadata": [shared, shared],
+        }
+        original = deepcopy(definition)
+        factory = WorkflowFactory(
+            configuration={"DISCOVERY_CONFIG": "configured"},
+            restrict_env_to_configuration=restrict_env,
+        )
+        if source == "yaml":
+            workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+        else:
+            workflow = factory.create_workflow_from_definition(definition)
+
+        executor = workflow.get_start_executor()
+        assert isinstance(executor, DeclarativeActionExecutor)
+        config = executor._declarative_env_config
+        assert config.referenced_names == {"DISCOVERY_CONFIG", "DISCOVERY_FALLBACK"}
+        expected = {"DISCOVERY_CONFIG": "configured"}
+        if not restrict_env:
+            expected["DISCOVERY_FALLBACK"] = "fallback"
+        assert config.resolve() == expected
+        assert definition == original
+        assert definition["metadata"][0] is definition["metadata"][1]
+        assert shared == original["metadata"][0]
 
 
 class TestWorkflowFactoryMessageInput:
@@ -238,6 +360,39 @@ actions:
         outputs = result.get_outputs()
 
         assert any(f"categorized as: {category}" in str(output) for output in outputs)
+
+
+class TestWorkflowFactorySetValueAlias:
+    """SetValue's 'variable' alias through a real factory run. Literal values, so no PowerFx needed."""
+
+    @pytest.mark.parametrize(
+        "variable_yaml",
+        ["variable: Local.target", "variable:\n      path: Local.target"],
+        ids=["string", "nested"],
+    )
+    async def test_set_value_variable_alias_persists_in_checkpoint(self, variable_yaml: str) -> None:
+        """The builder accepts 'variable' for SetValue, so a real run must write and checkpoint it."""
+        from agent_framework import InMemoryCheckpointStorage
+
+        from agent_framework_declarative._workflows._declarative_base import DECLARATIVE_STATE_KEY
+
+        storage = InMemoryCheckpointStorage()
+        workflow = WorkflowFactory(checkpoint_storage=storage).create_workflow_from_yaml(f"""
+name: set-value-variable-alias
+actions:
+  - kind: SetValue
+    {variable_yaml}
+    value: from variable
+""")
+        await workflow.run({})
+
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        assert checkpoints
+        # Early checkpoints are taken before the declarative state exists.
+        saved = [
+            checkpoint.state.get(DECLARATIVE_STATE_KEY, {}).get("Local", {}).get("target") for checkpoint in checkpoints
+        ]
+        assert "from variable" in saved
 
 
 @_requires_powerfx
@@ -1179,6 +1334,96 @@ trigger:
 
 class TestWorkflowFactoryAgentCreation:
     """Tests for agent creation from definitions."""
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    @pytest.mark.parametrize("registration", ["none", "constructor", "register_agent"])
+    @pytest.mark.parametrize("use_env_file", [False, pytest.param(True, marks=_requires_powerfx)])
+    async def test_workflow_without_agent_loading_emits_no_experimental_warning(
+        self, registration: str, use_env_file: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        env_file = None
+        if use_env_file:
+            monkeypatch.setenv("DECLARATIVE_TEST_ENV", "original")
+            monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+            env_file = tmp_path / ".env"
+            env_file.write_text("DECLARATIVE_TEST_ENV=loaded\n")
+        agent = MagicMock()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(
+                agents={"TestAgent": agent} if registration == "constructor" else None,
+                env_file=str(env_file) if env_file else None,
+                restrict_env_to_configuration=False,
+            )
+            if registration == "register_agent":
+                factory.register_agent("TestAgent", agent)
+            definition: dict[str, Any] = {
+                "name": "hello-workflow",
+                "actions": [
+                    {
+                        "kind": "SendActivity",
+                        "activity": {"text": "=Env.DECLARATIVE_TEST_ENV" if use_env_file else "Hello"},
+                    }
+                ],
+            }
+            if registration != "none":
+                definition["agents"] = {"TestAgent": {"kind": "Prompt", "name": "OverrideAttempt"}}
+            workflow = factory.create_workflow_from_yaml(yaml.safe_dump(definition))
+            result = await workflow.run({})
+
+        assert result.get_outputs() == ["loaded" if use_env_file else "Hello"]
+        if registration != "none":
+            assert cast(Any, workflow)._declarative_agents["TestAgent"] is agent
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    @pytest.mark.parametrize("source", ["inline", "file"])
+    def test_agent_loading_warns_and_reuses_factory(
+        self, source: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("DECLARATIVE_TEST_ENV", "original")
+        monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+        env_file = tmp_path / ".env"
+        env_file.write_text("DECLARATIVE_TEST_ENV=loaded\n")
+        agent_def: dict[str, Any] = {"kind": "Prompt", "name": "TestAgent", "instructions": "Be helpful."}
+        if source == "file":
+            (tmp_path / "agent.yaml").write_text(yaml.safe_dump(agent_def))
+            agent_def = {"file": "agent.yaml"}
+        definition = {
+            "agents": {"TestAgent": agent_def},
+            "actions": [{"kind": "SendActivity", "activity": "Hello"}],
+        }
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(env_file=str(env_file))
+        assert os.environ["DECLARATIVE_TEST_ENV"] == "loaded"
+
+        with patch.object(AgentFactory, "_get_client", return_value=MagicMock()):
+            with pytest.warns(ExperimentalWarning, match=r"\[DECLARATIVE_AGENTS\] AgentFactory"):
+                workflow = factory.create_workflow_from_definition(definition, base_path=tmp_path)
+            assert cast(Any, workflow)._declarative_agents["TestAgent"].name == "TestAgent"
+            assert os.environ["DECLARATIVE_TEST_ENV"] == "loaded"
+
+            # Loading the env file again would restore the deleted value.
+            monkeypatch.delenv("DECLARATIVE_TEST_ENV")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ExperimentalWarning)
+                factory.create_workflow_from_definition(definition, base_path=tmp_path)
+            assert "DECLARATIVE_TEST_ENV" not in os.environ
+
+    @pytest.mark.usefixtures("fresh_feature_warnings")
+    def test_explicit_agent_factory_emits_experimental_warning(self) -> None:
+        with pytest.warns(ExperimentalWarning, match=r"\[DECLARATIVE_AGENTS\] AgentFactory"):
+            agent_factory = AgentFactory(client=MagicMock())
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ExperimentalWarning)
+            factory = WorkflowFactory(agent_factory=agent_factory)
+            workflow = factory.create_workflow_from_definition({
+                "agents": {"TestAgent": {"kind": "Prompt", "name": "TestAgent"}},
+                "actions": [{"kind": "SendActivity", "activity": "Hello"}],
+            })
+        assert cast(Any, workflow)._declarative_agents["TestAgent"].client is agent_factory.client
 
     def test_agent_creation_with_file_reference(self, tmp_path):
         """Test creating agent from file reference."""

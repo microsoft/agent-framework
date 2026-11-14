@@ -210,6 +210,15 @@ public sealed class ChatClientAgentOptions
     /// to handle approval requests for tools that truly require human approval.
     /// </para>
     /// <para>
+    /// A stored decision is re-checked against the tools available to the request that would act on it, and is
+    /// only reused while the tool it refers to still does not require approval. If that tool has since become an
+    /// <see cref="ApprovalRequiredAIFunction"/>, or is no longer available, the stored decision is discarded and
+    /// the pending call is rejected rather than executed. The model is normally able to recover from this by
+    /// issuing the call again, at which point it is surfaced to the caller for approval in the ordinary way.
+    /// Callers that vary their tool set between requests should therefore expect an occasional extra round-trip,
+    /// and an approval request for a call they had not been asked about before.
+    /// </para>
+    /// <para>
     /// Set this property to <see langword="true"/> to disable this behavior, in which case all tool calls in a
     /// response containing an approval-required tool are surfaced as approval requests.
     /// </para>
@@ -239,8 +248,22 @@ public sealed class ChatClientAgentOptions
     /// approved call aligned with exactly what a human was asked to approve.
     /// </para>
     /// <para>
+    /// Any recorded request left unanswered on the next run is automatically rejected, including when only some
+    /// requests are answered or no messages are supplied. The rejected tool is not executed. This allows the
+    /// conversation to continue without leaving unanswered tool calls. Disabling binding also disables this behavior.
+    /// Generated rejection responses are included in the returned messages before tool results, so end-of-run
+    /// history saving can record them. Caller-supplied approval responses are not returned again.
+    /// </para>
+    /// <para>
+    /// Binding applies to responses for every tool category, including tools that do not require human approval. A
+    /// response takes effect only when its matching request was recorded in the current <see cref="AgentSession"/> by
+    /// the framework. Request content supplied or replayed by the caller does not establish that binding, so hosts must
+    /// persist the agent session across requests that participate in the same continuation.
+    /// </para>
+    /// <para>
     /// Set this property to <see langword="true"/> to disable this behavior. Keeping it enabled is recommended, as it
-    /// strengthens the human-in-the-loop approval control; disable it only when approval binding is enforced elsewhere.
+    /// strengthens tool-response provenance and human-in-the-loop approval controls; disable it only when equivalent
+    /// binding is enforced elsewhere.
     /// </para>
     /// <para>
     /// This option has no effect when <see cref="UseProvidedChatClientAsIs"/> is <see langword="true"/>.
@@ -289,6 +312,41 @@ public sealed class ChatClientAgentOptions
     public bool EnableInvocableFunctionBypassing { get; set; }
 
     /// <summary>
+    /// Gets or sets a value indicating whether the <see cref="ChatClientAgent"/> should persist the request
+    /// messages and the partial response received so far when a streaming run is cancelled via its
+    /// <see cref="System.Threading.CancellationToken"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// By default, a cancelled run is treated as a failed run: providers are notified with
+    /// <see cref="ChatHistoryProvider.InvokedContext.InvokeException"/> set, and nothing is stored.
+    /// </para>
+    /// <para>
+    /// When set to <see langword="true"/> and a streaming run is cancelled by the caller's cancellation token, the agent
+    /// builds a response from the updates received so far, removes the tool calls that have not been settled (a
+    /// <see cref="FunctionCallContent"/> without a matching <see cref="FunctionResultContent"/>) while keeping all other
+    /// content, marks each persisted response message with
+    /// <see cref="ChatClientAgent.PartialResponseMessageMarkerKey"/> in <see cref="ChatMessage.AdditionalProperties"/>,
+    /// and notifies the <see cref="ChatHistoryProvider"/> and the <see cref="ChatClientAgent.AIContextProviders"/>
+    /// as for a successful invocation. The original <see cref="System.OperationCanceledException"/> is always rethrown,
+    /// and failures while persisting the partial interaction are logged and swallowed.
+    /// </para>
+    /// <para>
+    /// This setting only applies to framework-managed chat history. It has no effect on non-streaming runs,
+    /// on service-managed chat history, on runs that use continuation tokens or background responses, or when
+    /// the stream is disposed early by the consumer without cancelling the token.
+    /// </para>
+    /// <para>
+    /// This value can be overridden per run via <see cref="ChatClientAgentRunOptions.PersistPartialMessagesOnCancellation"/>.
+    /// </para>
+    /// </remarks>
+    /// <value>
+    /// Default is <see langword="false"/>.
+    /// </value>
+    [Experimental(DiagnosticIds.Experiments.AgentsAIExperiments)]
+    public bool PersistPartialMessagesOnCancellation { get; set; }
+
+    /// <summary>
     /// Creates a new instance of <see cref="ChatClientAgentOptions"/> with the same values as this instance.
     /// </summary>
     public ChatClientAgentOptions Clone()
@@ -310,5 +368,6 @@ public sealed class ChatClientAgentOptions
             DisableApprovalNotRequiredFunctionBypassing = this.DisableApprovalNotRequiredFunctionBypassing,
             DisableApprovalResponseBinding = this.DisableApprovalResponseBinding,
             EnableInvocableFunctionBypassing = this.EnableInvocableFunctionBypassing,
+            PersistPartialMessagesOnCancellation = this.PersistPartialMessagesOnCancellation,
         };
 }

@@ -30,6 +30,22 @@ inputs:
   repository:
     description: Repository to include in the installation token
     required: false
+  contents-permission:
+    description: Contents permission for the installation token (read or write)
+    required: false
+    default: read
+  actions-permission:
+    description: Actions permission for the installation token (none or read)
+    required: false
+    default: none
+  issues-permission:
+    description: Issues permission for the installation token (read or write)
+    required: false
+    default: write
+  pull-requests-permission:
+    description: Pull requests permission for the installation token (read or write)
+    required: false
+    default: write
   fallback-token:
     description: PAT used temporarily when app authentication is unavailable
     required: false
@@ -42,6 +58,10 @@ outputs:
     description: Selected authentication source
     value: ${{ steps.select-token.outputs.source }}
 
+  authorization:
+    description: Granted installation permissions and repositories as JSON; empty for PATs
+    value: ${{ steps.select-token.outputs.authorization }}
+
 runs:
   using: composite
   steps:
@@ -49,9 +69,26 @@ runs:
       shell: bash
       env:
         AUTH_MODE: ${{ inputs.mode || 'app-with-fallback' }}
+        CONTENTS_PERMISSION: ${{ inputs.contents-permission }}
+        ACTIONS_PERMISSION: ${{ inputs.actions-permission }}
+        ISSUES_PERMISSION: ${{ inputs.issues-permission }}
+        PULL_REQUESTS_PERMISSION: ${{ inputs.pull-requests-permission }}
       run: |
         if [[ "$AUTH_MODE" != "app" && "$AUTH_MODE" != "app-with-fallback" && "$AUTH_MODE" != "pat" ]]; then
           echo "::error::Unsupported GitHub authentication mode."
+          exit 1
+        fi
+
+        if [[ "$CONTENTS_PERMISSION" != "read" && "$CONTENTS_PERMISSION" != "write" ]]; then
+          echo "::error::Unsupported contents permission."
+          exit 1
+        fi
+        if [[ "$ACTIONS_PERMISSION" != "none" && "$ACTIONS_PERMISSION" != "read" ]]; then
+          echo "::error::Unsupported actions permission."
+          exit 1
+        fi
+        if [[ "$ISSUES_PERMISSION" != "read" && "$ISSUES_PERMISSION" != "write" ]] || [[ "$PULL_REQUESTS_PERMISSION" != "read" && "$PULL_REQUESTS_PERMISSION" != "write" ]]; then
+          echo "::error::Unsupported issue or pull request permission."
           exit 1
         fi
 
@@ -77,6 +114,10 @@ runs:
         GITHUB_APP_CLIENT_ID: ${{ inputs.github-app-client-id }}
         GITHUB_APP_INSTALLATION_ID: ${{ inputs.github-app-installation-id }}
         TARGET_REPOSITORY: ${{ inputs.repository }}
+        CONTENTS_PERMISSION: ${{ inputs.contents-permission }}
+        ACTIONS_PERMISSION: ${{ inputs.actions-permission }}
+        ISSUES_PERMISSION: ${{ inputs.issues-permission }}
+        PULL_REQUESTS_PERMISSION: ${{ inputs.pull-requests-permission }}
       run: |
         token="$(node "$GITHUB_ACTION_PATH/create-token.js")"
         echo "::add-mask::$token"
@@ -88,19 +129,23 @@ runs:
       env:
         AUTH_MODE: ${{ inputs.mode || 'app-with-fallback' }}
         APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        APP_AUTHORIZATION: ${{ steps.app-token.outputs.authorization }}
         FALLBACK_TOKEN: ${{ inputs.fallback-token }}
       run: |
         if [[ "$AUTH_MODE" != "pat" && -n "$APP_TOKEN" ]]; then
           token="$APP_TOKEN"
           source="app"
+          authorization="$APP_AUTHORIZATION"
           echo "::notice::GitHub authentication source: app"
         elif [[ "$AUTH_MODE" == "app-with-fallback" && -n "$FALLBACK_TOKEN" ]]; then
           token="$FALLBACK_TOKEN"
           source="pat-fallback"
+          authorization=""
           echo "::warning::GitHub authentication source: PAT fallback"
         elif [[ "$AUTH_MODE" == "pat" && -n "$FALLBACK_TOKEN" ]]; then
           token="$FALLBACK_TOKEN"
           source="pat-forced"
+          authorization=""
           echo "::warning::GitHub authentication source: PAT (forced rollout mode)"
         else
           echo "::error::GitHub App authentication is unavailable and no fallback PAT was provided."
@@ -110,3 +155,4 @@ runs:
         echo "::add-mask::$token"
         echo "token=$token" >> "$GITHUB_OUTPUT"
         echo "source=$source" >> "$GITHUB_OUTPUT"
+        echo "authorization=$authorization" >> "$GITHUB_OUTPUT"

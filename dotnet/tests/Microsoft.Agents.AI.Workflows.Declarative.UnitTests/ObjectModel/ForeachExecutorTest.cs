@@ -6,7 +6,9 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.ObjectModel;
+using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx.Types;
 
@@ -140,6 +142,25 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
             items: ValueExpression.Variable(PropertyPath.TopicVariable("SourceArray")),
             valueName: "CurrentValue",
             indexName: "CurrentIndex");
+    }
+
+    [Fact]
+    public async Task ForeachRejectsSensitiveItemsAsync()
+    {
+        // Arrange
+        this.State.Set("Control", FormulaValue.New(true), sensitivity: SensitivityLevel.Sensitive);
+        Foreach model = this.CreateModel(
+            nameof(ForeachRejectsSensitiveItemsAsync),
+            ValueExpression.Expression("If(Local.Control, [1, 2], [1])"),
+            "CurrentValue", indexName: null);
+        ForeachExecutor action = new(model, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action, isDiscrete: false);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("loop items", exception.Message);
     }
 
     [Fact]
@@ -349,6 +370,82 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
         Assert.False(instanceB.HasValue, "Restored instance should report HasValue == false after exhausting all items.");
     }
 
+    [Fact]
+    public async Task ForeachRejectsSensitiveCheckpointItemsAsync()
+    {
+        // Arrange
+        Foreach model = this.CreateModel(
+            nameof(ForeachRejectsSensitiveCheckpointItemsAsync), ValueExpression.Literal(DataValue.EmptyTable),
+            "CurrentValue", indexName: null);
+        ForeachExecutor action = new(model, this.State);
+        InMemoryWorkflowContext checkpoint = new();
+        await checkpoint.QueueStateUpdateAsync("_values", new PortableValue[] { new(1) });
+        await checkpoint.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.Sensitive);
+        await checkpoint.QueueStateUpdateAsync("_index", 1);
+        await checkpoint.QueueStateUpdateAsync("HasValue", true);
+
+        // Act
+        Task RestoreAsync() => InvokeOnCheckpointRestoredAsync(action, checkpoint);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(RestoreAsync);
+        Assert.Contains("loop items", exception.Message);
+        Assert.False(action.HasValue);
+    }
+
+    [Theory]
+    [InlineData(typeof(Test.WorkflowProviders.WorkflowProvider.ForeachLoopExecutor))]
+    [InlineData(typeof(Test.WorkflowProviders.LoopBreak.WorkflowProvider.ForeachLoopExecutor))]
+    [InlineData(typeof(Test.WorkflowProviders.LoopContinue.WorkflowProvider.ForeachLoopExecutor))]
+    public async Task GeneratedLoopRejectsSensitiveCheckpointItemsAsync(Type executorType)
+    {
+        // Arrange
+        Executor action = CreateGeneratedLoopExecutor(executorType, new TestFormulaSession(this.State));
+        InMemoryWorkflowContext checkpoint = new();
+        await checkpoint.QueueStateUpdateAsync("_values", new PortableValue[] { new("item") });
+        await checkpoint.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.Sensitive);
+        await checkpoint.QueueStateUpdateAsync("_index", 0);
+        await checkpoint.QueueStateUpdateAsync("HasValue", true);
+
+        // Act
+        Task RestoreAsync() => InvokeOnCheckpointRestoredAsync(action, checkpoint);
+
+        // Assert
+        await Assert.ThrowsAsync<DeclarativeActionException>(RestoreAsync);
+        Assert.False(GetGeneratedLoopHasValue(action));
+    }
+
+    [Theory]
+    [InlineData(typeof(Test.WorkflowProviders.WorkflowProvider.ForeachLoopExecutor))]
+    [InlineData(typeof(Test.WorkflowProviders.LoopBreak.WorkflowProvider.ForeachLoopExecutor))]
+    [InlineData(typeof(Test.WorkflowProviders.LoopContinue.WorkflowProvider.ForeachLoopExecutor))]
+    public async Task GeneratedLoopPreservesIterationAcrossRestoreAsync(Type executorType)
+    {
+        // Arrange
+        TestFormulaSession session = new(this.State);
+        InMemoryWorkflowContext context = new();
+        await context.QueueStateUpdateAsync("_values", new PortableValue[] { new("a"), new("b") });
+        await context.QueueStateUpdateAsync("_sensitivity", SensitivityLevel.None);
+        await context.QueueStateUpdateAsync("_index", 1);
+        await context.QueueStateUpdateAsync("HasValue", true);
+        Executor restored = CreateGeneratedLoopExecutor(executorType, session);
+
+        // Act
+        await InvokeOnCheckpointRestoredAsync(restored, context);
+        MethodInfo? takeNext = executorType.GetMethod("TakeNextAsync");
+        Assert.NotNull(takeNext);
+        await Assert.IsType<ValueTask>(takeNext.Invoke(restored, [context, null, CancellationToken.None]));
+
+        // Assert
+        Assert.True(GetGeneratedLoopHasValue(restored));
+        Assert.Equal(1, await context.ReadStateAsync<int>("LoopIndex", VariableScopeNames.Local));
+        Assert.Equal(SensitivityLevel.None, await context.ReadStateAsync<SensitivityLevel>(
+            "LoopValue", WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local)));
+        Assert.Contains("LoopValue", await context.ReadStateKeysAsync(
+            WorkflowFormulaState.GetSensitivityScopeName(VariableScopeNames.Local)));
+        Assert.Equal("b", await context.ReadStateAsync<string>("LoopValue", VariableScopeNames.Local));
+    }
+
     /// <summary>
     /// When no checkpoint state has been written for the executor (e.g. first run), the restore
     /// hook must be a no-op and leave constructor defaults in place.
@@ -551,6 +648,23 @@ public sealed class ForeachExecutorTest(ITestOutputHelper output) : WorkflowActi
 
         ValueTask invocation = (ValueTask)method.Invoke(executor, new object[] { context, CancellationToken.None })!;
         await invocation;
+    }
+
+    private static Executor CreateGeneratedLoopExecutor(Type executorType, FormulaSession session) =>
+        Assert.IsAssignableFrom<Executor>(Activator.CreateInstance(
+            executorType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, args: [session], culture: null));
+
+    private static bool GetGeneratedLoopHasValue(Executor executor)
+    {
+        System.Reflection.PropertyInfo? hasValue = executor.GetType().GetProperty(nameof(ForeachExecutor.HasValue));
+        Assert.NotNull(hasValue);
+        return Assert.IsType<bool>(hasValue.GetValue(executor));
+    }
+
+    private sealed class TestFormulaSession(WorkflowFormulaState state) : FormulaSession
+    {
+        internal override WorkflowFormulaState State => state;
     }
 
     /// <summary>

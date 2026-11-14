@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Azure.Identity;
@@ -281,11 +282,13 @@ internal sealed class Program
                 """,
             Tools =
             {
-                ProjectsAgentTool.CreateOpenApiTool(
+#pragma warning disable AAIP002 // OpenApiTool is experimental
+                new OpenApiTool(
                     new OpenApiFunctionDefinition(
                         "weather-forecast",
                         BinaryData.FromString(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "wttr.json"))),
-                        new OpenAPIAnonymousAuthenticationDetails()))
+                        new OpenApiAnonymousAuthenticationDetails()))
+#pragma warning restore AAIP002
             }
         };
 }

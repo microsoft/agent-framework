@@ -10,7 +10,7 @@ import logging
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast, overload
 
 from agent_framework import (
     AgentMiddlewareTypes,
@@ -52,10 +52,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from claude_agent_sdk import (
@@ -339,7 +335,8 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
 
         Keyword Args:
             client: Optional pre-configured ClaudeSDKClient instance. If not provided,
-                a new client will be created using the other parameters.
+                a new client will be created using the other parameters. An injected
+                client remains caller-owned and bypasses client settings and .env loading.
             id: Unique identifier for the agent.
             name: Name of the agent.
             description: Description of the agent.
@@ -379,19 +376,21 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
         self._mcp_servers: dict[str, Any] = opts.pop("mcp_servers", None) or {}
         self._function_approval_handler: FunctionApprovalCallback | None = opts.pop("on_function_approval", None)
 
-        # Load settings from environment and options
-        self._settings = load_settings(
-            ClaudeAgentSettings,
-            env_prefix="CLAUDE_AGENT_",
-            cli_path=cli_path,
-            model=model,
-            cwd=cwd,
-            permission_mode=permission_mode,
-            max_turns=max_turns,
-            max_budget_usd=max_budget_usd,
-            env_file_path=env_file_path,
-            env_file_encoding=env_file_encoding,
-        )
+        # Resolve client configuration only for clients created by the framework.
+        self._settings: ClaudeAgentSettings = {}
+        if self._owns_client:
+            self._settings = load_settings(
+                ClaudeAgentSettings,
+                env_prefix="CLAUDE_AGENT_",
+                cli_path=cli_path,
+                model=model,
+                cwd=cwd,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                max_budget_usd=max_budget_usd,
+                env_file_path=env_file_path,
+                env_file_encoding=env_file_encoding,
+            )
 
         # Separate built-in tools (strings) from custom tools (callables/FunctionTool)
         self._builtin_tools: list[str] = []
@@ -589,9 +588,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             opts["cwd"] = cwd
         if permission_mode := self._settings.get("permission_mode"):
             opts["permission_mode"] = permission_mode
-        if max_turns := self._settings.get("max_turns"):
+        max_turns = self._settings.get("max_turns")
+        if max_turns is not None:
             opts["max_turns"] = max_turns
-        if max_budget_usd := self._settings.get("max_budget_usd"):
+        max_budget_usd = self._settings.get("max_budget_usd")
+        if max_budget_usd is not None:
             opts["max_budget_usd"] = max_budget_usd
 
         # Apply default options
@@ -704,16 +705,11 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
             except Exception as e:
                 return {"content": [{"type": "text", "text": f"Error: {e}"}]}
 
-        # Get JSON schema from pydantic model
-        schema: dict[str, Any] = func_tool.input_model.model_json_schema() if func_tool.input_model else {}
-        input_schema: dict[str, Any] = {
-            "type": "object",
-            "properties": schema.get("properties", {}),
-            "required": schema.get("required", []),
-        }
-        # Preserve $defs for nested type references (Pydantic uses $defs for nested models)
-        if "$defs" in schema:
-            input_schema["$defs"] = schema["$defs"]
+        # Pass the full JSON schema through (from the pydantic model or the schema the tool was declared with), so
+        # keywords such as additionalProperties and $defs reach Claude. The SDK only uses a dict as a JSON schema when
+        # it has a string "type" and "properties", so both are always set.
+        schema: dict[str, Any] = func_tool.parameters()
+        input_schema: dict[str, Any] = {**schema, "type": "object", "properties": schema.get("properties") or {}}
 
         return SdkMcpTool(
             name=func_tool.name,
@@ -940,7 +936,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if text:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text(text=text, raw_representation=message)],
+                                contents=[
+                                    Content.from_text(
+                                        text=text,
+                                        merge_mode="append",
+                                        raw_representation=message,
+                                    )
+                                ],
                                 raw_representation=message,
                             )
                     elif delta_type == "thinking_delta":
@@ -948,7 +950,13 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                         if thinking:
                             yield AgentResponseUpdate(
                                 role="assistant",
-                                contents=[Content.from_text_reasoning(text=thinking, raw_representation=message)],
+                                contents=[
+                                    Content.from_text_reasoning(
+                                        text=thinking,
+                                        merge_mode="append",
+                                        raw_representation=message,
+                                    )
+                                ],
                                 raw_representation=message,
                             )
             elif isinstance(message, AssistantMessage):
@@ -983,19 +991,28 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 usage = message.usage or {}
                 input_tokens = usage.get("input_tokens")
                 output_tokens = usage.get("output_tokens")
+                cache_creation_tokens = usage.get("cache_creation_input_tokens")
+                cache_read_tokens = usage.get("cache_read_input_tokens")
+                # Anthropic's input_tokens excludes cache creation/read; total input
+                # (and gen_ai.usage.input_tokens) must include them, matching other
+                # connectors and the GenAI semconv.
+                input_total = input_tokens
+                for cache_tokens in (cache_creation_tokens, cache_read_tokens):
+                    if isinstance(cache_tokens, int):
+                        input_total = cache_tokens if input_total is None else input_total + cache_tokens
                 total_token_count = (
-                    input_tokens + output_tokens
-                    if isinstance(input_tokens, int) and isinstance(output_tokens, int)
+                    input_total + output_tokens
+                    if isinstance(input_total, int) and isinstance(output_tokens, int)
                     else None
                 )
                 usage_details = UsageDetails(**{
                     key: value
                     for key, value in {
-                        "input_token_count": input_tokens,
+                        "input_token_count": input_total,
                         "output_token_count": output_tokens,
                         "total_token_count": total_token_count,
-                        "cache_creation_input_token_count": usage.get("cache_creation_input_tokens"),
-                        "cache_read_input_token_count": usage.get("cache_read_input_tokens"),
+                        "cache_creation_input_token_count": cache_creation_tokens,
+                        "cache_read_input_token_count": cache_read_tokens,
                     }.items()
                     if isinstance(value, int)
                 })
@@ -1004,7 +1021,7 @@ class RawClaudeAgent(BaseAgent, Generic[OptionsT]):
                 )
                 if usage_details or finish_reason:
                     yield AgentResponseUpdate(
-                        contents=[Content.from_usage(usage_details, raw_representation=message)]
+                        contents=[Content.from_usage(usage_details, merge_mode="replace", raw_representation=message)]
                         if usage_details
                         else None,
                         finish_reason=cast(Any, finish_reason),

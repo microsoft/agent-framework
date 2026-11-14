@@ -28,6 +28,36 @@ the A2A Inspector. By default, it listens at `http://localhost:5000`.
 default to `http://localhost:5000`. Set them together when the server should
 run at a different address.
 
+## Agent card and server settings
+
+Publishing an agent card only provides discovery information; it does not
+configure the separately registered A2A server. This sample derives the server
+settings from the same card that it publishes:
+
+```csharp
+builder.AddA2AServer(policyAgent, options =>
+{
+    options.ServerOptions = new A2AServerOptions
+    {
+        SupportsStreaming = policyAgentCard.Capabilities.Streaming == true,
+        SupportedInputModes = policyAgentCard.DefaultInputModes
+            .Concat(policyAgentCard.Skills.SelectMany(skill => skill.InputModes ?? []))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray(),
+    };
+});
+```
+
+The input modes include both the card defaults and any skill-specific modes,
+with case-insensitive duplicates removed. The policy card disables streaming
+and accepts `text/plain`, so both protocol bindings reject streaming requests
+and message parts that declare other media types, such as `image/png`, before
+invoking the agent. Parts without a declared media type are not rejected by
+this media-type check.
+
+When `ServerOptions` is not configured, the underlying SDK defaults still
+apply: streaming is enabled, and input media types are not restricted.
+
 ## Test with the HTTP file
 
 Open `A2AServer.http` in an editor that supports HTTP files, such as Visual

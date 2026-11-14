@@ -55,6 +55,11 @@ uv run poe pyright -S
 uv run poe markdown-code-lint
 ```
 
+Poe and the pytest toolchain stay in the cross-version development
+environment. Ruff and the type checkers use pinned
+`tooling/requirements-*.txt` files; prek is selected from the `tool-hooks`
+dependency group only when needed.
+
 ## Pre-commit Hooks (prek)
 
 Prek hooks run automatically on commit. They stay lightweight and only check
@@ -65,10 +70,10 @@ changed files.
 uv run poe prek-install
 
 # Run all hooks manually
-uv run prek run -a
+uv run --group tool-hooks prek run -a
 
 # Run on last commit
-uv run prek run --last-commit
+uv run --group tool-hooks prek run --last-commit
 ```
 
 They run changed-package syntax formatting/checking, markdown code lint only
@@ -99,6 +104,9 @@ Following the "too many type checkers" approach, type checkers are split by targ
   `# type: ignore[code]`. Suppress relaxed-pyright friction with `# pyright: ignore[rule]`.
 - **Samples** add `pyright` to `pyrefly` + `ty` — mypy/zuban can't resolve script-style
   sample layouts (numeric-prefixed dirs, duplicate `main.py`), but pyright handles them.
+- `pyrefly.samples.toml` enables fallback lookup for standalone sibling imports.
+  The ty sample profile uses first-party `root = ["."]` for PEP 723 sibling helpers,
+  preserving automatic extra-path lookup for the existing samples.
 - The strict source-pyright (`[tool.pyright]`) enforces `reportUnnecessaryTypeIgnoreComment`
   and excludes tests/samples; the relaxed test/sample pyright configs do not flag unnecessary
   ignores.
@@ -106,7 +114,7 @@ Following the "too many type checkers" approach, type checkers are split by targ
 ## Ruff Configuration
 
 - Line length: 120
-- Target: Python 3.10+
+- Target: Python 3.11+
 - Auto-fix enabled
 - Rules: ASYNC, B, CPY, D, E, ERA, F, FIX, I, INP, ISC, Q, RET, RSE, RUF, SIM, T20, TD, W, T100, S
 - Scripts directory is excluded from checks
@@ -117,7 +125,7 @@ Following the "too many type checkers" approach, type checkers are split by targ
   excludes tests, samples, .venv, packages/devui/frontend.
 - **Tests**: relaxed `basic` profile (`pyrightconfig.tests.json`) — private import/usage and
   not-required TypedDict access allowed; runs as the `pyright` checker in `test-typing`.
-- **Samples**: relaxed `basic` profile (`pyrightconfig.samples.json`, with a py310 variant) —
+- **Samples**: relaxed `basic` profile (`pyrightconfig.samples.json`) —
   runs as the `pyright` checker in `test-typing -S`.
 
 ## Parallel Execution

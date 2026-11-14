@@ -137,6 +137,18 @@ internal static class ChatClientAgentFactory
         {
             Name = "PredictiveStateUpdatesAgent",
             Description = "An agent that demonstrates predictive state updates using Azure OpenAI",
+            // write_document runs on the server without approval, while confirm_changes runs on the client.
+            // If the model requests both in one response, the function-invocation loop returns both calls
+            // unexecuted because confirm_changes is only a declaration on the server. Bypassing saves
+            // write_document in the server session and initially exposes only confirm_changes.
+            // The client executes confirm_changes and sends its result with the original call ID in
+            // a continuation request for the same thread. On that next request, the server executes
+            // the saved write_document call. Its call and matching result then reach the client in
+            // the continuation stream as completed history, not as a request for client-side execution.
+            // Program.cs registers a session store keyed by this agent's name so the deferred call
+            // survives across HTTP requests; without it, the call is lost when the client continues.
+            // Execution therefore uses the stored call, not a call reconstructed from client-supplied history.
+            EnableInvocableFunctionBypassing = true,
             ChatOptions = new ChatOptions
             {
                 Instructions = """

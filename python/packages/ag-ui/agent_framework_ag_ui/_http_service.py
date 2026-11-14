@@ -7,7 +7,9 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncIterable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from http.cookiejar import CookieJar, DefaultCookiePolicy
+from types import TracebackType
 from typing import Any, cast
 
 import httpx
@@ -238,12 +240,27 @@ class AGUIHttpService:
         )
 
         # Stream the response using SSE
-        async with self.http_client.stream(
-            "POST",
-            self.endpoint,
-            json=request_data,
-            headers={"Accept": "text/event-stream"},
-        ) as response:
+        async with AsyncExitStack() as stack:
+            stream_context = self.http_client.stream(
+                "POST",
+                self.endpoint,
+                json=request_data,
+                headers={"Accept": "text/event-stream"},
+            )
+            response = await stream_context.__aenter__()
+
+            async def exit_response(
+                exc_type: type[BaseException] | None, exc: BaseException | None, tb: TracebackType | None
+            ) -> bool | None:
+                try:
+                    return await stream_context.__aexit__(exc_type, exc, tb)
+                except Exception:
+                    if exc is None or isinstance(exc, GeneratorExit):
+                        raise
+                    logger.warning("HTTP response cleanup failed while handling an existing exception.", exc_info=True)
+                    return False
+
+            stack.push_async_exit(exit_response)
             try:
                 response.raise_for_status()
             except httpx.HTTPStatusError as e:
@@ -252,8 +269,11 @@ class AGUIHttpService:
 
             async for line in response.aiter_lines():
                 # Parse Server-Sent Events format
-                if line.startswith("data: "):
-                    data = line[6:]  # Remove "data: " prefix
+                if line.startswith("data:"):
+                    data = line[5:]
+                    # The space after "data:" is optional in SSE.
+                    if data.startswith(" "):
+                        data = data[1:]
                     try:
                         event = json.loads(data)
                         logger.debug(f"Received event: {event.get('type', 'UNKNOWN')}")

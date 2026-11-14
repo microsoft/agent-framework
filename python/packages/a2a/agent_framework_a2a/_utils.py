@@ -2,7 +2,11 @@
 
 import re
 
-URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;,]+(?:;[^;,=]+=[^;,]+)*);base64,(?P<base64_data>[A-Za-z0-9+/=]+)\Z")
+# Key in ``SendMessageRequest.metadata`` that carries forwarded ``function_invocation_kwargs`` and
+# ``client_kwargs``.
+AGENT_FRAMEWORK_METADATA_KEY = "agent_framework"
+
+URI_PATTERN = re.compile(r"^data:(?P<media_type>[^;,]+(?:;[^;,=]+=[^;,]+)*);base64,(?P<base64_data>[A-Za-z0-9+/=]*)\Z")
 
 
 def get_uri_data(uri: str) -> str:

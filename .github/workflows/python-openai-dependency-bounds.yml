@@ -13,6 +13,7 @@ on:
       - "python/scripts/dependencies/**"
       - "python/samples/04-hosting/container/hyperlight_codeact/call_server.py"
       - "python/shared_tasks.toml"
+      - "python/tooling/requirements-typing.txt"
 
 permissions:
   contents: read
@@ -60,5 +61,5 @@ jobs:
         run: |
           uv run --no-sync python -c "import openai; print(f'OpenAI SDK {openai.__version__}')"
           uv run --no-sync python -m pytest -m "not integration" --cov=${{ matrix.module }} --cov-report=term-missing:skip-covered tests
-          uv run --no-sync pyright
+          uv run --no-sync --with-requirements ../../tooling/requirements-typing.txt pyright
         working-directory: ./python/packages/${{ matrix.package }}

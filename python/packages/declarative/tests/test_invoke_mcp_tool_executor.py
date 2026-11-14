@@ -11,7 +11,7 @@ No real MCP server or network is exercised. See
 import sys
 from typing import Any
 
-import httpx
+import httpx2 as httpx
 import pytest
 
 try:
@@ -27,7 +27,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 from agent_framework import Content, Message  # noqa: E402
-from agent_framework.exceptions import ToolExecutionException  # noqa: E402
+from agent_framework.exceptions import ToolException, ToolExecutionException  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
 
 from agent_framework_declarative._workflows import (  # noqa: E402
     DECLARATIVE_STATE_KEY,
@@ -345,11 +346,7 @@ def mock_state():  # type: ignore[no-untyped-def]
     state._data = {}
 
     def _get(key: str, default: Any = None) -> Any:
-        if key not in state._data:
-            if default is not None:
-                return default
-            raise KeyError(key)
-        return state._data[key]
+        return state._data.get(key, default)
 
     def _set(key: str, value: Any) -> None:
         state._data[key] = value
@@ -399,6 +396,90 @@ def _seed_state(mock_state) -> None:  # type: ignore[no-untyped-def]
 
 
 class TestApprovalFlow:
+    @pytest.mark.parametrize("restore", [False, True])
+    @pytest.mark.parametrize("change_context", [False, True])
+    @pytest.mark.asyncio
+    async def test_auth_context_binding_survives_workflow_resume(self, restore: bool, change_context: bool) -> None:
+        from agent_framework import InMemoryCheckpointStorage, WorkflowBuilder
+
+        from agent_framework_declarative._workflows import (
+            ActionTrigger,
+            ExternalInputResponse,
+            InvokeMcpToolActionExecutor,
+            MCPToolApprovalRequest,
+            RequestExternalInputExecutor,
+            SetValueExecutor,
+            ToolApprovalResponse,
+        )
+        from agent_framework_declarative._workflows._declarative_base import DeclarativeEnvConfig
+        from agent_framework_declarative._workflows._executors_mcp import _HEADER_BINDING_KEY
+
+        storage = InMemoryCheckpointStorage()
+        handler = StubMcpHandler(_ok())
+        config = DeclarativeEnvConfig(values={"FIRST": "context-first", "SECOND": "context-second"})
+
+        def build():
+            start = SetValueExecutor({"kind": "SetValue", "id": "start", "path": "Local.selector", "value": "first"})
+            change = RequestExternalInputExecutor({
+                "kind": "RequestExternalInput",
+                "id": "change",
+                "prompt": "Select context",
+                "variable": "Local.selector",
+            })
+            invoke = InvokeMcpToolActionExecutor(
+                _action(
+                    require_approval=True,
+                    arguments={"q": "reviewed"},
+                    headers={"Authorization": '=If(Local.selector = "first", Env.FIRST, Env.SECOND)'},
+                ),
+                mcp_tool_handler=handler,
+            )
+            invoke.set_declarative_env_config(config)
+            return (
+                WorkflowBuilder(name="approval_context", start_executor=start, checkpoint_storage=storage)
+                .add_fan_out_edges(start, [change, invoke])
+                .build()
+            )
+
+        workflow = build()
+        paused = await workflow.run(ActionTrigger())
+        requests = paused.get_request_info_events()
+        approval = next(event for event in requests if isinstance(event.data, MCPToolApprovalRequest))
+        change_request = next(event for event in requests if event is not approval)
+        selector = "second" if change_context else "first"
+        await workflow.run(responses={change_request.request_id: ExternalInputResponse(user_input=selector)})
+        assert handler.call_count == 0
+
+        checkpoints = await storage.list_checkpoints(workflow_name=workflow.name)
+        assert "context-first" not in repr(checkpoints)
+        assert "context-second" not in repr(checkpoints)
+        assert "context-first" not in repr(approval.data)
+        assert "context-second" not in repr(approval.data)
+        checkpoint = max(checkpoints, key=lambda item: item.timestamp)
+        assert checkpoint.state[_HEADER_BINDING_KEY] not in repr(approval.data)
+        if restore:
+            workflow = build()
+            await workflow.run(checkpoint_id=checkpoint.checkpoint_id)
+
+        resumed = await workflow.run(responses={approval.request_id: ToolApprovalResponse(approved=True)})
+        if not change_context:
+            assert handler.call_count == 1
+            assert not resumed.get_request_info_events()
+            assert handler.last_invocation is not None
+            assert handler.last_invocation.headers == {"Authorization": "context-first"}
+            return
+        assert handler.call_count == 0
+        [replacement] = resumed.get_request_info_events()
+        assert replacement.request_id != approval.request_id
+        assert replacement.data.arguments == {"q": "reviewed"}
+        assert "context-second" not in repr(replacement.data)
+
+        await workflow.run(responses={replacement.request_id: ToolApprovalResponse(approved=True)})
+        assert handler.call_count == 1
+        assert handler.last_invocation is not None
+        assert handler.last_invocation.headers == {"Authorization": "context-second"}
+        assert handler.last_invocation.arguments == {"q": "reviewed"}
+
     @pytest.mark.asyncio
     async def test_approval_required_emits_request_and_yields(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
         from agent_framework_declarative._workflows._declarative_base import ActionTrigger
@@ -440,10 +521,9 @@ class TestApprovalFlow:
 
     @pytest.mark.asyncio
     async def test_approval_response_approved_invokes_handler(self, mock_state, mock_context) -> None:  # type: ignore[no-untyped-def]
-        from agent_framework_declarative._workflows import ActionComplete, ToolApprovalResponse
+        from agent_framework_declarative._workflows import ActionComplete, ActionTrigger, ToolApprovalResponse
         from agent_framework_declarative._workflows._executors_mcp import (
             InvokeMcpToolActionExecutor,
-            MCPToolApprovalRequest,
         )
 
         _seed_state(mock_state)
@@ -451,22 +531,15 @@ class TestApprovalFlow:
         executor = InvokeMcpToolActionExecutor(
             _action(
                 require_approval=True,
+                arguments={"q": "x"},
                 headers={"Authorization": "Bearer tk"},
                 output={"result": "Local.Result"},
             ),
             mcp_tool_handler=handler,
         )
-        await executor.handle_approval_response(
-            MCPToolApprovalRequest(
-                request_id="req-1",
-                tool_name="search",
-                server_url="https://mcp.example/api",
-                server_label=None,
-                arguments={"q": "x"},
-            ),
-            ToolApprovalResponse(approved=True),
-            mock_context,
-        )
+        await executor.handle_action(ActionTrigger(), mock_context)
+        request = mock_context.request_info.call_args.args[0]
+        await executor.handle_approval_response(request, ToolApprovalResponse(approved=True), mock_context)
 
         assert handler.call_count == 1
         inv = handler.last_invocation
@@ -532,26 +605,34 @@ class TestErrorHandling:
         decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
         assert decl["Local"]["Result"] == "Error: server down"
 
-    @pytest.mark.asyncio
-    async def test_tool_execution_exception_becomes_error_result(self) -> None:
-        handler = StubMcpHandler(raise_exc=ToolExecutionException("invalid arguments"))
-        factory = WorkflowFactory(mcp_tool_handler=handler)
-        workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
-        await workflow.run({})
-        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
-        assert decl["Local"]["Result"] == "Error: invalid arguments"
+    @pytest.mark.parametrize("require_approval", [False, True])
+    @pytest.mark.parametrize(
+        "error",
+        [
+            ToolException("connection failed"),
+            ToolExecutionException("tool failure"),
+            httpx.ConnectError("dns fail"),
+            MCPError(-32603, "protocol error"),
+        ],
+    )
+    async def test_handler_exception_fails_workflow(self, error: Exception, require_approval: bool) -> None:
+        from agent_framework_declarative._workflows import ToolApprovalResponse
 
-    @pytest.mark.asyncio
-    async def test_httpx_error_becomes_error_result(self) -> None:
-        handler = StubMcpHandler(raise_exc=httpx.ConnectError("dns fail"))
+        handler = StubMcpHandler(raise_exc=error)
         factory = WorkflowFactory(mcp_tool_handler=handler)
-        workflow = factory.create_workflow_from_definition(_yaml(_action(output={"result": "Local.Result"})))
-        await workflow.run({})
-        decl = workflow._runner.state.get(DECLARATIVE_STATE_KEY)
-        result = decl["Local"]["Result"]
-        assert isinstance(result, str)
-        assert result.startswith("Error:")
-        assert "ConnectError" in result
+        workflow = factory.create_workflow_from_definition(
+            _yaml(_action(require_approval=require_approval, output={"result": "Local.Result"}))
+        )
+        if require_approval:
+            paused = await workflow.run({})
+            [request] = paused.get_request_info_events()
+            with pytest.raises(Exception) as excinfo:
+                await workflow.run(responses={request.request_id: ToolApprovalResponse(approved=True)})
+        else:
+            with pytest.raises(Exception) as excinfo:
+                await workflow.run({})
+        assert str(error) in str(excinfo.value)
+        assert handler.call_count == 1
 
     @pytest.mark.asyncio
     async def test_unexpected_exception_propagates(self) -> None:

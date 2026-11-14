@@ -207,28 +207,41 @@ public sealed class ToolCallingTests : IAsyncDisposable
         Assert.Equal(2, functionResults.Count);
     }
 
+    /// <summary>
+    /// Verifies that both tools are invoked once when the model requests client and server tools in the same response.
+    /// The server tool does not require approval. Invocable function bypassing saves its call in the persisted
+    /// server session, so only the client call is initially sent to the client.
+    /// After the client executes its tool and returns the result, the server resumes the saved call.
+    /// </summary>
     [Fact]
-    public async Task ServerAndClientTriggerFunctionCallsSimultaneouslyAsync()
+    public async Task MixedToolCalls_InvokeBothServerAndClientToolsAsync()
     {
         // Arrange
-        int serverCallCount = 0;
-        int clientCallCount = 0;
+        List<string> invocationOrder = [];
 
         AIFunction serverTool = AIFunctionFactory.Create(() =>
         {
             System.Diagnostics.Debug.Assert(true, "Server function is being called!");
-            serverCallCount++;
+            lock (invocationOrder)
+            {
+                invocationOrder.Add("GetServerData");
+            }
+
             return "Server data";
         }, "GetServerData", "Gets data from the server");
 
         AIFunction clientTool = AIFunctionFactory.Create(() =>
         {
             System.Diagnostics.Debug.Assert(true, "Client function is being called!");
-            clientCallCount++;
+            lock (invocationOrder)
+            {
+                invocationOrder.Add("GetClientData");
+            }
+
             return "Client data";
         }, "GetClientData", "Gets data from the client");
 
-        await this.SetupTestServerAsync(serverTools: [serverTool]);
+        await this.SetupTestServerAsync(serverTools: [serverTool], enableInvocableFunctionBypassing: true);
         var chatClient = new AGUIChatClient(new(this._client!, ""));
         AIAgent agent = chatClient.AsAIAgent(instructions: null, name: "assistant", description: "Test assistant", tools: [clientTool]);
         AgentSession session = await agent.CreateSessionAsync();
@@ -256,14 +269,12 @@ public sealed class ToolCallingTests : IAsyncDisposable
         }
 
         // Assert
-        this._output.WriteLine($"serverCallCount={serverCallCount}, clientCallCount={clientCallCount}");
+        this._output.WriteLine($"invocationOrder={string.Join(", ", invocationOrder)}");
 
-        // Verify both the server and client tools executed and both results round-tripped through
-        // the streaming pipeline. This is now correct behavior thanks to
-        // ConfigureForMixedInvocation in the AGUI.Hosting.AspNetCore package.
+        // Verify the stored server call resumes after the client result and both results round-trip.
 
-        Assert.Equal(1, serverCallCount);
-        Assert.Equal(1, clientCallCount);
+        Assert.Equal(["GetClientData", "GetServerData"], invocationOrder);
+        Assert.DoesNotContain(updates.SelectMany(u => u.Contents), c => c is ErrorContent);
 
         var functionCallUpdates = updates.Where(u => u.Contents.Any(c => c is FunctionCallContent)).ToList();
         Assert.NotEmpty(functionCallUpdates);
@@ -501,11 +512,17 @@ public sealed class ToolCallingTests : IAsyncDisposable
     private async Task SetupTestServerAsync(
         IList<AITool>? serverTools = null,
         bool triggerParallelCalls = false,
-        JsonSerializerOptions? jsonSerializerOptions = null)
+        JsonSerializerOptions? jsonSerializerOptions = null,
+        bool enableInvocableFunctionBypassing = false)
     {
         WebApplicationBuilder builder = WebApplication.CreateBuilder();
         builder.Services.AddAGUIServer();
         builder.WebHost.UseTestServer();
+
+        if (enableInvocableFunctionBypassing)
+        {
+            builder.Services.AddKeyedSingleton<AgentSessionStore>("base-agent", new InMemoryAgentSessionStore());
+        }
 
         // Configure HTTP JSON options if custom serializer options provided
         if (jsonSerializerOptions?.TypeInfoResolver != null)
@@ -517,7 +534,13 @@ public sealed class ToolCallingTests : IAsyncDisposable
         this._app = builder.Build();
         // FakeChatClient will receive options.Tools containing both server and client tools (merged by framework)
         var fakeChatClient = new FakeToolCallingChatClient(triggerParallelCalls, this._output, jsonSerializerOptions: jsonSerializerOptions);
-        AIAgent baseAgent = fakeChatClient.AsAIAgent(instructions: null, name: "base-agent", description: "A base agent for tool testing", tools: serverTools ?? []);
+        AIAgent baseAgent = fakeChatClient.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = "base-agent",
+            Description = "A base agent for tool testing",
+            EnableInvocableFunctionBypassing = enableInvocableFunctionBypassing,
+            ChatOptions = new ChatOptions { Tools = serverTools ?? [] },
+        });
         this._app.MapAGUIServer("/agent", baseAgent);
 
         await this._app.StartAsync();

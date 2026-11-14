@@ -83,6 +83,73 @@ public class InMemoryAgentSessionStoreTests
         Assert.Null(differentUser);
     }
 
+    [Fact]
+    public async Task GetSessionAsync_SharedStorageIdentity_RestoresAcrossDifferentAgentInstancesAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentSessionStore();
+        var firstAgent = new AIHostAgent(
+            new ChatClientAgent(new NotInvokedChatClient(), name: "first-instance"),
+            store,
+            sessionStorageIdentity: "registered-agent");
+        var secondAgent = new AIHostAgent(
+            new ChatClientAgent(new NotInvokedChatClient(), name: "second-instance"),
+            store,
+            sessionStorageIdentity: "registered-agent");
+        var key = new AgentSessionStoreKey("session-1");
+        AgentSession session = await firstAgent.CreateSessionAsync();
+        session.StateBag.SetValue("marker", "persisted");
+        await firstAgent.SaveSessionAsync(key, session);
+
+        // Act
+        AgentSession restored = await secondAgent.GetOrCreateSessionAsync(key);
+
+        // Assert
+        Assert.NotEqual(firstAgent.Id, secondAgent.Id);
+        Assert.NotEqual(firstAgent.Name, secondAgent.Name);
+        Assert.Equal(firstAgent.SessionStorageIdentity, secondAgent.SessionStorageIdentity);
+        Assert.Equal("persisted", restored.StateBag.GetValue<string>("marker"));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_RemovesStoredSessionAsync()
+    {
+        // Arrange
+        AIAgent agent = new ChatClientAgent(new NotInvokedChatClient(), name: "assistant");
+        var store = new InMemoryAgentSessionStore();
+        var key = new AgentSessionStoreKey("s1").WithPartition("user", "user-1");
+        var otherKey = new AgentSessionStoreKey("s1").WithPartition("user", "user-2");
+        await store.SaveSessionAsync(agent, key, await agent.CreateSessionAsync());
+        await store.SaveSessionAsync(agent, otherKey, await agent.CreateSessionAsync());
+
+        // Act
+        await store.DeleteSessionAsync(agent, key);
+
+        // Assert
+        Assert.Null(await store.GetSessionAsync(agent, key));
+        Assert.NotNull(await store.GetSessionAsync(agent, otherKey));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_MissingSession_DoesNotThrowAsync()
+    {
+        // Arrange
+        var store = new InMemoryAgentSessionStore();
+
+        // Act and assert
+        await store.DeleteSessionAsync(new Mock<AIAgent>().Object, new AgentSessionStoreKey("missing"));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_NoopStore_CompletesAsync()
+    {
+        // Arrange
+        var store = new NoopAgentSessionStore();
+
+        // Act and assert
+        await store.DeleteSessionAsync(new Mock<AIAgent>().Object, new AgentSessionStoreKey("any"));
+    }
+
     // A chat client that is never invoked: these tests only create, serialize, and deserialize sessions.
     private sealed class NotInvokedChatClient : IChatClient
     {

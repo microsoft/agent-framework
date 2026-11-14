@@ -87,6 +87,58 @@ public sealed class CopyConversationMessagesExecutorTest(ITestOutputHelper outpu
     }
 
     [Fact]
+    public async Task CopyMessagesWithSensitiveVariableThrowsAsync()
+    {
+        // Arrange
+        List<ChatMessage> testMessages =
+        [
+            new ChatMessage(ChatRole.User, "Message from variable")
+        ];
+        TableValue messagesTable = testMessages.ToTable();
+        this.State.Set("SourceMessages", messagesTable, sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        int messageCount = mockAgentProvider.TestMessages.Count;
+        CopyConversationMessages model = this.CreateModel(
+            this.FormatDisplayName(nameof(CopyMessagesWithSensitiveVariableThrowsAsync)),
+            "TestConversationId",
+            ValueExpression.Variable(PropertyPath.TopicVariable("SourceMessages")));
+
+        CopyConversationMessagesExecutor action = new(model, mockAgentProvider.Object, this.State);
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Act & Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("Cannot send sensitive conversation messages", exception.Message);
+        Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
+    }
+
+    [Fact]
+    public async Task CopyMessagesWithSensitiveConversationIdThrowsAsync()
+    {
+        // Arrange
+        this.State.Set("ConversationId", FormulaValue.New("sensitive-conversation"), sensitivity: SensitivityLevel.Sensitive);
+        MockAgentProvider mockAgentProvider = new();
+        int messageCount = mockAgentProvider.TestMessages.Count;
+        CopyConversationMessages.Builder builder = new()
+        {
+            Id = this.CreateActionId(),
+            DisplayName = this.FormatDisplayName(nameof(CopyMessagesWithSensitiveConversationIdThrowsAsync)),
+            ConversationId = StringExpression.Variable(PropertyPath.TopicVariable("ConversationId")),
+            Messages = ValueExpression.Literal(new StringDataValue("Hello")),
+        };
+        CopyConversationMessages model = AssignParent<CopyConversationMessages>(builder);
+        CopyConversationMessagesExecutor action = new(model, mockAgentProvider.Object, this.State);
+
+        // Act
+        Task ExecuteAsync() => this.ExecuteAsync(action);
+
+        // Assert
+        DeclarativeActionException exception = await Assert.ThrowsAsync<DeclarativeActionException>(ExecuteAsync);
+        Assert.Contains("conversation ID", exception.Message);
+        Assert.Equal(messageCount, mockAgentProvider.TestMessages.Count);
+    }
+
+    [Fact]
     public async Task CopyMessagesToWorkflowConversationAsync()
     {
         // Arrange

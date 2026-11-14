@@ -10,6 +10,21 @@ pip install agent-framework-github-copilot
 
 The GitHub Copilot agent enables integration with GitHub Copilot, allowing you to interact with Copilot's agentic capabilities through the Agent Framework.
 
+The agent requires GitHub Copilot CLI version 1.0.85 or higher. When the agent starts, it checks the CLI version
+and raises an error if the version is older or cannot be determined. This applies to the CLI bundled with the
+`github-copilot-sdk` package as well as one selected with `cli_path`, `GITHUB_COPILOT_CLI_PATH`, or `COPILOT_CLI_PATH`.
+
+## Context providers and function middleware
+
+Context providers can contribute messages, instructions, and tools to a run.
+`GitHubCopilotAgent` supports agent middleware, but the SDK owns its tool-calling loop
+and does not run Agent Framework function middleware. If a context provider contributes
+function middleware through `SessionContext.extend_middleware()`, the run raises
+`MiddlewareException` before creating or resuming an SDK session or registering its tools.
+This applies to both response modes and to `RawGitHubCopilotAgent`.
+
+Use `Agent` with a chat client when provider-contributed function middleware is required.
+
 ## Tool approval (`approval_mode="always_require"`)
 
 The GitHub Copilot SDK owns the tool-calling loop for this provider, so approval for
@@ -20,7 +35,8 @@ When you register a `FunctionTool` declared with `approval_mode="always_require"
 do **not** supply your own `on_pre_tool_use` hook, `GitHubCopilotAgent` installs a default
 `on_pre_tool_use` hook that returns `"ask"` for that tool and defers (`None`) for all other
 tools. The `"ask"` decision routes to your `on_permission_request` handler, where you
-approve or deny the call:
+approve or deny the call. Other session hooks, such as `on_post_tool_use` or
+`on_session_start`, are preserved alongside this default approval hook:
 
 ```python
 from agent_framework import tool
@@ -57,10 +73,9 @@ prompts) or a `domain` (URL prompts). Both are optional, so a bare
 `PermissionDecisionApproveForSession()` carries no scope at all and the Copilot CLI cannot
 interpret it.
 
-`GitHubCopilotAgent` therefore scopes such a decision automatically, using the request that
-triggered it — a shell prompt becomes an approval for that prompt's command identifiers, an
-MCP prompt an approval for that server and tool, a URL prompt an approval for that URL's
-domain, and so on:
+`GitHubCopilotAgent` therefore scopes such a decision automatically when the request provides
+a structured session approval — a shell prompt becomes an approval for that prompt's command
+identifiers, an MCP prompt an approval for that server and tool, and so on:
 
 ```python
 from copilot.generated.rpc import PermissionDecisionApproveForSession
@@ -71,12 +86,13 @@ def on_permission_request(request, invocation):
     return PermissionDecisionApproveForSession()
 ```
 
-The decision is only ever narrowed, never widened. When the prompt reports that it cannot
-offer session-scoped approval (`can_offer_session_approval=False`), or the request kind has
-no session-scoped approval at all (such as a `hook` prompt), the decision is downgraded to a
-single-use approval and a warning is logged. Pass an explicit `approval=` or `domain=` when
-you want to approve something other than the request being handled — decisions that already
-specify a scope are forwarded unchanged.
+The decision is only ever narrowed, never widened. A bare decision for a URL prompt is
+downgraded to a single-use approval because the framework cannot safely infer the Copilot
+CLI's exact URL permission scope. The same downgrade occurs when the prompt reports that it
+cannot offer session-scoped approval (`can_offer_session_approval=False`), or the request
+kind has no session-scoped approval at all (such as a `hook` prompt). A warning is logged in
+each case. Pass an explicit `approval=` or `domain=` when you want to approve a specific
+scope for the session — decisions that already specify a scope are forwarded unchanged.
 
 ### Deprecated: `on_function_approval`
 
@@ -116,3 +132,19 @@ directory that defines hooks it is not loading. See
 [`github_copilot_with_file_hooks.py`](../../samples/02-agents/providers/github_copilot/github_copilot_with_file_hooks.py)
 for a runnable example.
 
+## MCP configuration and session lifetime
+
+Constructor `default_options` provide SDK session defaults. Per-run `options` override
+the corresponding defaults for that request, including `mcp_servers`. Reusing an
+`AgentSession` with a `service_session_id` resumes SDK/CLI-owned service-session state.
+Forwarding a narrower MCP configuration, such as changing a server's `tools` from
+`["*"]` to `[]`, is not an authorization or revocation guarantee for capabilities
+already resident in that session. Enforce authorization at the MCP service/tool boundary.
+
+Use a fresh service session when narrowing configured capabilities: create
+`fresh_session = agent.create_session()`, then pass it to
+`await agent.run("Start a new conversation", session=fresh_session, options=restricted_options)`,
+where `restricted_options` contains the narrowed `mcp_servers` configuration.
+The new session has no `service_session_id`; do not copy the previous service-session
+state or reuse its SDK `session_id` in constructor or per-run options. A fresh session
+starts a new conversation rather than continuing the previous one.

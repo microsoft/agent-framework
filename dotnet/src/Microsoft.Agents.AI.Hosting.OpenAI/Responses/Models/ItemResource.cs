@@ -266,6 +266,7 @@ internal enum FunctionToolCallOutputItemResourceStatus
 [JsonDerivedType(typeof(ItemContentOutputText), "output_text")]
 [JsonDerivedType(typeof(ItemContentOutputAudio), "output_audio")]
 [JsonDerivedType(typeof(ItemContentRefusal), "refusal")]
+[JsonDerivedType(typeof(ItemContentFunctionApprovalResponse), "function_approval_response")]
 internal abstract class ItemContent
 {
     /// <summary>
@@ -280,6 +281,48 @@ internal abstract class ItemContent
     /// </summary>
     [JsonIgnore]
     public object? RawRepresentation { get; set; }
+}
+
+/// <summary>
+/// A response to a function approval request.
+/// </summary>
+internal sealed class ItemContentFunctionApprovalResponse : ItemContent
+{
+    /// <inheritdoc/>
+    [JsonIgnore]
+    public override string Type => "function_approval_response";
+
+    /// <summary>
+    /// The unique identifier of the approval request.
+    /// </summary>
+    [JsonPropertyName("request_id")]
+    public required string RequestId { get; init; }
+
+    /// <summary>
+    /// Whether the function call was approved.
+    /// </summary>
+    [JsonPropertyName("approved")]
+    public required bool Approved { get; init; }
+
+    /// <summary>
+    /// The function call associated with the approval request.
+    /// </summary>
+    [JsonPropertyName("function_call")]
+    public required FunctionCallInfo FunctionCall
+    {
+        get;
+        init
+        {
+            // DevUI defines function_call.arguments as an object. Reject other JSON shapes while
+            // binding the request so malformed approval responses become HTTP 400 rather than 500.
+            if (value is null || value.Arguments.ValueKind != JsonValueKind.Object)
+            {
+                throw new JsonException("The 'function_call.arguments' property must be a JSON object.");
+            }
+
+            field = value;
+        }
+    }
 }
 
 /// <summary>

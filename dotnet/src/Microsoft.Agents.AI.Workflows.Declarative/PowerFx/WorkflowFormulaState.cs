@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
 using System.Collections.Frozen;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -7,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.Declarative.Extensions;
+using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.PowerFx;
 using Microsoft.PowerFx.Types;
@@ -27,7 +29,12 @@ internal sealed class WorkflowFormulaState
             VariableScopeNames.System,
         ];
 
+    private const string SensitivityScopePrefix = "__Microsoft_Agents_AI_Workflows_Declarative_Sensitivity:";
+    internal const string LocalOwnershipScopeName = "__Microsoft_Agents_AI_Workflows_Declarative_Ownership:Local";
+    private const int LocalOwnershipVersion = 1;
+
     private readonly Dictionary<string, WorkflowScope> _scopes;
+    private readonly FrozenSet<string> _restorableEnvironmentVariables;
 
     private Dictionary<string, WorkflowScope> _initialScopes;
 
@@ -37,13 +44,17 @@ internal sealed class WorkflowFormulaState
 
     public WorkflowExpressionEngine Evaluator { get; }
 
-    public WorkflowFormulaState(RecalcEngine engine)
+    public bool AllowsSideEffects { get; }
+
+    public WorkflowFormulaState(RecalcEngine engine, bool allowsSideEffects = false, IEnumerable<string>? restorableEnvironmentVariables = null)
     {
         this._scopes = VariableScopeNames.AllScopes.ToDictionary(scopeName => GetScopeName(scopeName), _ => new WorkflowScope());
+        this._restorableEnvironmentVariables = (restorableEnvironmentVariables ?? []).ToFrozenSet(StringComparer.Ordinal);
         this._initialScopes = this.CreateScopeSnapshot();
 
         this.Engine = engine;
-        this.Evaluator = new WorkflowExpressionEngine(engine);
+        this.AllowsSideEffects = allowsSideEffects;
+        this.Evaluator = new WorkflowExpressionEngine(this);
         this.Bind();
     }
 
@@ -59,8 +70,38 @@ internal sealed class WorkflowFormulaState
         return FormulaValue.NewBlank();
     }
 
-    public void Set(string variableName, FormulaValue value, string? scopeName = null) =>
-        this.GetScope(scopeName ?? DefaultScopeName)[variableName] = value;
+    public void Set(string variableName, FormulaValue value, string? scopeName = null, SensitivityLevel sensitivity = SensitivityLevel.None)
+    {
+        WorkflowScope scope = this.GetScope(scopeName ?? DefaultScopeName);
+        scope[variableName] = value;
+        scope.Sensitivities[variableName] = sensitivity;
+    }
+
+    public SensitivityLevel GetSensitivity(string variableName, string? scopeName = null)
+    {
+        if (scopeName is not null && !VariableScopeNames.IsValidName(scopeName))
+        {
+            return SensitivityLevel.None;
+        }
+
+        WorkflowScope scope = this.GetScope(scopeName ?? DefaultScopeName);
+        return scope.Sensitivities.TryGetValue(variableName, out SensitivityLevel sensitivity) ? sensitivity : SensitivityLevel.None;
+    }
+
+    public SensitivityLevel GetScopeSensitivity(string scopeName)
+    {
+        if (!VariableScopeNames.IsValidName(scopeName))
+        {
+            return SensitivityLevel.None;
+        }
+
+        return this.GetScope(scopeName).Sensitivities.Values.Any(static sensitivity => sensitivity == SensitivityLevel.Sensitive)
+            ? SensitivityLevel.Sensitive
+            : SensitivityLevel.None;
+    }
+
+    public void SetSensitivity(string variableName, string? scopeName, SensitivityLevel sensitivity) =>
+        this.GetScope(scopeName ?? DefaultScopeName).Sensitivities[variableName] = sensitivity;
 
     public bool SetInitialized() => Interlocked.CompareExchange(ref this._isInitialized, 1, 0) == 0;
 
@@ -83,30 +124,164 @@ internal sealed class WorkflowFormulaState
             return;
         }
 
+        bool restored = false;
+        try
+        {
+            await this.RestoreCheckpointAsync(context, cancellationToken).ConfigureAwait(false);
+            restored = true;
+        }
+        finally
+        {
+            if (!restored)
+            {
+                Interlocked.Exchange(ref this._isInitialized, 0);
+            }
+        }
+    }
+
+    public ValueTask RestoreCheckpointAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
+        this.RestoreCheckpointAsync(context, migrateLegacyEntries: true, cancellationToken);
+
+    public ValueTask RestoreSnapshotAsync(IWorkflowContext context, CancellationToken cancellationToken) =>
+        this.RestoreCheckpointAsync(context, migrateLegacyEntries: false, cancellationToken);
+
+    private async ValueTask RestoreCheckpointAsync(IWorkflowContext context, bool migrateLegacyEntries, CancellationToken cancellationToken)
+    {
         this.RestoreInitialState();
 
         Stopwatch timer = Stopwatch.StartNew();
         Debug.WriteLine("RESTORE CHECKPOINT - BEGIN");
+        HashSet<string> legacyKeys = await GetLegacyTopicKeysAsync(context, cancellationToken).ConfigureAwait(false);
+        if (migrateLegacyEntries)
+        {
+            await MigrateLegacyTopicScopeAsync(context, legacyKeys, cancellationToken).ConfigureAwait(false);
+        }
         await Task.WhenAll(RestorableScopes.Select(scopeName => ReadScopeAsync(scopeName))).ConfigureAwait(false);
+        if (!migrateLegacyEntries && legacyKeys.Count > 0)
+        {
+            await ReadScopeAsync(VariableScopeNames.Topic, legacyKeys).ConfigureAwait(false);
+        }
+        if (this._restorableEnvironmentVariables.Count > 0)
+        {
+            await ReadScopeAsync(VariableScopeNames.Environment, this._restorableEnvironmentVariables).ConfigureAwait(false);
+        }
         Debug.WriteLine($"RESTORE CHECKPOINT - COMPLETE [{timer.Elapsed}]");
 
-        async Task ReadScopeAsync(string scopeName)
+        async Task ReadScopeAsync(string scopeName, IReadOnlyCollection<string>? allowedKeys = null)
         {
             HashSet<string> keys = await context.ReadStateKeysAsync(scopeName, cancellationToken).ConfigureAwait(false);
             foreach (string key in keys)
             {
+                if (allowedKeys?.Contains(key) == false)
+                {
+                    continue;
+                }
                 PortableValue? value = await context.ReadStateAsync<PortableValue>(key, scopeName, cancellationToken).ConfigureAwait(false);
+                SensitivityLevel sensitivity = await context.ReadStateAsync<SensitivityLevel>(key, GetSensitivityScopeName(scopeName), cancellationToken).ConfigureAwait(false);
                 if (value is null)
                 {
-                    this.Set(key, FormulaValue.NewBlank(), scopeName);
+                    this.Set(key, FormulaValue.NewBlank(), scopeName, sensitivity);
                     continue;
                 }
                 FormulaValue formulaValue = value.ToFormula();
-                this.Set(key, formulaValue, scopeName);
+                this.Set(key, formulaValue, scopeName, sensitivity);
                 Debug.WriteLine($"RESTORED: {scopeName}.{key} => {formulaValue.Type}");
             }
 
             this.Bind(scopeName);
+        }
+    }
+
+    private static async ValueTask<HashSet<string>> GetLegacyTopicKeysAsync(IWorkflowContext context, CancellationToken cancellationToken)
+    {
+        HashSet<string> legacyKeys = await context.ReadStateKeysAsync(VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        if (legacyKeys.Count == 0)
+        {
+            return legacyKeys;
+        }
+
+        string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
+        HashSet<string> declarativeKeys = await context.ReadStateKeysAsync(sensitivityScope, cancellationToken).ConfigureAwait(false);
+        legacyKeys.IntersectWith(declarativeKeys);
+        List<string> canonicalKeys = [];
+        foreach (string key in legacyKeys)
+        {
+            if (await HasCanonicalLocalOwnershipAsync(context, key, cancellationToken).ConfigureAwait(false))
+            {
+                canonicalKeys.Add(key);
+            }
+        }
+        legacyKeys.ExceptWith(canonicalKeys);
+        if (legacyKeys.Count == 0)
+        {
+            return legacyKeys;
+        }
+
+        HashSet<string> localKeys = await context.ReadStateKeysAsync(VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
+        if (localKeys.Overlaps(legacyKeys))
+        {
+            throw new DeclarativeActionException("Cannot restore checkpoint with conflicting Local and Topic scope entries.");
+        }
+
+        return legacyKeys;
+    }
+
+    private static async ValueTask MigrateLegacyTopicScopeAsync(IWorkflowContext context, HashSet<string> legacyKeys, CancellationToken cancellationToken)
+    {
+        string sensitivityScope = GetSensitivityScopeName(VariableScopeNames.Local);
+        List<(string Key, object Value, SensitivityLevel Sensitivity)> entries = [];
+        foreach (string key in legacyKeys)
+        {
+            PortableValue? value = await context.ReadStateAsync<PortableValue>(key, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+            SensitivityLevel sensitivity = await context.ReadStateAsync<SensitivityLevel>(key, sensitivityScope, cancellationToken).ConfigureAwait(false);
+            entries.Add((key, value?.ToPortableObject() ?? UnassignedValue.Instance, sensitivity));
+        }
+
+        foreach (var entry in entries)
+        {
+            await context.QueueStateUpdateAsync(entry.Key, entry.Value, VariableScopeNames.Local, cancellationToken).ConfigureAwait(false);
+            await QueueSensitivityUpdateAsync(context, entry.Key, VariableScopeNames.Local, entry.Sensitivity, delete: false, cancellationToken).ConfigureAwait(false);
+            await context.QueueStateUpdateAsync<object>(entry.Key, null, VariableScopeNames.Topic, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    internal static async ValueTask<bool> HasCanonicalLocalOwnershipAsync(IWorkflowContext context, string key, CancellationToken cancellationToken)
+    {
+        PortableValue? ownership = await context.ReadStateAsync<PortableValue>(key, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+        if (ownership is null)
+        {
+            return false;
+        }
+        if (ownership.As<int>() != LocalOwnershipVersion)
+        {
+            throw new DeclarativeActionException("Unsupported declarative state ownership version.");
+        }
+        return true;
+    }
+
+    internal static async ValueTask QueueSensitivityUpdateAsync(
+        IWorkflowContext context, string key, string scopeName, SensitivityLevel sensitivity, bool delete, CancellationToken cancellationToken)
+    {
+        string sensitivityScope = GetSensitivityScopeName(scopeName);
+        if (delete)
+        {
+            await context.QueueStateUpdateAsync<object>(key, null, sensitivityScope, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            await context.QueueStateUpdateAsync(key, sensitivity, sensitivityScope, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (string.Equals(scopeName, VariableScopeNames.Local, StringComparison.Ordinal))
+        {
+            if (delete)
+            {
+                await context.QueueStateUpdateAsync<object>(key, null, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await context.QueueStateUpdateAsync(key, LocalOwnershipVersion, LocalOwnershipScopeName, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 
@@ -119,9 +294,15 @@ internal sealed class WorkflowFormulaState
         {
             WorkflowScope scope = this._scopes[initialScopeEntry.Key];
             scope.Clear();
+            scope.Sensitivities.Clear();
             foreach (KeyValuePair<string, FormulaValue> initialValueEntry in initialScopeEntry.Value)
             {
                 scope[initialValueEntry.Key] = initialValueEntry.Value;
+            }
+
+            foreach (KeyValuePair<string, SensitivityLevel> initialSensitivityEntry in initialScopeEntry.Value.Sensitivities)
+            {
+                scope.Sensitivities[initialSensitivityEntry.Key] = initialSensitivityEntry.Value;
             }
         }
     }
@@ -148,7 +329,7 @@ internal sealed class WorkflowFormulaState
 
         void Bind(string scopeName, string? targetScope = null)
         {
-            targetScope = GetScopeName(targetScope ?? scopeName);
+            targetScope ??= GetScopeName(scopeName);
             RecordValue scopeRecord = this.GetScope(scopeName).ToRecord();
             this.Engine.DeleteFormula(targetScope);
             this.Engine.UpdateVariable(targetScope, scopeRecord);
@@ -156,6 +337,8 @@ internal sealed class WorkflowFormulaState
     }
 
     private WorkflowScope GetScope(string? scopeName) => this._scopes[GetScopeName(scopeName)];
+
+    public static string GetSensitivityScopeName(string scopeName) => $"{SensitivityScopePrefix}{GetScopeName(scopeName)}";
 
     public static string GetScopeName(string? scopeName)
     {
@@ -185,6 +368,15 @@ internal sealed class WorkflowFormulaState
         public WorkflowScope(IDictionary<string, FormulaValue> values)
             : base(values)
         {
+            if (values is WorkflowScope scope)
+            {
+                foreach (KeyValuePair<string, SensitivityLevel> sensitivity in scope.Sensitivities)
+                {
+                    this.Sensitivities[sensitivity.Key] = sensitivity.Value;
+                }
+            }
         }
+
+        public Dictionary<string, SensitivityLevel> Sensitivities { get; } = new(StringComparer.Ordinal);
     }
 }

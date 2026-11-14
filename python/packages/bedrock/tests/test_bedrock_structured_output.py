@@ -64,6 +64,15 @@ class _StubBedrockRuntime:
             },
         }
 
+    def converse_stream(self, **kwargs: Any) -> dict[str, Any]:
+        self.calls.append(kwargs)
+        stream = MagicMock()
+        stream.__iter__.return_value = iter([
+            {"contentBlockDelta": {"delta": {"text": self._response_text}, "contentBlockIndex": 0}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ])
+        return {"stream": stream}
+
 
 def _make_client(response_text: str = "Bedrock says hi") -> tuple[BedrockChatClient, _StubBedrockRuntime]:
     stub = _StubBedrockRuntime(response_text)

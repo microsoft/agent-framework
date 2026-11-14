@@ -14,6 +14,7 @@ using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Execution;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Agents.AI.Workflows.Reflection;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Workflows;
 
@@ -198,6 +199,11 @@ public abstract class Executor : IIdentified
 
     internal bool IsCrossRunShareable { get; }
 
+    private List<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)>? _checkpointRestoringCallbacks;
+
+    internal IReadOnlyList<(object? SharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> Callback)> CheckpointRestoringCallbacks =>
+        this._checkpointRestoringCallbacks ?? [];
+
     /// <summary>
     /// Gets the configuration options for the executor.
     /// </summary>
@@ -256,7 +262,7 @@ public abstract class Executor : IIdentified
 
     internal async ValueTask<object?> ExecuteCoreAsync(object message, TypeId messageType, IWorkflowContext context, WorkflowTelemetryContext telemetryContext, CancellationToken cancellationToken = default)
     {
-        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName, message);
+        using var activity = telemetryContext.StartExecutorProcessActivity(this.Id, this.GetType().FullName, messageType.TypeName);
         activity?.CreateSourceLinks(context.TraceContext);
 
         await context.AddEventAsync(new ExecutorInvokedEvent(this.Id, message), cancellationToken).ConfigureAwait(false);
@@ -291,11 +297,6 @@ public abstract class Executor : IIdentified
         {
             return null; // Void result.
         }
-
-        // Output is not available if executor does not return anything, in which case
-        // messages sent in the handlers of this executor will be set in the message
-        // send activities.
-        telemetryContext.SetExecutorOutput(activity, result.Result);
 
         // If we had a real return type, raise it as a SendMessage; TODO: Should we have a way to disable this behaviour?
         if (result.Result is not null && this.Options.AutoSendMessageHandlerResultObject)
@@ -345,6 +346,38 @@ public abstract class Executor : IIdentified
     /// The default is <see cref="CancellationToken.None"/>.</param>
     /// <returns>A ValueTask representing the asynchronous operation.</returns>
     protected internal virtual ValueTask OnCheckpointRestoredAsync(IWorkflowContext context, CancellationToken cancellationToken = default) => default;
+
+    /// <summary>
+    /// Registers state restoration that runs before checkpoint post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// All registered callbacks across the workflow complete before any executor's
+    /// <see cref="OnCheckpointRestoredAsync"/> hook is invoked. Register callbacks during construction.
+    /// </remarks>
+    /// <param name="callback">The state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(Func<IWorkflowContext, CancellationToken, ValueTask> callback)
+    {
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((null, callback));
+    }
+
+    /// <summary>
+    /// Registers shared state restoration that runs once per checkpoint load before post-load hooks.
+    /// </summary>
+    /// <remarks>
+    /// Registrations with the same key instance are invoked once across the workflow for each checkpoint load,
+    /// using the context of one registering executor. Shared state must use explicitly named scopes.
+    /// All restoration callbacks complete before any <see cref="OnCheckpointRestoredAsync"/> hook is invoked.
+    /// Register callbacks during construction.
+    /// </remarks>
+    /// <param name="sharedStateKey">An identity shared by executors that restore the same state.</param>
+    /// <param name="callback">The shared state restoration callback.</param>
+    protected void RegisterCheckpointRestoringCallback(object sharedStateKey, Func<IWorkflowContext, CancellationToken, ValueTask> callback)
+    {
+        _ = Throw.IfNull(sharedStateKey);
+        _ = Throw.IfNull(callback);
+        (this._checkpointRestoringCallbacks ??= []).Add((sharedStateKey, callback));
+    }
 
     /// <summary>
     /// A set of <see cref="Type"/>s, representing the messages this executor can handle.

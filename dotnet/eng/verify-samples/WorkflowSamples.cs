@@ -58,8 +58,8 @@ internal static class WorkflowSamples
         {
             Name = "Workflow_StartHere_04_MultiModelService",
             ProjectPath = "samples/03-workflows/_StartHere/04_MultiModelService",
-            RequiredEnvironmentVariables = ["BEDROCK_ACCESS_KEY", "BEDROCK_SECRET_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
-            SkipReason = "Requires multiple external provider API keys (Bedrock, Anthropic, OpenAI).",
+            RequiredEnvironmentVariables = ["GOOGLE_GENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
+            SkipReason = "Requires multiple external provider API keys (Google, Anthropic, OpenAI).",
         },
 
         new SampleDefinition

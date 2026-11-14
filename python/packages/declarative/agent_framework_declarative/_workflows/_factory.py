@@ -25,6 +25,7 @@ from agent_framework import (
     Workflow,
 )
 from agent_framework._telemetry import mark_feature_used
+from dotenv import load_dotenv
 
 from .._feature_usage import FeatureIndex
 from .._loader import AgentFactory
@@ -102,11 +103,14 @@ class WorkflowFactory:
         """Initialize the workflow factory.
 
         Args:
-            agent_factory: Optional AgentFactory for creating agents from inline YAML definitions.
+            agent_factory: Optional AgentFactory for creating agents from inline or file-based YAML definitions.
+                The default factory is created on first use and emits an experimental warning.
             agents: Optional pre-created agents by name. These are looked up when processing
                 InvokeAzureAgent actions in the workflow YAML.
             bindings: Optional function bindings for tool calls within workflow actions.
-            env_file: Optional path to .env file for environment variables used in agent creation.
+            env_file: Optional path to .env file for environment variables used in agent creation
+                and workflow expressions. Loaded during initialization when no agent_factory is supplied.
+                Workflow expressions require restrict_env_to_configuration=False to read these variables.
             checkpoint_storage: Optional checkpoint storage enabling pause/resume functionality.
             max_iterations: Optional maximum runner supersteps.  Overrides the YAML ``maxTurns``
                 field and the core default (100).  Workflows with ``GotoAction`` loops (e.g.
@@ -186,7 +190,10 @@ class WorkflowFactory:
                     },
                 )
         """
-        self._agent_factory = agent_factory or AgentFactory(env_file_path=env_file)
+        self._agent_factory = agent_factory
+        self._env_file = env_file
+        if agent_factory is None:
+            load_dotenv(dotenv_path=env_file, encoding=None)
         self._agents: dict[str, SupportsAgentRun | AgentExecutor] = dict(agents) if agents else {}
         self._bindings: dict[str, Any] = dict(bindings) if bindings else {}
         self._tools: dict[str, Any] = {}  # Tool registry for InvokeFunctionTool actions
@@ -210,7 +217,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
             FileNotFoundError: If the YAML file doesn't exist.
 
         Examples:
@@ -262,7 +270,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the YAML is invalid or cannot be parsed.
+            DeclarativeWorkflowError: If the YAML is invalid, cannot be parsed, or
+                environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python
@@ -338,7 +347,8 @@ class WorkflowFactory:
             An executable Workflow object with action nodes for each YAML action.
 
         Raises:
-            DeclarativeWorkflowError: If the definition is invalid or missing required fields.
+            DeclarativeWorkflowError: If the definition is invalid, is missing required
+                fields, or environment-reference discovery encounters a mapping/list cycle.
 
         Examples:
             .. code-block:: python
@@ -560,6 +570,9 @@ class WorkflowFactory:
         Returns:
             An agent instance
         """
+        if self._agent_factory is None:
+            self._agent_factory = AgentFactory(env_file_path=self._env_file)
+
         # Check if it's a reference to an external file
         if "file" in agent_def:
             file_path = agent_def["file"]
@@ -593,7 +606,7 @@ class WorkflowFactory:
         Args:
             name: The name to register the agent under. Must match the agent name
                 referenced in InvokeAzureAgent actions.
-            agent: The agent instance (typically a Agent or similar).
+            agent: The agent instance (typically an Agent or similar).
 
         Returns:
             Self for method chaining.

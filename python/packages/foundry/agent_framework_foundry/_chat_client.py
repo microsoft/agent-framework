@@ -5,16 +5,19 @@ from __future__ import annotations
 import logging
 import sys
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypedDict, cast
 
 from agent_framework import (
     ChatMiddlewareLayer,
+    ChatResponse,
     ChatResponseUpdate,
     Content,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
     Message,
+    get_namespaced_value,
     load_settings,
+    with_namespaced_value,
 )
 from agent_framework._compaction import CompactionStrategy, TokenizerProtocol
 from agent_framework._feature_stage import ExperimentalFeature, experimental
@@ -55,7 +58,7 @@ from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.credentials import TokenCredential
 from azure.core.credentials_async import AsyncTokenCredential
 
-from agent_framework_foundry._oauth_helpers import try_parse_oauth_consent_event
+from agent_framework_foundry._oauth_helpers import parse_oauth_consent_output_items, try_parse_oauth_consent_event
 
 from ._feature_usage import (
     FeatureIndex,
@@ -72,10 +75,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework import ChatAndFunctionMiddlewareTypes, ToolTypes
@@ -84,6 +83,16 @@ logger: logging.Logger = logging.getLogger("agent_framework.foundry")
 
 AzureTokenProvider = Callable[[], str | Awaitable[str]]
 AzureCredentialTypes = TokenCredential | AsyncTokenCredential
+_FOUNDRY_REASONING_REPLAY_ITEM_KEY = "__foundry_reasoning_replay_item__"
+_FOUNDRY_REASONING_REPLAY_FIELDS = frozenset({
+    "type",
+    "id",
+    "response_id",
+    "status",
+    "summary",
+    "content",
+    "encrypted_content",
+})
 
 
 class FoundrySettings(TypedDict, total=False):
@@ -174,6 +183,7 @@ class RawFoundryChatClient(
         compaction_strategy: CompactionStrategy | None = None,
         tokenizer: TokenizerProtocol | None = None,
         additional_properties: dict[str, Any] | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a raw Microsoft Foundry chat client.
 
@@ -194,6 +204,8 @@ class RawFoundryChatClient(
             compaction_strategy: Optional per-client compaction override.
             tokenizer: Optional tokenizer for compaction strategies.
             additional_properties: Additional properties stored on the client instance.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         foundry_settings = load_settings(
             FoundrySettings,
@@ -242,9 +254,13 @@ class RawFoundryChatClient(
         if owns_project_client:
             openai_kwargs["http_client"] = create_foundry_feature_usage_http_client()
 
+        openai_client = project_client.get_openai_client(**openai_kwargs)
+        if timeout is not None:
+            openai_client = openai_client.with_options(timeout=timeout)
+
         super().__init__(
             model=resolved_model,
-            async_client=project_client.get_openai_client(**openai_kwargs),
+            async_client=openai_client,
             default_headers=default_headers,
             instruction_role=instruction_role,
             compaction_strategy=compaction_strategy,
@@ -252,6 +268,20 @@ class RawFoundryChatClient(
             additional_properties=additional_properties,
         )
         self.project_client = project_client
+        self._owns_project_client = owns_project_client
+        self._project_client_closed = False
+        # get_openai_client creates an independent connection, even for an injected project.
+        self._owns_client = True
+
+    @override
+    async def close(self) -> None:
+        """Close owned OpenAI and project connections, not the supplied credential."""
+        try:
+            await super().close()
+        finally:
+            if self._owns_project_client and not self._project_client_closed:
+                await self.project_client.close()
+                self._project_client_closed = True
 
     @override
     async def _prepare_options(
@@ -269,6 +299,129 @@ class RawFoundryChatClient(
             else:
                 run_options.pop("include")
         return run_options
+
+    @override
+    def _prepare_provider_reasoning_item_for_openai(
+        self,
+        reasoning_id: str,
+        contents: Sequence[Content],
+    ) -> dict[str, Any] | None:
+        for content in reversed(contents):
+            raw_item = get_namespaced_value(
+                content.additional_properties,
+                "foundry",
+                "reasoning_item",
+                content.additional_properties.get(_FOUNDRY_REASONING_REPLAY_ITEM_KEY),
+            )
+            if isinstance(raw_item, Mapping):
+                payload = self._prepare_foundry_reasoning_replay_item(raw_item)
+                if payload is not None and payload["id"] == reasoning_id:
+                    return payload
+        return None
+
+    @classmethod
+    def _prepare_foundry_reasoning_replay_item(cls, item: Any) -> dict[str, Any] | None:
+        payload = cls._serialize_provider_payload(item)
+        if not isinstance(payload, Mapping):
+            return None
+        typed_payload = cast("Mapping[str, Any]", payload)
+        if typed_payload.get("type") != "reasoning":
+            return None
+        reasoning_id = typed_payload.get("id")
+        if not isinstance(reasoning_id, str) or not reasoning_id:
+            return None
+        response_id = typed_payload.get("response_id")
+        if not isinstance(response_id, str) or not response_id:
+            return None
+        if not isinstance(typed_payload.get("summary"), list) or not isinstance(typed_payload.get("content"), list):
+            return None
+        return {key: typed_payload[key] for key in _FOUNDRY_REASONING_REPLAY_FIELDS if key in typed_payload}
+
+    @classmethod
+    def _attach_foundry_reasoning_replay_item(cls, contents: list[Content], item: Any) -> None:
+        payload = cls._prepare_foundry_reasoning_replay_item(item)
+        if payload is None:
+            return
+
+        reasoning_id = cast(str, payload["id"])
+        for content in reversed(contents):
+            if content.type == "text_reasoning" and content.id == reasoning_id:
+                updated = with_namespaced_value(
+                    content.additional_properties,
+                    "foundry",
+                    "reasoning_item",
+                    payload,
+                )
+                updated[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                content.additional_properties = updated
+                return
+
+        contents.append(
+            Content.from_text_reasoning(
+                id=reasoning_id,
+                text="",
+                raw_representation=item,
+                additional_properties={
+                    "foundry": {"reasoning_item": payload},
+                    _FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload,
+                },
+            )
+        )
+
+    @override
+    def _parse_response_from_openai(
+        self,
+        response: Any,
+        options: dict[str, Any],
+    ) -> ChatResponse:
+        chat_response = super()._parse_response_from_openai(response, options)
+        if chat_response.messages:
+            messages = chat_response.messages
+            for item in getattr(response, "output", ()):
+                if getattr(item, "type", None) != "reasoning":
+                    continue
+                self._attach_foundry_reasoning_replay_item_to_messages(messages, item)
+            messages[0].contents.extend(parse_oauth_consent_output_items(getattr(response, "output", None)))
+        return chat_response
+
+    @classmethod
+    def _attach_foundry_reasoning_replay_item_to_messages(cls, messages: list[Message], item: Any) -> None:
+        """Attach replay data to the message that owns the reasoning content.
+
+        Multi-message responses keep one message per provider output message, and a
+        trailing reasoning item is parsed into the last message, so the owning
+        content can live in any message. Search every message (most recent first)
+        and only append to the last message when no parsed content matches, instead
+        of always targeting the first message, which duplicated the reasoning
+        content there while the real one kept no replay data.
+        """
+        payload = cls._prepare_foundry_reasoning_replay_item(item)
+        if payload is None:
+            return
+        reasoning_id = cast(str, payload["id"])
+        for message in reversed(messages):
+            for content in reversed(message.contents):
+                if content.type == "text_reasoning" and content.id == reasoning_id:
+                    updated = with_namespaced_value(
+                        content.additional_properties,
+                        "foundry",
+                        "reasoning_item",
+                        payload,
+                    )
+                    updated[_FOUNDRY_REASONING_REPLAY_ITEM_KEY] = payload
+                    content.additional_properties = updated
+                    return
+        messages[-1].contents.append(
+            Content.from_text_reasoning(
+                id=reasoning_id,
+                text="",
+                raw_representation=item,
+                additional_properties={
+                    "foundry": {"reasoning_item": payload},
+                    _FOUNDRY_REASONING_REPLAY_ITEM_KEY: payload,
+                },
+            )
+        )
 
     @override
     def _check_model_presence(self, options: dict[str, Any]) -> None:
@@ -297,7 +450,10 @@ class RawFoundryChatClient(
         update = try_parse_oauth_consent_event(event, self.model)
         if update is not None:
             return update
-        return super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        update = super()._parse_chunk_from_openai(event, options, function_call_ids, seen_reasoning_delta_item_ids)
+        if event.type == "response.output_item.done" and getattr(event.item, "type", None) == "reasoning":
+            self._attach_foundry_reasoning_replay_item(update.contents, event.item)
+        return update
 
     async def configure_azure_monitor(
         self,
@@ -308,6 +464,8 @@ class RawFoundryChatClient(
 
         This method configures Azure Monitor for telemetry collection using the
         connection string from the Foundry project client.
+        Use azure-monitor-opentelemetry>=1.8.10,<2 for HTTPX/HTTPX2
+        auto-instrumentation that connects client and service traces.
 
         Args:
             enable_sensitive_data: Enable sensitive data logging (prompts, responses).
@@ -319,7 +477,7 @@ class RawFoundryChatClient(
                 - resource (Resource): Custom OpenTelemetry resource
 
         Raises:
-            ImportError: If azure-monitor-opentelemetry-exporter is not installed.
+            ImportError: If azure-monitor-opentelemetry is not installed.
         """
         from agent_framework.observability import (
             OBSERVABILITY_SETTINGS,
@@ -352,7 +510,7 @@ class RawFoundryChatClient(
         except ImportError as exc:
             raise ImportError(
                 "azure-monitor-opentelemetry is required for Azure Monitor integration. "
-                "Install it with: pip install azure-monitor-opentelemetry"
+                'Install it with: pip install "azure-monitor-opentelemetry>=1.8.10,<2"'
             ) from exc
 
         if "resource" not in kwargs:
@@ -672,6 +830,7 @@ class RawFoundryChatClient(
             description: A description of what the MCP server provides.
             approval_mode: Tool approval mode ("always_require", "never_require", or dict).
             allowed_tools: List of allowed tool names from this MCP server.
+                None omits the filter; an empty list is sent unchanged.
             headers: HTTP headers to include in requests to the MCP server.
             project_connection_id: Foundry connection ID for managed MCP connections.
             **kwargs: Additional arguments passed to the SDK MCPTool constructor.
@@ -697,16 +856,22 @@ class RawFoundryChatClient(
             mcp["project_connection_id"] = project_connection_id
         elif headers:
             mcp["headers"] = headers
-        if allowed_tools:
+        if allowed_tools is not None:
             mcp["allowed_tools"] = allowed_tools
         if approval_mode:
             if isinstance(approval_mode, str):
                 mcp["require_approval"] = "always" if approval_mode == "always_require" else "never"
             else:
+                # Both keys can be supplied together ("and/or" per the docstring), so build
+                # one combined mapping instead of letting the second assignment overwrite
+                # the first, which silently dropped the always-approval tool list.
+                require_approval: dict[str, Any] = {}
                 if always_require := approval_mode.get("always_require_approval"):
-                    mcp["require_approval"] = {"always": {"tool_names": always_require}}
+                    require_approval["always"] = {"tool_names": always_require}
                 if never_require := approval_mode.get("never_require_approval"):
-                    mcp["require_approval"] = {"never": {"tool_names": never_require}}
+                    require_approval["never"] = {"tool_names": never_require}
+                if require_approval:
+                    mcp["require_approval"] = require_approval
 
         return mcp
 
@@ -839,6 +1004,24 @@ class RawFoundryChatClient(
         if update_delay is not None:
             params["update_delay"] = update_delay
         return MemorySearchPreviewTool(**params)
+
+    @staticmethod
+    def get_computer_tool() -> Any:
+        """Create a non-preview Foundry computer tool (requires azure-ai-projects >= 2.3.0).
+
+        Older supported SDK releases can still import this client; calling this
+        factory on those releases raises ``ImportError`` with upgrade guidance.
+        """
+        from azure.ai.projects import models
+
+        computer_tool_cls = getattr(models, "ComputerTool", None)
+        if computer_tool_cls is None:
+            raise ImportError(
+                "FoundryChatClient.get_computer_tool() requires ComputerTool from azure-ai-projects>=2.3.0. "
+                "Upgrade azure-ai-projects to >=2.3.0 to use this tool."
+            )
+
+        return computer_tool_cls()
 
     @staticmethod
     @experimental(feature_id=ExperimentalFeature.FOUNDRY_PREVIEW_TOOLS)
@@ -1008,6 +1191,7 @@ class FoundryChatClient(
         additional_properties: dict[str, Any] | None = None,
         middleware: (Sequence[ChatAndFunctionMiddlewareTypes] | None) = None,
         function_invocation_configuration: FunctionInvocationConfiguration | None = None,
+        timeout: float | None = None,
     ) -> None:
         """Initialize a Foundry chat client.
 
@@ -1028,6 +1212,8 @@ class FoundryChatClient(
             additional_properties: Additional properties stored on the client instance.
             middleware: Optional sequence of middleware.
             function_invocation_configuration: Optional function invocation configuration.
+            timeout: HTTP timeout in seconds for requests. When not provided, the
+                OpenAI SDK default is used (connect: 5s, total: 600s).
         """
         super().__init__(
             project_endpoint=project_endpoint,
@@ -1044,4 +1230,5 @@ class FoundryChatClient(
             additional_properties=additional_properties,
             middleware=middleware,
             function_invocation_configuration=function_invocation_configuration,
+            timeout=timeout,
         )

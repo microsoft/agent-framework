@@ -6,8 +6,10 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Azure;
 using Azure.AI.AgentServer.Core.Storage;
 using Microsoft.Agents.AI.Foundry.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.Agents.AI.Foundry.UnitTests.Hosting;
 
@@ -190,6 +192,83 @@ public sealed class FoundryAgentSessionStoreTests
 
         // Assert
         Assert.Contains(nameof(AIAgent.Name), exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_RemovesOnlyTheTargetedSessionAsync()
+    {
+        // Arrange
+        var backing = new FakeStateStore();
+        var store = NewStore(backing);
+        var agent = new TestAgent(name: "Concierge");
+        var aliceKey = Key("shared-conv", "user", "alice");
+        var bobKey = Key("shared-conv", "user", "bob");
+        await store.SaveSessionAsync(agent, aliceKey, new TestSession());
+        await store.SaveSessionAsync(agent, bobKey, new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(agent, aliceKey);
+
+        // Assert
+        Assert.Null(await store.GetSessionAsync(agent, aliceKey));
+        Assert.NotNull(await store.GetSessionAsync(agent, bobKey));
+        var item = Assert.Single(backing.Items);
+        Assert.Equal("\"a14:name:Concierge|s11:shared-conv|n4:user|v3:bob\"", item["key"].ToString());
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_NothingStored_DoesNotThrowAsync()
+    {
+        // Arrange
+        var store = NewStore(new FakeStateStore());
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act and assert
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_NothingStored_LogsTheIgnoredNotFoundAtDebugAsync()
+    {
+        // Arrange
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(new FakeStateStore(), logs);
+        var agent = new TestAgent(name: "Concierge");
+
+        // Act
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+
+        // Assert
+        var entry = Assert.Single(logs.Entries);
+        Assert.Equal(LogLevel.Debug, entry.Level);
+        Assert.Equal(0, entry.EventId.Id);
+        Assert.Equal("LogSessionNotFound", entry.EventId.Name);
+        Assert.Equal(
+            "Session 'conv-1' was not found in the Foundry state store 'agent-framework/sessions'. Nothing to delete.",
+            entry.Message);
+        Assert.IsType<FoundryStorageNotFoundException>(entry.Exception);
+        AssertProperty(entry.Properties, "SessionId", "conv-1");
+        AssertProperty(entry.Properties, "StoreName", FoundryAgentSessionStore.DefaultStoreName);
+        AssertProperty(
+            entry.Properties,
+            "{OriginalFormat}",
+            "Session '{SessionId}' was not found in the Foundry state store '{StoreName}'. Nothing to delete.");
+    }
+
+    [Fact]
+    public async Task DeleteSessionAsync_StoredSession_DoesNotLogAsync()
+    {
+        // Arrange
+        var logs = new RecordingLoggerFactory();
+        var store = NewStore(new FakeStateStore(), logs);
+        var agent = new TestAgent(name: "Concierge");
+        await store.SaveSessionAsync(agent, Key("conv-1"), new TestSession());
+
+        // Act
+        await store.DeleteSessionAsync(agent, Key("conv-1"));
+
+        // Assert
+        Assert.Empty(logs.Entries);
     }
 
     [Fact]
@@ -397,8 +476,17 @@ public sealed class FoundryAgentSessionStoreTests
         Assert.Equal(FoundryAgentSessionStore.DefaultStoreName, store.StoreName);
     }
 
-    private static FoundryAgentSessionStore NewStore(FakeStateStore backing)
-        => new(_ => Task.FromResult<FoundryStateStore>(backing));
+    private static FoundryAgentSessionStore NewStore(FakeStateStore backing, ILoggerFactory? loggerFactory = null)
+        => new(_ => Task.FromResult<FoundryStateStore>(backing), loggerFactory: loggerFactory);
+
+    private static void AssertProperty(
+        IReadOnlyList<KeyValuePair<string, object?>> properties,
+        string name,
+        object expectedValue)
+    {
+        var property = Assert.Single(properties, property => property.Key == name);
+        Assert.Equal(expectedValue, property.Value);
+    }
 
     private static AgentSessionStoreKey Key(
         string sessionId,
@@ -424,18 +512,28 @@ public sealed class FoundryAgentSessionStoreTests
             string key,
             IDictionary<string, BinaryData> value,
             IReadOnlyDictionary<string, string>? tags = null,
-            string? ifMatch = null,
+            ETag ifMatch = default,
             bool requireExists = false,
             CancellationToken cancellationToken = default)
         {
             this._items[key] = value;
-            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: "etag"));
+            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.StateStoreItemRef(id: key, key: key, etag: new ETag("etag")));
         }
 
         public override Task<StateStoreItem?> GetItemAsync(string key, CancellationToken cancellationToken = default)
             => Task.FromResult(this._items.TryGetValue(key, out var value)
-                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: "etag")
+                ? AzureAIAgentServerCoreStorageModelFactory.StateStoreItem(id: key, key: key, value: value, etag: new ETag("etag"))
                 : null);
+
+        public override Task<DeletedStateStoreItem> DeleteItemAsync(string key, ETag ifMatch = default, CancellationToken cancellationToken = default)
+        {
+            if (!this._items.TryRemove(key, out _))
+            {
+                throw new FoundryStorageNotFoundException("not found");
+            }
+
+            return Task.FromResult(AzureAIAgentServerCoreStorageModelFactory.DeletedStateStoreItem(id: key, deleted: true));
+        }
     }
 
     private sealed class TestSession : AgentSession

@@ -1,118 +1,79 @@
+# /// script
+# dependencies = ["agent-framework-foundry-hosting", "pydantic"]
+# ///
 # Copyright (c) Microsoft. All rights reserved.
 
-"""Host a three-executor workflow that extracts and counts down a target.
-
-The start executor asks a Foundry-backed agent to extract a positive integer
-from the incoming message. The countdown executor repeatedly decrements that
-integer and sends it back to itself. At zero, it sends a completion message to
-the terminal executor, which yields the workflow output.
-
-Environment variables:
-    FOUNDRY_PROJECT_ENDPOINT: Microsoft Foundry project endpoint.
-    AZURE_AI_MODEL_DEPLOYMENT_NAME: Model deployment name.
-"""
+"""Run a typed native countdown with exact stored background output/checkpoint recovery."""
 
 import asyncio
-import os
 
-from agent_framework import Agent, Executor, Message, WorkflowBuilder, WorkflowContext, executor, handler
-from agent_framework.foundry import FoundryChatClient
-from agent_framework_foundry_hosting import ResponsesHostServer
+from agent_framework import Executor, Workflow, WorkflowBuilder, WorkflowContext, handler
+from agent_framework_foundry_hosting import (
+    CheckpointStoreProvider,
+    HostedResponseRequest,
+    ResponsesHostServer,
+    WorkflowTurn,
+)
+from azure.ai.agentserver.core.tasks import set_resilient_tasks_enabled
 from azure.ai.agentserver.responses import ResponsesServerOptions
-from azure.identity import DefaultAzureCredential
-from dotenv import load_dotenv
 from pydantic import BaseModel, Field
-from typing_extensions import Never
-
-load_dotenv()
 
 
-class CounterTarget(BaseModel):
-    """The counter target extracted from the user's message."""
-
-    target: int | None = Field(
-        description="The positive integer to count down from, or null when no valid target was provided."
-    )
+class CountdownRequest(BaseModel):
+    target: int = Field(ge=0)
+    label: str = "countdown"
 
 
 class StartExecutor(Executor):
-    """Extract a valid counter target and start the countdown."""
-
-    def __init__(self, agent: Agent, id: str = "start") -> None:
-        super().__init__(id=id)
-        self._agent = agent
+    def __init__(self) -> None:
+        super().__init__(id="start")
 
     @handler
-    async def extract_target(self, messages: list[Message], ctx: WorkflowContext[int, str]) -> None:
-        """Ask the model for a target and forward valid positive integers."""
-        response = await self._agent.run(messages, options={"response_format": CounterTarget})
-        extraction = response.value
-        if not isinstance(extraction, CounterTarget) or extraction.target is None or extraction.target <= 0:
-            await ctx.yield_output("The message must contain a positive integer counter target.")
-            return
-
-        await ctx.send_message(extraction.target)
+    async def start(self, request: CountdownRequest, ctx: WorkflowContext[int, str]) -> None:
+        ctx.set_state("label", request.label)
+        await ctx.send_message(request.target)
 
 
 class CountdownExecutor(Executor):
-    def __init__(self, id: str = "countdown") -> None:
-        super().__init__(id=id)
+    def __init__(self) -> None:
+        super().__init__(id="countdown")
 
     @handler
-    async def countdown(self, target: int, ctx: WorkflowContext[int | str, str]) -> None:
-        """Decrement the target through a self-loop, then signal completion."""
-        if target <= 0:
-            await ctx.send_message("Countdown complete.", target_id="complete")
+    async def countdown(self, target: int, ctx: WorkflowContext[int, str]) -> None:
+        if target == 0:
+            await ctx.yield_output(f"{ctx.get_state('label')} complete.")
             return
-
-        await asyncio.sleep(1)  # Simulate a long-running operation
+        await asyncio.sleep(1)
         await ctx.yield_output(str(target))
         await ctx.send_message(target - 1, target_id=self.id)
 
 
-@executor(id="complete")
-async def complete(message: str, ctx: WorkflowContext[Never, str]) -> None:
-    """Yield the workflow's completion output."""
-    await ctx.yield_output(message)
-
-
-def build_workflow():
-    """Build the target extraction, countdown, and completion workflow."""
-    client = FoundryChatClient(
-        project_endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
-        model=os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"],
-        credential=DefaultAzureCredential(),
-    )
-    target_agent = Agent(
-        client=client,
-        name="counter_target_extractor",
-        instructions=(
-            "Extract the counter target requested by the user. Return the target only when it is a positive integer. "
-            "Return null for zero, negative numbers, fractions, or messages without a clear counter target."
-        ),
-    )
-    start = StartExecutor(target_agent)
-    countdown = CountdownExecutor()
-
+def build_workflow(request: HostedResponseRequest) -> Workflow:
+    """Return freshly built executors with stable IDs for every invocation and recovery."""
+    start, countdown = StartExecutor(), CountdownExecutor()
     return (
-        WorkflowBuilder(start_executor=start, output_from="all")
+        WorkflowBuilder(name="countdown-workflow-v1", start_executor=start)
         .add_edge(start, countdown)
         .add_edge(countdown, countdown)
-        .add_edge(countdown, complete)
         .build()
     )
 
 
+async def parse_response(request: HostedResponseRequest) -> WorkflowTurn[CountdownRequest]:
+    return WorkflowTurn(input=CountdownRequest.model_validate_json(await request.get_input_text() or ""))
+
+
 def main() -> None:
-    """Run the workflow as a durable Responses API host."""
-    print(f"PID: {os.getpid()}")  # lets crash-recovery testing find and kill this process
-    workflow_agent = build_workflow().as_agent(name="countdown-workflow")
-    server = ResponsesHostServer(
-        workflow_agent,
+    # The application's explicit SDK task opt-in is separate from output checkpointing.
+    set_resilient_tasks_enabled(True)
+    ResponsesHostServer(
+        workflow=build_workflow,
+        parse_response=parse_response,
+        checkpoint_store_provider=CheckpointStoreProvider(
+            allowed_checkpoint_types=[f"{CountdownRequest.__module__}:{CountdownRequest.__qualname__}"],
+        ),
         options=ResponsesServerOptions(resilient_background=True),
-        log_level="DEBUG",
-    )
-    server.run()
+    ).run()
 
 
 if __name__ == "__main__":

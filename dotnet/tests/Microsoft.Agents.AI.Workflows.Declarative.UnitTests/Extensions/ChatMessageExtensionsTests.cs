@@ -101,6 +101,7 @@ public sealed class ChatMessageExtensionsTests
         // Assert
         Assert.NotNull(result);
         Assert.Empty(result.Rows);
+        Assert.Equal(TypeSchema.Message.RecordType.ToTable(), result.Type);
     }
 
     [Fact]
@@ -834,7 +835,7 @@ public sealed class ChatMessageExtensionsTests
     }
 
     [Fact]
-    public void MergeForLastMessageAppendsOriginalTextWhenRoundTripHasNoTextSlot()
+    public void MergeForLastMessagePreservesOriginalOrderWhenRoundTripHasNoTextSlot()
     {
         // Arrange: round-tripped message has only media (no text slot to replace).
         HostedFileContent serverRef = new("file-1");
@@ -844,10 +845,69 @@ public sealed class ChatMessageExtensionsTests
         // Act
         ChatMessage result = input.MergeForLastMessage(roundTripped);
 
-        // Assert: media kept; original text appended at end.
+        // Assert: original order is kept while media is replaced by the server reference.
         Assert.Collection(result.Contents,
-            c => Assert.Same(serverRef, c),
-            c => Assert.Equal("middle", Assert.IsType<TextContent>(c).Text));
+            c => Assert.Equal("middle", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(serverRef, c));
+    }
+
+    [Fact]
+    public void MergeForLastMessagePreservesOriginalMediaWhenCanonicalCountDiffers()
+    {
+        // Arrange
+        DataContent firstInput = new("data:image/jpeg;base64,QUE=", "image/jpeg");
+        DataContent secondInput = new("data:image/jpeg;base64,QkI=", "image/jpeg");
+        HostedFileContent canonical = new("file-b");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(ChatRole.User, [canonical]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstInput, content),
+            content => Assert.Same(secondInput, content));
+    }
+
+    [Fact]
+    public void MergeForLastMessageMapsCanonicalizedMediaByProviderOrder()
+    {
+        // Arrange
+        DataContent firstInput = new("data:image/jpeg;base64,QUE=", "image/jpeg");
+        DataContent secondInput = new("data:image/jpeg;base64,QkI=", "image/jpeg");
+        HostedFileContent firstCanonical = new("file-a");
+        HostedFileContent secondCanonical = new("file-b");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(ChatRole.User, [firstCanonical, secondCanonical]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstCanonical, content),
+            content => Assert.Same(secondCanonical, content));
+    }
+
+    [Fact]
+    public void MergeForLastMessageMatchesReorderedCanonicalMediaByStableIdentity()
+    {
+        // Arrange
+        HostedFileContent firstInput = new("file-a");
+        HostedFileContent secondInput = new("file-b");
+        HostedFileContent firstCanonical = new("file-a");
+        HostedFileContent secondCanonical = new("file-b");
+        ChatMessage input = new(ChatRole.User, [firstInput, secondInput]);
+        ChatMessage roundTripped = new(ChatRole.User, [secondCanonical, firstCanonical]) { MessageId = "id" };
+
+        // Act
+        ChatMessage result = input.MergeForLastMessage(roundTripped);
+
+        // Assert
+        Assert.Collection(result.Contents,
+            content => Assert.Same(firstCanonical, content),
+            content => Assert.Same(secondCanonical, content));
     }
 
     [Fact]
@@ -864,10 +924,10 @@ public sealed class ChatMessageExtensionsTests
 
         // Assert
         Assert.Collection(result.Contents,
-            c => Assert.Same(firstRef, c),
             c => Assert.Equal("first", Assert.IsType<TextContent>(c).Text),
-            c => Assert.Same(secondRef, c),
-            c => Assert.Equal("second", Assert.IsType<TextContent>(c).Text));
+            c => Assert.Equal("second", Assert.IsType<TextContent>(c).Text),
+            c => Assert.Same(firstRef, c),
+            c => Assert.Same(secondRef, c));
     }
 
     [Fact]

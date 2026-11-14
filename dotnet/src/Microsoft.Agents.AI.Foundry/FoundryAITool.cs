@@ -1,11 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
+using Microsoft.Shared.DiagnosticIds;
 using OpenAI.Responses;
+using OpenAIContext = OpenAI.OpenAIContext;
 
 #pragma warning disable OPENAI001
 
@@ -16,18 +20,20 @@ namespace Microsoft.Agents.AI.Foundry;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This class wraps <see cref="ProjectsAgentTool"/> (Azure.AI.Projects.Agents) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
+/// This class wraps the Foundry tool types (Azure.AI.Extensions.OpenAI) and <see cref="ResponseTool"/> (OpenAI SDK) factory methods,
 /// returning <see cref="AITool"/> directly — eliminating the need for manual casting and <c>.AsAITool()</c> calls.
 /// </para>
 /// <para>
 /// Instead of writing:
-/// <c>((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(definition)).AsAITool()</c>
+/// <c>new OpenApiTool(definition).AsAITool()</c>
 /// You can write:
 /// <c>FoundryAITool.CreateOpenApiTool(definition)</c>
 /// </para>
 /// </remarks>
 public static class FoundryAITool
 {
+    private static readonly BinaryData s_gaComputerToolJson = BinaryData.FromString("{\"type\":\"computer\"}");
+
     /// <summary>
     /// Converts an existing <see cref="ResponseTool"/> into an <see cref="AITool"/>.
     /// </summary>
@@ -35,7 +41,7 @@ public static class FoundryAITool
     /// <returns>An <see cref="AITool"/> wrapping the provided response tool.</returns>
     public static AITool FromResponseTool(ResponseTool responseTool) => responseTool.AsAITool();
 
-    // --- Azure.AI.Projects.OpenAI ProjectsAgentTool factories ---
+    // --- Azure.AI.Extensions.OpenAI Foundry tool factories ---
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for OpenAPI tool invocations.
@@ -43,7 +49,7 @@ public static class FoundryAITool
     /// <param name="definition">The OpenAPI function definition specifying the API endpoint, schema, and authentication.</param>
     /// <returns>An <see cref="AITool"/> that calls the specified OpenAPI endpoint.</returns>
     public static AITool CreateOpenApiTool(OpenApiFunctionDefinition definition)
-        => ((ResponseTool)ProjectsAgentTool.CreateOpenApiTool(definition)).AsAITool();
+        => new OpenApiTool(definition).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Bing Grounding search.
@@ -51,7 +57,7 @@ public static class FoundryAITool
     /// <param name="options">The Bing Grounding search configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Bing Grounding search.</returns>
     public static AITool CreateBingGroundingTool(BingGroundingSearchToolOptions options)
-        => ((ResponseTool)ProjectsAgentTool.CreateBingGroundingTool(options)).AsAITool();
+        => new BingGroundingTool(options).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Bing Custom Search.
@@ -59,7 +65,7 @@ public static class FoundryAITool
     /// <param name="parameters">The Bing Custom Search configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for Bing Custom Search.</returns>
     public static AITool CreateBingCustomSearchTool(BingCustomSearchToolOptions parameters)
-        => ((ResponseTool)ProjectsAgentTool.CreateBingCustomSearchTool(parameters)).AsAITool();
+        => new BingCustomSearchPreviewTool(parameters).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Microsoft Fabric data agent.
@@ -67,7 +73,7 @@ public static class FoundryAITool
     /// <param name="options">The Fabric data agent configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Microsoft Fabric.</returns>
     public static AITool CreateMicrosoftFabricTool(FabricDataAgentToolOptions options)
-        => ((ResponseTool)ProjectsAgentTool.CreateMicrosoftFabricTool(options)).AsAITool();
+        => new MicrosoftFabricPreviewTool(options).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for SharePoint grounding.
@@ -75,7 +81,7 @@ public static class FoundryAITool
     /// <param name="options">The SharePoint grounding configuration options.</param>
     /// <returns>An <see cref="AITool"/> for SharePoint grounding.</returns>
     public static AITool CreateSharepointTool(SharePointGroundingToolOptions options)
-        => ((ResponseTool)ProjectsAgentTool.CreateSharepointTool(options)).AsAITool();
+        => new SharePointPreviewTool(options).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Azure AI Search.
@@ -83,7 +89,11 @@ public static class FoundryAITool
     /// <param name="options">Optional Azure AI Search configuration options.</param>
     /// <returns>An <see cref="AITool"/> for Azure AI Search.</returns>
     public static AITool CreateAzureAISearchTool(AzureAISearchToolOptions? options = null)
-        => ((ResponseTool)ProjectsAgentTool.CreateAzureAISearchTool(options)).AsAITool();
+    {
+        // Azure.AI.Projects 3.0.0-beta.2's ProjectsAgentTool.CreateAzureAISearchTool substituted empty options for null.
+        // Keep that behavior because the AzureAISearchTool constructor now requires non-null options.
+        return new AzureAISearchTool(options ?? new AzureAISearchToolOptions([])).AsAITool();
+    }
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for browser automation.
@@ -91,7 +101,7 @@ public static class FoundryAITool
     /// <param name="parameters">The browser automation configuration parameters.</param>
     /// <returns>An <see cref="AITool"/> for browser automation.</returns>
     public static AITool CreateBrowserAutomationTool(BrowserAutomationToolOptions parameters)
-        => ((ResponseTool)ProjectsAgentTool.CreateBrowserAutomationTool(parameters)).AsAITool();
+        => new BrowserAutomationPreviewTool(parameters).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for structured output capture.
@@ -99,7 +109,7 @@ public static class FoundryAITool
     /// <param name="outputs">The structured output definition.</param>
     /// <returns>An <see cref="AITool"/> for structured output capture.</returns>
     public static AITool CreateStructuredOutputsTool(StructuredOutputDefinition outputs)
-        => ((ResponseTool)ProjectsAgentTool.CreateStructuredOutputsTool(outputs)).AsAITool();
+        => new CaptureStructuredOutputsTool(outputs).AsAITool();
 
     /// <summary>
     /// Creates an <see cref="AITool"/> for Agent-to-Agent (A2A) communication.
@@ -108,28 +118,60 @@ public static class FoundryAITool
     /// <param name="agentCardPath">Optional path to the agent card.</param>
     /// <returns>An <see cref="AITool"/> for A2A communication.</returns>
     public static AITool CreateA2ATool(Uri baseUri, string? agentCardPath = null)
-        => ProjectsAgentTool.CreateA2ATool(baseUri, agentCardPath).AsAITool();
-
-    /// <summary>
-    /// Creates an <see cref="AITool"/> marker that references a Foundry Toolbox by name so
-    /// the hosted server side can resolve and expose its MCP tools for a single request.
-    /// </summary>
-    /// <param name="toolboxName">The Foundry toolbox name.</param>
-    /// <param name="version">Optional pinned toolbox version. When <see langword="null"/>, the project's default version is used.</param>
-    /// <returns>An <see cref="AITool"/> marker backed by <see cref="HostedMcpToolboxAITool"/>.</returns>
-    public static AITool CreateHostedMcpToolbox(string toolboxName, string? version = null)
-        => new HostedMcpToolboxAITool(toolboxName, version);
+        => new A2APreviewTool { BaseUri = baseUri, AgentCardPath = agentCardPath }.AsAITool();
 
     // --- OpenAI SDK ResponseTool factories ---
 
     /// <summary>
-    /// Creates an <see cref="AITool"/> for computer use (screen interaction).
+    /// Creates an <see cref="AITool"/> for the generally available (GA) OpenAI computer tool (<c>{"type":"computer"}</c>).
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The GA tool has no environment or display settings: the model infers the screen from the screenshots it receives.
+    /// Each <c>computer_call</c> it returns carries an ordered <c>actions</c> batch that the caller runs in order before
+    /// sending back a single <c>computer_call_output</c> screenshot.
+    /// </para>
+    /// <para>
+    /// To use the preview <c>computer_use_preview</c> tool, whose <c>computer_call</c> items carry a single <c>action</c>,
+    /// use the <see cref="CreateComputerTool(ComputerToolEnvironment, int, int)"/> overload instead.
+    /// </para>
+    /// <para>
+    /// Known limitation: the OpenAI .NET SDK models only the preview <c>computer_call</c> item, so an agent that keeps its
+    /// history locally and sends a GA <c>computer_call</c> back to the model (for example with stored responses disabled)
+    /// adds <c>"action": null</c>, which the Responses API rejects for the GA tool. Continuing the conversation from the
+    /// stored response (the default for a Responses agent session) only sends the new <c>computer_call_output</c> and is
+    /// not affected, and Foundry hosting sends computer calls back in the GA shape.
+    /// </para>
+    /// </remarks>
+    /// <returns>An <see cref="AITool"/> for the GA computer tool.</returns>
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
+    public static AITool CreateComputerTool()
+    {
+        // OpenAI .NET (2.13.0 and 2.14.0) has no factory for the GA tool: ResponseTool.CreateComputerTool always emits
+        // computer_use_preview. Reading the GA wire shape yields an unknown-type ResponseTool that serializes back
+        // exactly as {"type":"computer"}, so it can be sent today. Switch to the typed OpenAI API once it ships.
+        ResponseTool tool = ModelReaderWriter.Read<ResponseTool>(s_gaComputerToolJson, ModelReaderWriterOptions.Json, OpenAIContext.Default)!;
+        return tool.AsAITool();
+    }
+
+    /// <summary>
+    /// Creates an <see cref="AITool"/> for the preview OpenAI computer use tool (<c>computer_use_preview</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The preview tool is used with the <c>computer-use-preview</c> model and declares the environment and display size.
+    /// Each <c>computer_call</c> it returns carries a single <c>action</c>.
+    /// </para>
+    /// <para>
+    /// To use the generally available (GA) <c>computer</c> tool, which takes no settings and returns batched <c>actions</c>,
+    /// use the parameterless <see cref="CreateComputerTool()"/> overload instead.
+    /// </para>
+    /// </remarks>
     /// <param name="environment">The computer tool environment type.</param>
     /// <param name="displayWidth">The display width in pixels.</param>
     /// <param name="displayHeight">The display height in pixels.</param>
-    /// <returns>An <see cref="AITool"/> for computer use.</returns>
-    [Experimental("OPENAICUA001")]
+    /// <returns>An <see cref="AITool"/> for the preview computer use tool.</returns>
+    [Experimental(DiagnosticIds.Experiments.AIOpenAIResponses)]
     public static AITool CreateComputerTool(ComputerToolEnvironment environment, int displayWidth, int displayHeight)
         => ResponseTool.CreateComputerTool(environment, displayWidth, displayHeight).AsAITool();
 

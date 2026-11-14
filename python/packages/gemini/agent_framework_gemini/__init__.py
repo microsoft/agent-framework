@@ -5,10 +5,14 @@ import importlib.metadata
 from ._chat_client import (
     GeminiChatClient,
     GeminiChatOptions,
-    GeminiSettings,
     GoogleGeminiSettings,
     RawGeminiChatClient,
     ThinkingConfig,
+)
+from ._embedding_client import (
+    GeminiEmbeddingClient,
+    GeminiEmbeddingOptions,
+    RawGeminiEmbeddingClient,
 )
 
 try:
@@ -19,9 +23,11 @@ except importlib.metadata.PackageNotFoundError:
 __all__ = [
     "GeminiChatClient",
     "GeminiChatOptions",
-    "GeminiSettings",
+    "GeminiEmbeddingClient",
+    "GeminiEmbeddingOptions",
     "GoogleGeminiSettings",
     "RawGeminiChatClient",
+    "RawGeminiEmbeddingClient",
     "ThinkingConfig",
     "__version__",
 ]

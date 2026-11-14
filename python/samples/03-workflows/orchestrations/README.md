@@ -45,6 +45,11 @@ from agent_framework.orchestrations import (
 
 ### group-chat
 
+[Group chat message filtering](./group_chat_message_filtering.py) demonstrates
+intercepting participant text before shared-history updates and broadcasts, using
+a custom orchestrator for sender validation, content filtering, and redaction.
+The example deliberately leaves participant intermediate outputs disabled.
+
 | Sample                               | File                                                                                                         | Concepts                                                                                              |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
 | Group Chat with Agent Manager        | [group_chat_agent_manager.py](./group_chat_agent_manager.py)                           | Agent-based manager using `with_orchestrator(agent=)` to select next speaker                        |

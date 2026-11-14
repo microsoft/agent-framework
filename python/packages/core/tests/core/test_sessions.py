@@ -3,17 +3,18 @@
 import asyncio
 import json
 import math
+import os
 import threading
 import time
+import tracemalloc
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 from unittest.mock import patch
 
 import msgspec
 import pytest
-from typing_extensions import Self
 
 from agent_framework import (
     AgentContext,
@@ -43,6 +44,7 @@ from agent_framework._sessions import (
     _run_identity_scope,
     _RunPersistenceGate,
     _suspend_run_persistence_gate,
+    filter_new_messages,
     is_local_history_conversation_id,
 )
 from agent_framework._telemetry import FeatureIndex
@@ -52,6 +54,51 @@ from .test_filesystem import COLLIDING_IDENTIFIERS
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
+
+
+def test_filter_new_messages_preserves_repeated_user_turn() -> None:
+    existing = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+    incoming = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+
+    assert filter_new_messages(existing, incoming) == incoming
+
+
+def test_filter_new_messages_preserves_repeated_user_after_unanswered_input() -> None:
+    previous_input = Message(role="user", contents=["yes"])
+    repeated_input = Message(role="user", contents=["yes"])
+    reply = Message(role="assistant", contents=["second reply"])
+
+    assert filter_new_messages([previous_input], [repeated_input]) == [repeated_input]
+    assert filter_new_messages([previous_input], [repeated_input, reply]) == [repeated_input, reply]
+
+    identified_input = Message(role="user", contents=["yes"], message_id="turn-1")
+    assert filter_new_messages([identified_input], [identified_input]) == []
+
+
+def test_filter_new_messages_aligns_partial_replay_with_repeated_content() -> None:
+    existing = [
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["first reply"]),
+        Message(role="user", contents=["yes"]),
+        Message(role="assistant", contents=["second reply"]),
+    ]
+    new_messages = [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["third reply"])]
+    incoming = [*existing[-2:], *new_messages]
+
+    assert filter_new_messages(existing, incoming) == new_messages
+
+
+def test_filter_new_messages_keeps_tool_call_result_pairs_on_replay() -> None:
+    call = Message(
+        role="assistant", contents=[Content.from_function_call(call_id="call-1", name="lookup", arguments="{}")]
+    )
+    result = Message(role="tool", contents=[Content.from_function_result(call_id="call-1", result="found")])
+    existing = [Message(role="user", contents=["lookup"]), call, result]
+    new_messages = [Message(role="user", contents=["lookup"]), Message(role="assistant", contents=["again"])]
+
+    assert filter_new_messages(existing, [*existing, *new_messages]) == new_messages
+    assert filter_new_messages(existing, [result, *new_messages]) == new_messages
+
 
 # ---------------------------------------------------------------------------
 # SessionContext tests
@@ -426,19 +473,35 @@ def test_filter_approval_controls_deduplicates_pending_request_replay() -> None:
     assert requests == [request]
 
 
-def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> None:
+def test_filter_approval_controls_keeps_response_without_terminal_result() -> None:
+    """Pending state is represented by typed controls, not a textual tool result."""
     function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
     request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
     response = request.to_function_approval_response(approved=True)
-    placeholder = Content.from_function_result(
+    messages = [
+        Message(role="assistant", contents=[function_call, request]),
+        Message(role="user", contents=[response]),
+    ]
+
+    filtered = _filter_approval_control_messages(messages)
+
+    assert [content for message in filtered for content in message.contents] == [function_call, response]
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_consumes_terminal_result_regardless_of_text(result: str) -> None:
+    function_call = Content.from_function_call(call_id="call_pending", name="guarded", arguments="{}")
+    request = Content.from_function_approval_request(id="approval_pending", function_call=function_call)
+    response = request.to_function_approval_response(approved=True)
+    terminal_result = Content.from_function_result(
         call_id="call_pending",
-        result="[APPROVAL_PENDING] waiting for execution",
+        result=result,
     )
 
     filtered = _filter_approval_control_messages([
         Message(role="assistant", contents=[function_call, request]),
         Message(role="user", contents=[response]),
-        Message(role="tool", contents=[placeholder]),
+        Message(role="tool", contents=[terminal_result]),
     ])
 
     controls = [
@@ -447,8 +510,33 @@ def test_filter_approval_controls_keeps_response_for_pending_placeholder() -> No
         for content in message.contents
         if content.type in {"function_approval_request", "function_approval_response"}
     ]
-    assert controls == [response]
-    assert any(placeholder in message.contents for message in filtered)
+    assert controls == []
+    assert any(terminal_result in message.contents for message in filtered)
+
+
+@pytest.mark.parametrize("result", ["done", "before [APPROVAL_PENDING] after", "[APPROVAL_PENDING]"])
+def test_filter_approval_controls_discards_response_after_terminal_result(result: str) -> None:
+    """A late response belongs to the closed occurrence, not a reused-call-id sibling."""
+    first_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    first_request = Content.from_function_approval_request(id="approval_1", function_call=first_call)
+    stale_response = first_request.to_function_approval_response(approved=True)
+    second_call = Content.from_function_call(call_id="reused", name="guarded", arguments="{}")
+    second_request = Content.from_function_approval_request(id="approval_2", function_call=second_call)
+
+    filtered = _filter_approval_control_messages([
+        Message(role="assistant", contents=[first_call, first_request]),
+        Message(role="tool", contents=[Content.from_function_result(call_id="reused", result=result)]),
+        Message(role="user", contents=[stale_response]),
+        Message(role="assistant", contents=[second_call, second_request]),
+    ])
+
+    controls = [
+        content
+        for message in filtered
+        for content in message.contents
+        if content.type in {"function_approval_request", "function_approval_response"}
+    ]
+    assert controls == [second_request]
 
 
 def _replacement_approval_round(
@@ -586,7 +674,9 @@ class TestHistoryProviderBase:
                 contents=[
                     Content.from_code_interpreter_tool_call(
                         call_id="ci_123",
+                        # Final snapshot: authoritative full value.
                         inputs=[Content.from_text(text="import pandas as pd")],
+                        merge_mode="replace",
                         additional_properties={"sequence_number": 3},
                     )
                 ],
@@ -748,6 +838,13 @@ register_state_type(_RegisteredSessionState)
 
 
 class TestStateTypeRegistry:
+    @pytest.fixture(autouse=True)
+    def isolate_state_registry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from agent_framework import _sessions
+
+        monkeypatch.setattr(_sessions, "_STATE_TYPE_REGISTRY", _sessions._STATE_TYPE_REGISTRY.copy())
+        monkeypatch.setattr(_sessions, "_STATE_CLASS_REGISTRY", _sessions._STATE_CLASS_REGISTRY.copy())
+
     def test_same_registration_is_idempotent(self) -> None:
         register_state_type(_RegisteredSessionState)
 
@@ -880,6 +977,8 @@ class TestStateTypeRegistry:
         }
 
     def test_registered_child_tag_does_not_hijack_message_payload(self) -> None:
+        from agent_framework import _sessions
+
         @dataclass
         class TextState:
             value: str
@@ -890,13 +989,17 @@ class TestStateTypeRegistry:
             encoder=lambda value: {"value": value.value},
             decoder=lambda value: TextState(str(value["value"])),
         )
-        session = AgentSession(session_id="message")
-        session.state["message"] = Message(role="user", contents=["hello"])
+        try:
+            session = AgentSession(session_id="message")
+            session.state["message"] = Message(role="user", contents=["hello"])
 
-        restored = AgentSession.from_dict(session.to_dict())
+            restored = AgentSession.from_dict(session.to_dict())
 
-        assert isinstance(restored.state["message"], Message)
-        assert restored.state["message"].text == "hello"
+            assert isinstance(restored.state["message"], Message)
+            assert restored.state["message"].text == "hello"
+        finally:
+            _sessions._STATE_TYPE_REGISTRY.pop("text", None)
+            _sessions._STATE_CLASS_REGISTRY.pop(TextState, None)
 
     @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_float_preserves_legacy_dictionary_serialization(self, value: float) -> None:
@@ -1154,6 +1257,95 @@ class TestFileSessionStore:
         assert stored.session_id == "second"
         temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
         assert not temp_files
+
+    async def test_set_retries_transient_permission_error_during_atomic_replace(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The retry is Windows-only, so pin the platform flag to exercise it on every CI OS.
+        monkeypatch.setattr("agent_framework._sessions._RETRY_REPLACE_ON_THIS_PLATFORM", True)
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+
+        real_replace = os.replace
+        attempts = 0
+
+        def flaky_replace(source: Any, target: Any) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError(13, "Access is denied")
+            real_replace(source, target)
+
+        monkeypatch.setattr(os, "replace", flaky_replace)
+
+        await store.set("session-1", AgentSession(session_id="second"))
+
+        assert attempts >= 2
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.session_id == "second"
+        temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
+        assert not temp_files
+
+    async def test_set_retries_three_times_then_preserves_snapshot_on_persistent_permission_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Pin the Windows-only retry path so every CI OS exercises the same code.
+        monkeypatch.setattr("agent_framework._sessions._RETRY_REPLACE_ON_THIS_PLATFORM", True)
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+
+        attempts = 0
+        delays: list[float] = []
+
+        def denied_replace(source: Any, target: Any) -> None:
+            nonlocal attempts
+            attempts += 1
+            raise PermissionError(13, "Access is denied")
+
+        def recording_sleep(seconds: float) -> None:
+            delays.append(seconds)
+
+        monkeypatch.setattr(os, "replace", denied_replace)
+        monkeypatch.setattr("agent_framework._sessions.time.sleep", recording_sleep)
+
+        with pytest.raises(PermissionError):
+            await store.set("session-1", AgentSession(session_id="second"))
+
+        assert attempts == 3
+        assert delays == [pytest.approx(0.01), pytest.approx(0.02)]
+        temp_files = await asyncio.to_thread(lambda: [*tmp_path.glob("*.tmp"), *tmp_path.glob(".*.tmp")])
+        assert not temp_files
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.session_id == "first"
+
+    async def test_set_reports_permission_error_without_retrying_off_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On POSIX a PermissionError is a real one: retrying only delays the same failure.
+        monkeypatch.setattr("agent_framework._sessions._RETRY_REPLACE_ON_THIS_PLATFORM", False)
+        store = FileSessionStore(tmp_path)
+        await store.set("session-1", AgentSession(session_id="first"))
+
+        real_replace = os.replace
+        attempts = 0
+
+        def denied_replace(source: Any, target: Any) -> None:
+            nonlocal attempts
+            attempts += 1
+            raise PermissionError(13, "Access is denied")
+
+        monkeypatch.setattr(os, "replace", denied_replace)
+
+        with pytest.raises(PermissionError):
+            await store.set("session-1", AgentSession(session_id="second"))
+
+        assert attempts == 1
+        monkeypatch.setattr(os, "replace", real_replace)
+        stored = await store.get("session-1")
+        assert stored is not None
+        assert stored.session_id == "first"
 
     async def test_corrupt_session_file_is_quarantined_and_retry_returns_none(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
@@ -1583,6 +1775,23 @@ class TestInMemoryHistoryProvider:
         assert state["messages"][0].text == "yes"
         assert state["messages"][1].text == "yes"
 
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(self) -> None:
+        provider = InMemoryHistoryProvider()
+        state: dict[str, Any] = {}
+
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])],
+            state=state,
+        )
+        await provider.save_messages(
+            "s1",
+            [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])],
+            state=state,
+        )
+
+        assert [message.text for message in state["messages"]] == ["yes", "first reply", "yes", "second reply"]
+
     async def test_save_messages_handles_replayed_transcript_with_duplicates(self) -> None:
         provider = InMemoryHistoryProvider()
         state: dict[str, Any] = {}
@@ -1601,6 +1810,26 @@ class TestInMemoryHistoryProvider:
         assert len(state["messages"]) == 4
         texts = [m.text for m in state["messages"]]
         assert texts == ["B", "C", "B", "D"]
+
+
+def _damage_last_history_record(
+    provider: FileHistoryProvider, session_file: Path, serialization_format: Literal["json", "msgpack"]
+) -> bytes:
+    """Replace the last stored record with bytes that cannot be deserialized.
+
+    Returns the damaged file contents so the caller can assert it is left alone.
+    """
+    if serialization_format == "json":
+        lines = session_file.read_text(encoding="utf-8").splitlines()
+        damaged = "\n".join([*lines[:-1], "{not json"]) + "\n"
+        encoded = damaged.encode("utf-8")
+    else:
+        raw = session_file.read_bytes()
+        header_bytes = provider._MSGPACK_RECORD_HEADER_BYTES
+        first_length = int.from_bytes(raw[:header_bytes], "big")
+        encoded = raw[: header_bytes + first_length] + (4).to_bytes(header_bytes, "big") + b"\x00\x01\x02\x03"
+    session_file.write_bytes(encoded)
+    return encoded
 
 
 class TestFileHistoryProvider:
@@ -1657,6 +1886,34 @@ class TestFileHistoryProvider:
 
         loaded = await provider.get_messages("replayed-transcript")
         assert [message.text for message in loaded] == ["hello", "hi there", "follow-up", "reply"]
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_reports_an_unreadable_history_record(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+        first_turn = [
+            Message(role="user", contents=["hello"]),
+            Message(role="assistant", contents=["hi there"]),
+        ]
+        full_transcript = [
+            *first_turn,
+            Message(role="user", contents=["follow-up"]),
+            Message(role="assistant", contents=["reply"]),
+        ]
+        await provider.save_messages("damaged-history", first_turn)
+        session_file = provider._session_file_path("damaged-history")
+        damaged_contents = _damage_last_history_record(provider, session_file, serialization_format)
+
+        # The record is unreadable, so reading the history reports it ...
+        with pytest.raises(ValueError):
+            await provider.get_messages("damaged-history")
+        # ... and appending must not treat the unreadable message as absent:
+        # that replays it into the file and reports success.
+        with pytest.raises(ValueError):
+            await provider.save_messages("damaged-history", full_transcript)
+
+        assert session_file.read_bytes() == damaged_contents
 
     @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
     async def test_round_trips_marked_refusal_text(
@@ -1826,6 +2083,95 @@ class TestFileHistoryProvider:
 
         with pytest.raises(ValueError, match="record 1.*truncated"):
             await provider.get_messages("broken")
+
+    async def test_msgpack_rejects_oversized_batch_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("oversized")
+        await provider.save_messages("oversized", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "oversized",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    Message(role="assistant", contents=["x" * 256]),
+                ],
+            )
+
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello"]
+
+        await provider.save_messages("oversized", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("oversized")] == ["hello", "fits"]
+
+    async def test_msgpack_rejects_record_that_grows_after_preflight_without_mutating_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class GrowingMessage(Message):
+            """Fits the record limit on the first to_dict() call and exceeds it afterwards."""
+
+            to_dict_calls = 0
+
+            def to_dict(self, *, exclude: set[str] | None = None, exclude_none: bool = True) -> dict[str, Any]:
+                GrowingMessage.to_dict_calls += 1
+                if GrowingMessage.to_dict_calls > 1:
+                    return Message(role="assistant", contents=["x" * 256]).to_dict()
+                return super().to_dict(exclude=exclude, exclude_none=exclude_none)
+
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", 256)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+        session_file = provider._session_file_path("growing")
+        await provider.save_messages("growing", [Message(role="user", contents=["hello"])])
+        saved_bytes = await asyncio.to_thread(session_file.read_bytes)
+
+        # The first message is written before the grown record is found, so the rollback must remove it too.
+        with pytest.raises(ValueError, match="exceeds the 256-byte MessagePack history record limit"):
+            await provider.save_messages(
+                "growing",
+                [
+                    Message(role="assistant", contents=["fits"]),
+                    GrowingMessage(role="assistant", contents=["grows"]),
+                ],
+            )
+
+        assert GrowingMessage.to_dict_calls == 2
+        assert await asyncio.to_thread(session_file.read_bytes) == saved_bytes
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello"]
+
+        await provider.save_messages("growing", [Message(role="assistant", contents=["fits"])])
+        assert [message.text for message in await provider.get_messages("growing")] == ["hello", "fits"]
+
+    async def test_msgpack_record_at_size_limit_round_trips(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        message = Message(role="assistant", contents=["at the limit"])
+        record_length = len(msgspec.msgpack.encode(message.to_dict()))
+        monkeypatch.setattr(FileHistoryProvider, "_MAX_MSGPACK_RECORD_BYTES", record_length)
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        await provider.save_messages("limit", [message])
+
+        assert [loaded.text for loaded in await provider.get_messages("limit")] == ["at the limit"]
+
+    async def test_msgpack_batch_save_memory_does_not_grow_with_batch_length(self, tmp_path: Path) -> None:
+        record_text_bytes = 1024 * 1024
+        batch = [Message(role="assistant", contents=[str(index) * record_text_bytes]) for index in range(16)]
+        provider = FileHistoryProvider(tmp_path, serialization_format="msgpack")
+
+        tracemalloc.start()
+        try:
+            await provider.save_messages("large-batch", batch)
+            _, peak_bytes = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+
+        # Holding every encoded record at once would need about 16 MiB; one record at a time stays near 1 MiB.
+        assert peak_bytes < 6 * record_text_bytes
+        assert len(await provider.get_messages("large-batch")) == len(batch)
 
     async def test_missing_session_file_returns_empty_messages(self, tmp_path: Path) -> None:
         provider = FileHistoryProvider(tmp_path)
@@ -2021,6 +2367,22 @@ class TestFileHistoryProvider:
         assert len(loaded) == 2
         assert loaded[0].text == "yes"
         assert loaded[1].text == "yes"
+
+    @pytest.mark.parametrize("serialization_format", ["json", "msgpack"])
+    async def test_save_messages_preserves_repeated_user_turn_across_saves(
+        self, tmp_path: Path, serialization_format: Literal["json", "msgpack"]
+    ) -> None:
+        provider = FileHistoryProvider(tmp_path, serialization_format=serialization_format)
+
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["first reply"])]
+        )
+        await provider.save_messages(
+            "s1", [Message(role="user", contents=["yes"]), Message(role="assistant", contents=["second reply"])]
+        )
+
+        loaded = await provider.get_messages("s1")
+        assert [message.text for message in loaded] == ["yes", "first reply", "yes", "second reply"]
 
 
 # ---------------------------------------------------------------------------

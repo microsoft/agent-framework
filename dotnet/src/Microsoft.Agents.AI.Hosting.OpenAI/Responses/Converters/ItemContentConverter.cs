@@ -1,8 +1,15 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.Json;
 using Microsoft.Agents.AI.Hosting.OpenAI.Responses.Models;
 using Microsoft.Extensions.AI;
+using OpenAI.Responses;
+
+#pragma warning disable OPENAI001 // Responses API annotation models are experimental.
 
 namespace Microsoft.Agents.AI.Hosting.OpenAI.Responses.Converters;
 
@@ -70,6 +77,15 @@ internal static class ItemContentConverter
             ItemContentOutputAudio outputAudio =>
                 new DataContent(outputAudio.Data, "audio/*"),
 
+            ItemContentFunctionApprovalResponse approvalResponse =>
+                new ToolApprovalResponseContent(
+                    approvalResponse.RequestId,
+                    approvalResponse.Approved,
+                    new FunctionCallContent(
+                        approvalResponse.FunctionCall.Id,
+                        approvalResponse.FunctionCall.Name,
+                        ToFunctionArguments(approvalResponse.FunctionCall.Arguments))),
+
             _ => null
         };
 
@@ -96,6 +112,32 @@ internal static class ItemContentConverter
     public static ItemContent? ToItemContent(AIContent content)
     {
         // Check if we already have the raw representation to avoid unnecessary conversion
+        if (content is TextContent textWithRawOutput && content.RawRepresentation is ItemContentOutputText rawOutputText)
+        {
+            List<JsonElement> currentAnnotations = [.. ToAnnotations(textWithRawOutput)];
+            if (currentAnnotations.Count == 0)
+            {
+                return rawOutputText;
+            }
+
+            List<JsonElement> annotations = [.. rawOutputText.Annotations];
+            foreach (JsonElement annotation in currentAnnotations)
+            {
+                if (!annotations.Any(existing =>
+                    string.Equals(existing.GetRawText(), annotation.GetRawText(), StringComparison.Ordinal)))
+                {
+                    annotations.Add(annotation);
+                }
+            }
+
+            return new ItemContentOutputText
+            {
+                Text = rawOutputText.Text,
+                Annotations = annotations,
+                Logprobs = [.. rawOutputText.Logprobs]
+            };
+        }
+
         if (content.RawRepresentation is ItemContent itemContent)
         {
             return itemContent;
@@ -103,7 +145,7 @@ internal static class ItemContentConverter
 
         ItemContent? result = content switch
         {
-            TextContent textContent => new ItemContentOutputText { Text = textContent.Text ?? string.Empty, Annotations = [], Logprobs = [] },
+            TextContent textContent => new ItemContentOutputText { Text = textContent.Text ?? string.Empty, Annotations = [.. ToAnnotations(textContent)], Logprobs = [] },
             TextReasoningContent reasoningContent => new ItemContentOutputText { Text = reasoningContent.Text ?? string.Empty, Annotations = [], Logprobs = [] },
             ErrorContent errorContent => new ItemContentRefusal { Refusal = errorContent.Message ?? string.Empty },
             UriContent uriContent when uriContent.HasTopLevelMediaType("image") =>
@@ -146,6 +188,56 @@ internal static class ItemContentConverter
     }
 
     /// <summary>
+    /// Converts supported citations using the OpenAI SDK's wire representation.
+    /// </summary>
+    internal static IEnumerable<JsonElement> ToAnnotations(AIContent content, int textOffset = 0)
+    {
+        foreach (AIAnnotation annotation in content.Annotations ?? [])
+        {
+            if (annotation is not CitationAnnotation citation)
+            {
+                continue;
+            }
+
+            bool isProviderAnnotation = citation.RawRepresentation is ResponseMessageAnnotation;
+            TextSpanAnnotatedRegion[]? regions = citation.AnnotatedRegions?
+                .OfType<TextSpanAnnotatedRegion>()
+                .Where(region => region.StartIndex is not null && region.EndIndex is not null)
+                .ToArray();
+
+            if (citation.Url is { } url && regions is { Length: > 0 })
+            {
+                foreach (TextSpanAnnotatedRegion region in regions)
+                {
+                    int start = region.StartIndex!.Value;
+                    int end = region.EndIndex!.Value;
+                    if (!isProviderAnnotation)
+                    {
+                        start += textOffset;
+                        end += textOffset;
+                    }
+
+                    yield return SerializeAnnotation(new UriCitationMessageAnnotation(url, start, end, citation.Title ?? string.Empty));
+                }
+
+                continue;
+            }
+
+            if (citation.RawRepresentation is ResponseMessageAnnotation rawAnnotation)
+            {
+                yield return SerializeAnnotation(rawAnnotation);
+            }
+        }
+
+        static JsonElement SerializeAnnotation(ResponseMessageAnnotation annotation)
+        {
+            using JsonDocument document = JsonDocument.Parse(
+                ((IPersistableModel<ResponseMessageAnnotation>)annotation).Write(ModelReaderWriterOptions.Json).ToMemory());
+            return document.RootElement.Clone();
+        }
+    }
+
+    /// <summary>
     /// Extracts the image detail level from <see cref="AIContent"/>'s additional properties.
     /// </summary>
     /// <param name="content">The <see cref="AIContent"/> to extract detail from.</param>
@@ -158,5 +250,23 @@ internal static class ItemContentConverter
         }
 
         return null;
+    }
+
+    private static Dictionary<string, object?>? ToFunctionArguments(JsonElement arguments)
+    {
+        if (arguments.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        // Keep each value as a cloned JsonElement so nested objects, arrays, numbers, booleans,
+        // and null values retain their original JSON representation.
+        var result = new Dictionary<string, object?>();
+        foreach (JsonProperty property in arguments.EnumerateObject())
+        {
+            result[property.Name] = property.Value.Clone();
+        }
+
+        return result;
     }
 }

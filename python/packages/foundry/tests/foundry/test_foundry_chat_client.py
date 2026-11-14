@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import warnings
+from collections.abc import Iterator, Mapping
 from functools import wraps
 from importlib import import_module
 from pathlib import Path
@@ -28,7 +29,12 @@ from agent_framework import (
 from agent_framework._sessions import AgentSession
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 from agent_framework.exceptions import ChatClientException, ChatClientInvalidRequestException
-from agent_framework_openai import OpenAIChatClient, OpenAIContentFilterException
+from agent_framework_openai import (
+    OpenAIChatClient,
+    OpenAIChatOptions,
+    OpenAIContentFilterException,
+    OpenAIContinuationToken,
+)
 from agent_framework_openai._chat_client import RawOpenAIChatClient
 from azure.ai.projects.models import MCPTool as FoundryMCPTool
 from azure.core.exceptions import ResourceNotFoundError
@@ -42,6 +48,7 @@ from pytest import param
 
 from agent_framework_foundry import FoundryChatClient, RawFoundryChatClient
 from agent_framework_foundry._feature_usage import FeatureIndex, FeatureUsagePolicy
+from agent_framework_foundry._tools import _to_plain_dict
 
 _OPENAI_HTTPX = cast(Any, import_module(DefaultAsyncHttpxClient.__mro__[1].__module__.partition(".")[0]))
 
@@ -53,12 +60,29 @@ class OutputStruct(BaseModel):
     weather: str | None = None
 
 
-def test_foundry_feature_usage_policy_refreshes_user_agent() -> None:
+class FoundryReasoningItem(BaseModel):
+    """Minimal Foundry reasoning item used to verify provider-native replay."""
+
+    type: str = "reasoning"
+    id: str
+    response_id: str
+    summary: list[Any]
+    content: list[Any]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://project.services.ai.azure.com/api/projects/test",
+        "https://project.openai.azure.com/openai/v1/embeddings",
+    ],
+)
+def test_foundry_feature_usage_policy_refreshes_user_agent(url: str) -> None:
     with telemetry._feature_mask_lock:
         telemetry._feature_mask = 0
     mark_feature_used(FeatureIndex.FOUNDRY_CHAT_CLIENT)
     request = MagicMock()
-    request.http_request.url = "https://project.services.ai.azure.com/api/projects/test"
+    request.http_request.url = url
     request.http_request.headers = {"User-Agent": "azsdk-python-ai-projects/1.0 agent-framework-python/1.0"}
     FeatureUsagePolicy().on_request(request)
 
@@ -161,12 +185,7 @@ def _with_foundry_debug() -> Any:
                     f"project_endpoint={os.getenv('FOUNDRY_PROJECT_ENDPOINT', '<unset>')}, "
                     f"model={os.getenv('FOUNDRY_MODEL', '<unset>')}"
                 )
-                if hasattr(exc, "add_note"):
-                    cast(Any, exc).add_note(debug_message)
-                elif exc.args:
-                    exc.args = (f"{exc.args[0]}\n{debug_message}", *exc.args[1:])
-                else:
-                    exc.args = (debug_message,)
+                exc.add_note(debug_message)
                 raise
 
         return wrapper
@@ -265,6 +284,30 @@ def test_foundry_chat_client_init_uses_explicit_parameters() -> None:
     assert "tokenizer" in signature.parameters
     assert "additional_properties" in signature.parameters
     assert all(parameter.kind != inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values())
+
+
+def test_init_applies_timeout_to_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    timeout_client = _make_mock_openai_client()
+    mock_openai_client.with_options.return_value = timeout_client
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL, timeout=12.5)
+
+    mock_openai_client.with_options.assert_called_once_with(timeout=12.5)
+    assert client.client is timeout_client
+
+
+def test_init_without_timeout_keeps_openai_client() -> None:
+    mock_openai_client = _make_mock_openai_client()
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = mock_openai_client
+
+    client = FoundryChatClient(project_client=mock_project_client, model=_TEST_FOUNDRY_MODEL)
+
+    mock_openai_client.with_options.assert_not_called()
+    assert client.client is mock_openai_client
 
 
 def test_init_with_default_header() -> None:
@@ -517,6 +560,224 @@ async def test_get_response_preserves_explicit_encrypted_reasoning_opt_in() -> N
     )
 
     assert response.response_id == "response_123"
+
+
+async def test_stateless_replay_uses_foundry_reasoning_item_without_encrypted_content() -> None:
+    reasoning_item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_background",
+        summary=[],
+        content=[],
+    )
+    function_call = MagicMock(
+        type="function_call",
+        id="fc_foundry",
+        call_id="call_foundry",
+        arguments='{"step":1}',
+        status="completed",
+    )
+    function_call.name = "lookup_probe"
+    mock_response = MagicMock(
+        id="resp_background",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[reasoning_item, function_call],
+        usage=None,
+        conversation=None,
+        status="completed",
+        incomplete_details=None,
+    )
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    response = client._parse_response_from_openai(mock_response, options={"store": False})
+
+    messages = [
+        Message(role="user", contents=["Run the probe."]),
+        *response.messages,
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_foundry", result="probe-result-step-1")],
+        ),
+    ]
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "Run the probe."}],
+        },
+        {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_background",
+            "summary": [],
+            "content": [],
+        },
+        {
+            "call_id": "call_foundry",
+            "id": "fc_foundry",
+            "type": "function_call",
+            "name": "lookup_probe",
+            "arguments": '{"step":1}',
+            "status": "completed",
+        },
+        {
+            "call_id": "call_foundry",
+            "type": "function_call_output",
+            "output": "probe-result-step-1",
+        },
+    ]
+
+
+def test_streaming_stateless_replay_prefers_completed_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    added = MagicMock()
+    added.type = "response.output_item.added"
+    added.output_index = 0
+    added.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_incomplete",
+        summary=[],
+        content=[],
+    )
+    done = MagicMock()
+    done.type = "response.output_item.done"
+    done.output_index = 0
+    done.item = FoundryReasoningItem(
+        id="rs_foundry",
+        response_id="resp_complete",
+        summary=[],
+        content=[],
+    )
+
+    response = ChatResponse.from_updates([
+        client._parse_chunk_from_openai(added, {}, {}),
+        client._parse_chunk_from_openai(done, {}, {}),
+    ])
+
+    reasoning_items = client._prepare_reasoning_items_for_openai(response.messages)
+
+    assert reasoning_items == {
+        "rs_foundry": {
+            "type": "reasoning",
+            "id": "rs_foundry",
+            "response_id": "resp_complete",
+            "summary": [],
+            "content": [],
+        }
+    }
+
+
+async def test_stateless_replay_accepts_canonical_foundry_reasoning_metadata() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    reasoning_item = {
+        "type": "reasoning",
+        "id": "rs_canonical",
+        "response_id": "resp_canonical",
+        "summary": [],
+        "content": [],
+    }
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_canonical",
+                    text="",
+                    additional_properties={"foundry": {"reasoning_item": reasoning_item}},
+                ),
+                Content.from_function_call(
+                    call_id="call_canonical",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_canonical", result="probe-result-step-1")],
+        ),
+    ]
+
+    _, run_options, _ = await client._prepare_request(messages, {"store": False})
+
+    assert run_options["input"][0] == reasoning_item
+
+
+async def test_stateless_replay_rejects_incomplete_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(id="rs_incomplete", text=""),
+                Content.from_function_call(
+                    call_id="call_incomplete",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_incomplete", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_incomplete.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
+
+
+async def test_stateless_replay_rejects_malformed_stored_foundry_reasoning_item() -> None:
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+    messages = [
+        Message(
+            role="assistant",
+            contents=[
+                Content.from_text_reasoning(
+                    id="rs_malformed",
+                    text="",
+                    additional_properties={
+                        "__foundry_reasoning_replay_item__": {
+                            "id": "rs_malformed",
+                        }
+                    },
+                ),
+                Content.from_function_call(
+                    call_id="call_malformed",
+                    name="lookup_probe",
+                    arguments='{"step":1}',
+                ),
+            ],
+        ),
+        Message(
+            role="tool",
+            contents=[Content.from_function_result(call_id="call_malformed", result="probe-result-step-1")],
+        ),
+    ]
+
+    with pytest.raises(
+        ChatClientInvalidRequestException,
+        match="rs_malformed.*required reasoning replay data is missing or invalid",
+    ):
+        await client._prepare_request(messages, {"store": False})
 
 
 async def test_web_search_tool_with_location() -> None:
@@ -797,6 +1058,23 @@ async def test_bad_request_error_non_content_filter() -> None:
     assert "failed to complete the prompt" in str(exc_info.value)
 
 
+def test_get_mcp_tool_merges_both_approval_lists() -> None:
+    """Both approval lists must survive: overwriting the first with the second would
+    silently auto-approve tools the caller asked to gate."""
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="MCP",
+        url="https://mcp.example",
+        approval_mode={
+            "always_require_approval": ["dangerous_tool"],
+            "never_require_approval": ["safe_tool"],
+        },
+    )
+    assert tool_config["require_approval"] == {
+        "always": {"tool_names": ["dangerous_tool"]},
+        "never": {"tool_names": ["safe_tool"]},
+    }
+
+
 def test_get_mcp_tool_with_project_connection_id() -> None:
     tool_config = FoundryChatClient.get_mcp_tool(
         name="Docs MCP",
@@ -809,6 +1087,71 @@ def test_get_mcp_tool_with_project_connection_id() -> None:
     assert tool_config["server_label"] == "Docs_MCP"
     # ``server_url`` should not be fabricated when only a project connection is supplied.
     assert "server_url" not in tool_config
+
+
+@pytest.mark.parametrize("allowed_tools", [None, [], ["read_only"]], ids=["omitted", "empty", "nonempty"])
+@pytest.mark.parametrize(
+    ("url", "project_connection_id"),
+    [
+        param("https://mcp.example", None, id="url"),
+        param(None, "conn-123", id="connection"),
+        param("https://mcp.example", "conn-123", id="url-and-connection"),
+    ],
+)
+async def test_get_mcp_tool_preserves_allowed_tools_in_request(
+    allowed_tools: list[str] | None, url: str | None, project_connection_id: str | None
+) -> None:
+    tool_config = FoundryChatClient.get_mcp_tool(
+        name="Docs MCP",
+        url=url,
+        project_connection_id=project_connection_id,
+        allowed_tools=allowed_tools,
+        headers={"Authorization": "Bearer test-token"},
+        approval_mode="never_require",
+    )
+    expected: dict[str, Any] = {
+        "type": "mcp",
+        "server_label": "Docs_MCP",
+        "require_approval": "never",
+    }
+    if url is not None:
+        expected["server_url"] = url
+    if project_connection_id is not None:
+        expected["project_connection_id"] = project_connection_id
+    else:
+        expected["headers"] = {"Authorization": "Bearer test-token"}
+    if allowed_tools is not None:
+        expected["allowed_tools"] = allowed_tools
+    assert dict(tool_config) == expected
+
+    requests: list[dict[str, Any]] = []
+
+    def handle_request(request: Any) -> Any:
+        requests.append(json.loads(request.content))
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "completed",
+                "output": [],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        await client.get_response([Message(role="user", contents=["Hello"])], options={"tools": [tool_config]})
+
+    assert len(requests) == 1
+    assert requests[0]["tools"] == [expected]
 
 
 def test_get_mcp_tool_requires_url_or_project_connection_id() -> None:
@@ -990,6 +1333,157 @@ def test_prepare_tools_for_openai_strips_name_from_non_function_hosted_tool_dict
     assert "description" not in response_tools[1]
 
 
+def test_prepare_tools_for_openai_serializes_bing_custom_search_tool() -> None:
+    """Hosted Bing custom search tool contains nested models that must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_bing_custom_search_tool(
+        connection_id="/subscriptions/x/connections/bing",
+        instance_name="inst",
+        market="zh-TW",
+    )
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    # Ensure nested Azure SDK models were converted and are JSON serializable
+    dumped = json.dumps(response_tools)
+    assert "bing_custom_search_preview" in dumped
+    assert "project_connection_id" in dumped
+    assert "inst" in dumped
+
+
+def test_prepare_tools_for_openai_serializes_code_interpreter_with_auto_param() -> None:
+    """Hosted code interpreter tool from factory must be JSON serializable."""
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = FoundryChatClient.get_code_interpreter_tool()
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    dumped = json.dumps(response_tools)
+    assert "code_interpreter" in dumped
+    assert "auto" in dumped
+
+
+def test_to_plain_dict_prefers_mapping_over_incompatible_as_dict() -> None:
+    """Mapping objects with an incompatible as_dict method are converted without calling as_dict."""
+
+    class IncompatibleMapping(Mapping[str, Any]):
+        def __init__(self, data: dict[str, Any]) -> None:
+            self._data = data
+            self.as_dict_called = False
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+        def as_dict(self, required_arg: Any) -> dict[str, Any]:
+            self.as_dict_called = True
+            raise TypeError("as_dict() missing 1 required positional argument: 'required_arg'")
+
+    class MockAzureSdkModel:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+            self.as_dict_called = False
+
+        def as_dict(self) -> dict[str, Any]:
+            self.as_dict_called = True
+            return self._payload
+
+    nested_mapping = IncompatibleMapping({"inner_key": "inner_value"})
+    sdk_model = MockAzureSdkModel({"sdk_key": "sdk_value"})
+    nested_list_item = IncompatibleMapping({"list_key": 42})
+
+    top_level = IncompatibleMapping({
+        "type": "custom_hosted_tool",
+        "nested": nested_mapping,
+        "sdk": sdk_model,
+        "items": [nested_list_item],
+    })
+
+    result = _to_plain_dict(top_level)
+
+    # Verify that the result and nested containers are regular plain dictionaries
+    assert type(result) is dict
+    assert type(result["nested"]) is dict
+    assert type(result["sdk"]) is dict
+    assert type(result["items"][0]) is dict
+
+    # Verify values are recursively converted
+    assert result == {
+        "type": "custom_hosted_tool",
+        "nested": {"inner_key": "inner_value"},
+        "sdk": {"sdk_key": "sdk_value"},
+        "items": [{"list_key": 42}],
+    }
+
+    # Verify that as_dict was never invoked on mapping instances
+    assert not top_level.as_dict_called
+    assert not nested_mapping.as_dict_called
+    assert not nested_list_item.as_dict_called
+
+    # Verify that non-mapping Azure SDK model as_dict was invoked
+    assert sdk_model.as_dict_called
+
+
+def test_prepare_tools_for_openai_handles_mapping_with_incompatible_as_dict() -> None:
+    """Hosted tool mapping with an incompatible as_dict method is sanitized and JSON serializable."""
+
+    class IncompatibleToolMapping(Mapping[str, Any]):
+        def __init__(self, data: dict[str, Any]) -> None:
+            self._data = data
+            self.as_dict_called = False
+
+        def __getitem__(self, key: str) -> Any:
+            return self._data[key]
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(self._data)
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+        def as_dict(self, required_arg: Any) -> dict[str, Any]:
+            self.as_dict_called = True
+            raise TypeError("as_dict() missing 1 required positional argument: 'required_arg'")
+
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    tool = IncompatibleToolMapping({
+        "type": "code_interpreter",
+        "container": {"type": "auto"},
+        "name": "read_model_name",
+        "description": "read_model_desc",
+    })
+
+    response_tools = client._prepare_tools_for_openai([tool])
+
+    assert len(response_tools) == 1
+    sanitized = response_tools[0]
+    assert type(sanitized) is dict
+    assert "name" not in sanitized
+    assert "description" not in sanitized
+    assert sanitized["type"] == "code_interpreter"
+    assert sanitized["container"] == {"type": "auto"}
+    assert not tool.as_dict_called
+
+    dumped = json.dumps(response_tools)
+    assert "code_interpreter" in dumped
+    assert "auto" in dumped
+
+
 @pytest.mark.flaky
 @pytest.mark.integration
 @skip_if_foundry_integration_tests_disabled
@@ -1070,6 +1564,59 @@ async def test_integration_options(
                 assert response.value is not None
                 assert isinstance(response.value, dict)
                 assert "location" in response.value
+
+
+@pytest.mark.flaky
+@pytest.mark.integration
+@skip_if_foundry_integration_tests_disabled
+@pytest.mark.parametrize("store", [True, False])
+@_with_foundry_debug()
+async def test_integration_background_local_tool_loop(store: bool) -> None:
+    executions: list[int] = []
+
+    @tool(approval_mode="never_require")
+    def lookup_probe(step: int) -> str:
+        """Return a deterministic marker for the requested step."""
+        executions.append(step)
+        return f"probe-result-step-{step}"
+
+    client = FoundryChatClient(credential=cast(Any, AzureCliCredential()))
+    client.function_invocation_configuration["max_iterations"] = 4
+    agent = Agent(
+        client=client,
+        name=f"background_tool_probe_store_{str(store).lower()}",
+        instructions=(
+            "Call lookup_probe with step=1 exactly once. "
+            "After receiving the tool result, return that exact result and do not call any tool again."
+        ),
+        tools=[lookup_probe],
+        default_options=OpenAIChatOptions(
+            store=store,
+            allow_multiple_tool_calls=False,
+            tool_choice={"mode": "required", "required_function_name": "lookup_probe"},
+        ),
+    )
+    session = AgentSession()
+
+    response = await agent.run(
+        "Run the probe.",
+        session=session,
+        options=OpenAIChatOptions(background=True),
+    )
+    deadline = asyncio.get_running_loop().time() + 180
+    while response.continuation_token is not None:
+        if asyncio.get_running_loop().time() >= deadline:
+            pytest.fail("Background local-tool probe did not finish within 180 seconds.")
+        await asyncio.sleep(1)
+        response = await agent.run(
+            session=session,
+            options=OpenAIChatOptions(
+                continuation_token=cast(OpenAIContinuationToken, response.continuation_token),
+            ),
+        )
+
+    assert executions == [1]
+    assert response.text == "probe-result-step-1"
 
 
 @pytest.mark.flaky
@@ -1330,6 +1877,35 @@ def test_get_computer_use_tool() -> None:
     assert tool_obj.environment == "browser"
     assert tool_obj.display_width == 1920
     assert tool_obj.display_height == 1080
+
+
+def test_get_computer_tool_uses_non_preview_sdk_model() -> None:
+    computer_tool_cls = _skip_if_sdk_class_missing("ComputerTool")
+
+    tool = FoundryChatClient.get_computer_tool()
+    assert isinstance(tool, computer_tool_cls)
+    assert tool.type == "computer"
+    assert isinstance(RawFoundryChatClient.get_computer_tool(), computer_tool_cls)
+
+
+def test_foundry_computer_result_without_screenshot_is_rejected() -> None:
+    mock_project_client = MagicMock()
+    mock_project_client.get_openai_client.return_value = _make_mock_openai_client()
+    client = FoundryChatClient(project_client=mock_project_client, model="test-model")
+    result = Content.from_computer_tool_result(call_id="call_1")
+
+    with pytest.raises(ChatClientInvalidRequestException, match="Computer results require a call_id and screenshot"):
+        client._prepare_content_for_openai("tool", result)
+
+
+def test_get_computer_tool_fails_only_when_invoked_with_older_sdk(monkeypatch: pytest.MonkeyPatch) -> None:
+    from azure.ai.projects import models
+
+    monkeypatch.delattr(models, "ComputerTool", raising=False)
+
+    with pytest.raises(ImportError, match=r"ComputerTool from azure-ai-projects>=2\.3\.0") as exc_info:
+        FoundryChatClient.get_computer_tool()
+    assert "Upgrade azure-ai-projects to >=2.3.0 to use this tool." in str(exc_info.value)
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
@@ -1620,6 +2196,44 @@ def test_parse_chunk_surfaces_oauth_consent_requested_event() -> None:
     assert update.raw_representation is mock_event
 
 
+async def test_get_response_non_streaming_surfaces_oauth_consent_request() -> None:
+    """A non-streaming response carrying an oauth_consent_request output item surfaces the consent link."""
+
+    def handle_request(request: Any) -> Any:
+        return _OPENAI_HTTPX.Response(
+            200,
+            json={
+                "id": "resp_consent",
+                "object": "response",
+                "created_at": 0,
+                "model": "test-model",
+                "status": "incomplete",
+                "output": [
+                    {
+                        "type": "oauth_consent_request",
+                        "id": "oauth-item-1",
+                        "consent_link": "https://consent-host.example.com/login?data=abc123",
+                        "server_label": "github",
+                    }
+                ],
+            },
+        )
+
+    async with AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://example.test/v1",
+        http_client=DefaultAsyncHttpxClient(transport=_OPENAI_HTTPX.MockTransport(handle_request)),
+    ) as async_client:
+        project_client = MagicMock()
+        project_client.get_openai_client.return_value = async_client
+        client = FoundryChatClient(project_client=project_client, model="test-model")
+        response = await client.get_response([Message(role="user", contents=["List my repos"])])
+
+    consent_contents = [c for m in response.messages for c in m.contents if c.type == "oauth_consent_request"]
+    assert len(consent_contents) == 1
+    assert consent_contents[0].consent_link == "https://consent-host.example.com/login?data=abc123"
+
+
 def test_agent_accepts_foundry_chat_clients() -> None:
     mock_project = MagicMock()
     mock_openai = _make_mock_openai_client()
@@ -1861,3 +2475,76 @@ async def test_shared_chat_client_keeps_concurrent_agent_runs_isolated(
     assert first_session.service_session_id == "response-first"
     assert second_session.service_session_id == "response-second"
     assert transport.max_active_requests == 2
+
+
+async def test_multi_message_response_attaches_reasoning_replay_to_owning_message() -> None:
+    """Reasoning replay data must land on the message that owns the reasoning content.
+
+    #9768 made multi-message responses possible (e.g. preamble + follow-up message).
+    A reasoning item that trails the last message is parsed into that message, but
+    the Foundry replay attachment only searched ``messages[0]``: it appended a
+    duplicate empty reasoning content there while the real reasoning content in the
+    later message kept no replay payload.
+    """
+    from openai.types.responses.response_output_message import ResponseOutputMessage
+    from openai.types.responses.response_output_text import ResponseOutputText
+    from openai.types.responses.response_reasoning_item import ResponseReasoningItem
+
+    def message_item(item_id: str, text: str) -> ResponseOutputMessage:
+        return ResponseOutputMessage.model_construct(
+            type="message",
+            id=item_id,
+            role="assistant",
+            status="completed",
+            content=[ResponseOutputText.model_construct(type="output_text", text=text, annotations=[])],
+        )
+
+    reasoning_item = ResponseReasoningItem.model_construct(
+        type="reasoning",
+        id="rs_trailing",
+        response_id="response_123",
+        summary=[],
+        content=[],
+    )
+
+    mock_response = MagicMock(
+        id="response_123",
+        model="test-model",
+        created_at=1000000000,
+        metadata={},
+        output_parsed=None,
+        output=[message_item("message_0", "A"), message_item("message_1", "B"), reasoning_item],
+        usage=None,
+        finish_reason=None,
+        conversation=None,
+        status="completed",
+    )
+
+    async def create_response(**kwargs: Any) -> Any:
+        return _as_raw(mock_response)
+
+    mock_openai_client = _make_mock_openai_client()
+    mock_openai_client.responses.with_raw_response.create.side_effect = create_response
+    project_client = MagicMock()
+    project_client.get_openai_client.return_value = mock_openai_client
+    client = FoundryChatClient(project_client=project_client, model="test-model")
+
+    response = await client.get_response([Message(role="user", contents=["Hello"])])
+
+    assert [message.text for message in response.messages] == ["A", "B"]
+    reasoning_contents = [
+        content for message in response.messages for content in message.contents if content.type == "text_reasoning"
+    ]
+    assert len(reasoning_contents) == 1, [
+        (message.message_id, content.type, content.id) for message in response.messages for content in message.contents
+    ]
+    assert reasoning_contents[0].id == "rs_trailing"
+    assert reasoning_contents[0].additional_properties.get("__foundry_reasoning_replay_item__") is not None
+    # Pin the owning message: a flattened check would also pass if the reasoning
+    # content (with its replay payload) were attached to message_0 instead.
+    owning_message_ids = [
+        message.message_id
+        for message in response.messages
+        if any(content.type == "text_reasoning" for content in message.contents)
+    ]
+    assert owning_message_ids == ["message_1"]

@@ -68,7 +68,7 @@ async def test_runtime_configures_azure_monitor_with_sensitive_data(monkeypatch:
     monkeypatch.setenv("AZURE_COSMOS_DATABASE_NAME", "telegram")
     monkeypatch.setenv("AZURE_COSMOS_CONTAINER_NAME", "history")
     monkeypatch.setenv("FOUNDRY_PROJECT_ENDPOINT", "https://sample.services.ai.azure.com/api/projects/sample")
-    monkeypatch.setenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", "gpt-5.6-luna")
+    monkeypatch.setenv("FOUNDRY_MODEL", "gpt-5.6-luna")
 
     client = SimpleNamespace(configure_azure_monitor=AsyncMock())
     agent_constructor = Mock(return_value=SimpleNamespace())
@@ -170,7 +170,7 @@ async def test_rejects_missing_or_unsupported_channel(payload: dict[str, Any], m
 
 async def test_new_clears_durable_history(monkeypatch: pytest.MonkeyPatch) -> None:
     history = SimpleNamespace(clear=AsyncMock())
-    runtime = cast(Any, SimpleNamespace(history=history))
+    runtime = cast(Any, SimpleNamespace(history=history, bot_username="mybot"))
     execute = AsyncMock(return_value={})
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
@@ -189,7 +189,7 @@ async def test_rejects_mismatched_session_before_telegram_side_effect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     history = SimpleNamespace(clear=AsyncMock())
-    runtime = cast(Any, SimpleNamespace(history=history))
+    runtime = cast(Any, SimpleNamespace(history=history, bot_username="mybot"))
     execute = AsyncMock(return_value={})
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
@@ -214,7 +214,7 @@ async def test_application_commands_bypass_model(
 ) -> None:
     execute = AsyncMock(return_value={})
     agent = SimpleNamespace(run=Mock())
-    runtime = cast(Any, SimpleNamespace(agent=agent))
+    runtime = cast(Any, SimpleNamespace(agent=agent, bot_username="mybot"))
     monkeypatch.setattr(main, "execute_telegram_operation", execute)
 
     await main.handle_telegram_update(_message_update(command), "123", runtime)

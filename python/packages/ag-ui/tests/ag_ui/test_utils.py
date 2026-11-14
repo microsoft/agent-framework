@@ -5,7 +5,10 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from agent_framework import Content
+
 from agent_framework_ag_ui._utils import (
+    _function_call_is_hosted,
     generate_event_id,
     make_json_safe,
     merge_state,
@@ -20,6 +23,31 @@ def test_generate_event_id():
     assert id1 != id2
     assert isinstance(id1, str)
     assert len(id1) > 0
+
+
+def test_function_call_hosted_flag_is_authoritative() -> None:
+    local_call = Content.from_function_call(
+        call_id="local",
+        name="local_tool",
+        hosted=False,
+        server_name="descriptive-boundary",
+    )
+    hosted_call = Content.from_function_call(
+        call_id="hosted",
+        name="hosted_tool",
+        hosted=True,
+    )
+
+    assert _function_call_is_hosted(local_call) is False
+    assert _function_call_is_hosted(hosted_call) is True
+
+
+def test_function_call_hosted_legacy_fallback() -> None:
+    @dataclass
+    class LegacyCall:
+        additional_properties: dict[str, str]
+
+    assert _function_call_is_hosted(LegacyCall({"server_label": "legacy-server"})) is True
 
 
 def test_merge_state():

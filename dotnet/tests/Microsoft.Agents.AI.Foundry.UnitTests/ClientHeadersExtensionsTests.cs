@@ -100,6 +100,36 @@ public sealed class ClientHeadersExtensionsTests
         Assert.Throws<ArgumentException>(() => options.WithClientHeader("x-client-foo", ""));
     }
 
+    [Theory]
+    [InlineData("\0")]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeader_RejectsProhibitedCharacterInName(string prohibitedCharacter)
+    {
+        // Arrange
+        var options = new ChatOptions();
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(
+            () => options.WithClientHeader($"x-client-safe{prohibitedCharacter}suffix", "value"));
+        Assert.Equal("name", exception.ParamName);
+    }
+
+    [Theory]
+    [InlineData("\0")]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeader_RejectsProhibitedCharacterInValue(string prohibitedCharacter)
+    {
+        // Arrange
+        var options = new ChatOptions();
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(
+            () => options.WithClientHeader("x-client-safe", $"before{prohibitedCharacter}after"));
+        Assert.Equal("value", exception.ParamName);
+    }
+
     // -------------------------------------------------------------------------------------------
     // 4. WithClientHeaders (bulk) is all-or-nothing on first invalid key
     // -------------------------------------------------------------------------------------------
@@ -118,6 +148,26 @@ public sealed class ClientHeadersExtensionsTests
 
         // Act / Assert: throws, and no entries are written.
         Assert.Throws<ArgumentException>(() => options.WithClientHeaders(headers));
+        Assert.Null(options.GetClientHeaders());
+    }
+
+    [Theory]
+    [InlineData("\0")]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public void WithClientHeaders_AllOrNothing_OnProhibitedValueCharacter(string prohibitedCharacter)
+    {
+        // Arrange
+        var options = new ChatOptions();
+        var headers = new[]
+        {
+            new KeyValuePair<string, string>("x-client-first", "first"),
+            new KeyValuePair<string, string>("x-client-invalid", $"before{prohibitedCharacter}after"),
+        };
+
+        // Act / Assert
+        var exception = Assert.Throws<ArgumentException>(() => options.WithClientHeaders(headers));
+        Assert.Equal("value", exception.ParamName);
         Assert.Null(options.GetClientHeaders());
     }
 
@@ -228,7 +278,11 @@ public sealed class ClientHeadersExtensionsTests
         // that critical moment the AsyncLocal scope is observable. End-to-end coverage of the wire
         // behavior is provided by EndToEnd_UseClientHeaders_Streaming_StampsOnWireAsync.
         IReadOnlyDictionary<string, string>? observedAtFirstYield = null;
-        var inner = new ProbeStreamingAgent(yields: 1, onYield: () => observedAtFirstYield = ClientHeadersScope.Current);
+        var inner = new ProbeStreamingAgent(yields: 1, onYield: () =>
+        {
+            observedAtFirstYield = ClientHeadersScope.Current;
+            return Task.CompletedTask;
+        });
         var agent = new ClientHeadersAgent(inner);
 
         var chatOptions = new ChatOptions();
@@ -243,6 +297,206 @@ public sealed class ClientHeadersExtensionsTests
         // Assert
         Assert.NotNull(observedAtFirstYield);
         Assert.Equal("carol", observedAtFirstYield!["x-client-end-user-id"]);
+    }
+
+    [Fact]
+    public async Task ClientHeadersAgent_Streaming_AppliesScopeForEveryUpdateAsync()
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+        var observed = new List<IReadOnlyDictionary<string, string>?>();
+        var inner = new ProbeStreamingAgent(
+            yields: 3,
+            onYield: async () =>
+            {
+                observed.Add(ClientHeadersScope.Current);
+                using var message = pipeline.CreateMessage();
+                message.Request.Method = "GET";
+                message.Request.Uri = new Uri("https://example.test/");
+                await pipeline.SendAsync(message);
+            });
+        var agent = new ClientHeadersAgent(inner);
+        var chatOptions = new ChatOptions();
+        chatOptions.WithClientHeader("x-client-end-user-id", "carol");
+
+        // Act
+        await foreach (var _ in agent.RunStreamingAsync(messages: [], options: new ChatClientAgentRunOptions(chatOptions)))
+        {
+            // drain
+        }
+
+        // Assert
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.All(handler.Requests, request =>
+        {
+            Assert.True(request.Headers.TryGetValue("x-client-end-user-id", out var value));
+            Assert.Equal("carol", value);
+        });
+        Assert.Equal(3, observed.Count);
+        Assert.All(observed, headers =>
+        {
+            Assert.NotNull(headers);
+            Assert.Equal("carol", headers!["x-client-end-user-id"]);
+        });
+    }
+
+    [Fact]
+    public async Task ClientHeadersAgent_Streaming_HeaderlessNestedRunDoesNotInheritScopeAsync()
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+        var nestedObserved = new List<IReadOnlyDictionary<string, string>?>();
+        var nestedAgent = new ClientHeadersAgent(new ProbeStreamingAgent(
+            yields: 2,
+            onYield: async () =>
+            {
+                nestedObserved.Add(ClientHeadersScope.Current);
+                using var message = pipeline.CreateMessage();
+                message.Request.Method = "GET";
+                message.Request.Uri = new Uri("https://example.test/");
+                await pipeline.SendAsync(message);
+            }));
+
+        var outerObservedAfterNested = new List<IReadOnlyDictionary<string, string>?>();
+        var outerInner = new ProbeStreamingAgent(
+            yields: 2,
+            onYield: async () =>
+            {
+                await foreach (var _ in nestedAgent.RunStreamingAsync(messages: []))
+                {
+                    // drain
+                }
+
+                outerObservedAfterNested.Add(ClientHeadersScope.Current);
+            });
+        var outerAgent = new ClientHeadersAgent(outerInner);
+        var chatOptions = new ChatOptions();
+        chatOptions.WithClientHeader("x-client-end-user-id", "alice");
+
+        // Act
+        await foreach (var _ in outerAgent.RunStreamingAsync(messages: [], options: new ChatClientAgentRunOptions(chatOptions)))
+        {
+            // drain
+        }
+
+        // Assert
+        Assert.Equal(4, handler.Requests.Count);
+        Assert.All(handler.Requests, request => Assert.False(request.Headers.ContainsKey("x-client-end-user-id")));
+        Assert.Equal(4, nestedObserved.Count);
+        Assert.All(nestedObserved, Assert.Null);
+        Assert.Equal(2, outerObservedAfterNested.Count);
+        Assert.All(outerObservedAfterNested, headers =>
+        {
+            Assert.NotNull(headers);
+            Assert.Equal("alice", headers!["x-client-end-user-id"]);
+        });
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("carol")]
+    public async Task ClientHeadersAgent_Streaming_EarlyDisposalUsesRunScopeAsync(string? headerValue)
+    {
+        // Arrange
+        var previous = ClientHeadersScope.Current;
+        var callerHeaders = new Dictionary<string, string> { ["x-client-end-user-id"] = "alice" };
+        var disposed = false;
+        IReadOnlyDictionary<string, string>? observedDuringDisposal = null;
+        var agent = new ClientHeadersAgent(new ProbeStreamingAgent(
+            yields: 2,
+            onYield: () => Task.CompletedTask,
+            onDispose: async () =>
+            {
+                await Task.Yield();
+                observedDuringDisposal = ClientHeadersScope.Current;
+                disposed = true;
+            }));
+        var chatOptions = new ChatOptions();
+        if (headerValue is not null)
+        {
+            chatOptions.WithClientHeader("x-client-end-user-id", headerValue);
+        }
+
+        ClientHeadersScope.Current = callerHeaders;
+        try
+        {
+            // Act
+            await foreach (var _ in agent.RunStreamingAsync(messages: [], options: new ChatClientAgentRunOptions(chatOptions)))
+            {
+                break;
+            }
+
+            // Assert
+            Assert.True(disposed);
+            if (headerValue is null)
+            {
+                Assert.Null(observedDuringDisposal);
+            }
+            else
+            {
+                Assert.NotNull(observedDuringDisposal);
+                Assert.Equal(headerValue, observedDuringDisposal["x-client-end-user-id"]);
+            }
+            Assert.Same(callerHeaders, ClientHeadersScope.Current);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = previous;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientHeadersAgent_Streaming_RestoresScopeAfterFailureAsync(bool cancellation)
+    {
+        // Arrange
+        using var cancellationSource = new CancellationTokenSource();
+        cancellationSource.Cancel();
+        var failure = new InvalidOperationException("Test failure.");
+        var agent = new ClientHeadersAgent(new ProbeStreamingAgent(
+            yields: 1,
+            onYield: () => cancellation ? Task.FromCanceled(cancellationSource.Token) : Task.FromException(failure)));
+        var chatOptions = new ChatOptions();
+        chatOptions.WithClientHeader("x-client-end-user-id", "carol");
+        var callerHeaders = ClientHeadersScope.Current;
+
+        // Act
+        var exception = await Record.ExceptionAsync(async () =>
+        {
+            await foreach (var _ in agent.RunStreamingAsync(messages: [], options: new ChatClientAgentRunOptions(chatOptions)))
+            {
+                // drain
+            }
+        });
+
+        // Assert
+        if (cancellation)
+        {
+            var canceled = Assert.IsType<TaskCanceledException>(exception);
+            Assert.Equal(cancellationSource.Token, canceled.CancellationToken);
+        }
+        else
+        {
+            Assert.Same(failure, exception);
+        }
+        Assert.Same(callerHeaders, ClientHeadersScope.Current);
     }
 
     // -------------------------------------------------------------------------------------------
@@ -301,6 +555,92 @@ public sealed class ClientHeadersExtensionsTests
 
         // Assert
         Assert.DoesNotContain(handler.Headers, kv => kv.Key.StartsWith("x-client-", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("\0")]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public async Task ClientHeadersPolicy_RejectsProhibitedHeaderNameCharacterWithoutMutatingRequestAsync(string prohibitedCharacter)
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+
+        ClientHeadersScope.Current = new Dictionary<string, string>
+        {
+            ["x-client-first"] = "first",
+            [$"x-client-safe{prohibitedCharacter}suffix"] = "value",
+        };
+
+        try
+        {
+            // Act
+            var msg = pipeline.CreateMessage();
+            msg.Request.Method = "GET";
+            msg.Request.Uri = new Uri("https://example.test/");
+
+            // Assert
+            var exception = await Assert.ThrowsAsync<ArgumentException>(
+                async () => await pipeline.SendAsync(msg));
+            Assert.Equal("name", exception.ParamName);
+            Assert.False(msg.Request.Headers.TryGetValue("x-client-first", out _));
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = null;
+        }
+    }
+
+    [Theory]
+    [InlineData("\0")]
+    [InlineData("\r")]
+    [InlineData("\n")]
+    public async Task ClientHeadersPolicy_RejectsProhibitedHeaderValueCharacterWithoutMutatingRequestAsync(string prohibitedCharacter)
+    {
+        // Arrange
+        using var handler = new RecordingHandler();
+#pragma warning disable CA5399
+        using var http = new HttpClient(handler);
+#pragma warning restore CA5399
+        var pipeline = ClientPipeline.Create(
+            new ClientPipelineOptions { Transport = new HttpClientPipelineTransport(http) },
+            perCallPolicies: [ClientHeadersPolicy.Instance],
+            perTryPolicies: default,
+            beforeTransportPolicies: default);
+
+        ClientHeadersScope.Current = new Dictionary<string, string>
+        {
+            ["x-client-first"] = "first",
+            ["x-client-invalid"] = $"before{prohibitedCharacter}after",
+        };
+
+        try
+        {
+            // Act
+            var msg = pipeline.CreateMessage();
+            msg.Request.Method = "GET";
+            msg.Request.Uri = new Uri("https://example.test/");
+
+            // Assert
+            var exception = await Assert.ThrowsAsync<ArgumentException>(
+                async () => await pipeline.SendAsync(msg));
+            Assert.Equal("value", exception.ParamName);
+            Assert.False(msg.Request.Headers.TryGetValue("x-client-first", out _));
+            Assert.Empty(handler.Requests);
+        }
+        finally
+        {
+            ClientHeadersScope.Current = null;
+        }
     }
 
     // -------------------------------------------------------------------------------------------
@@ -563,9 +903,7 @@ public sealed class ClientHeadersExtensionsTests
     }
 
     // -------------------------------------------------------------------------------------------
-    // 21. Non-streaming hardening: a non-streaming run must restore the ambient ClientHeadersScope
-    //     on return so a previous run's x-client-* headers do not carry into a later headerless run
-    //     on the same async flow. (Streaming already restores naturally via its async iterator.)
+    // 21. Non-streaming runs must isolate their headers from nested and later headerless runs.
     // -------------------------------------------------------------------------------------------
 
     [Fact]
@@ -596,6 +934,35 @@ public sealed class ClientHeadersExtensionsTests
         Assert.NotNull(observed[0]);
         Assert.Equal("alice", observed[0]!["x-client-end-user-id"]);
         Assert.Null(observed[1]);
+        Assert.Null(ClientHeadersScope.Current);
+    }
+
+    [Fact]
+    public async Task ClientHeadersAgent_NestedHeaderlessRunDoesNotInheritScopeAsync()
+    {
+        // Arrange
+        IReadOnlyDictionary<string, string>? nestedObserved = null;
+        var nestedAgent = new ClientHeadersAgent(new ProbeAgent(_ =>
+        {
+            nestedObserved = ClientHeadersScope.Current;
+            return Task.CompletedTask;
+        }));
+        IReadOnlyDictionary<string, string>? outerObservedAfterNested = null;
+        var outerAgent = new ClientHeadersAgent(new ProbeAgent(async cancellationToken =>
+        {
+            await nestedAgent.RunAsync(messages: [], cancellationToken: cancellationToken);
+            outerObservedAfterNested = ClientHeadersScope.Current;
+        }));
+        var chatOptions = new ChatOptions();
+        chatOptions.WithClientHeader("x-client-end-user-id", "alice");
+
+        // Act
+        await outerAgent.RunAsync(messages: [], options: new ChatClientAgentRunOptions(chatOptions));
+
+        // Assert
+        Assert.Null(nestedObserved);
+        Assert.NotNull(outerObservedAfterNested);
+        Assert.Equal("alice", outerObservedAfterNested!["x-client-end-user-id"]);
         Assert.Null(ClientHeadersScope.Current);
     }
 
@@ -786,12 +1153,14 @@ public sealed class ClientHeadersExtensionsTests
     private sealed class ProbeStreamingAgent : AIAgent
     {
         private readonly int _yields;
-        private readonly Action _onYield;
+        private readonly Func<Task> _onYield;
+        private readonly Func<Task>? _onDispose;
 
-        public ProbeStreamingAgent(int yields, Action onYield)
+        public ProbeStreamingAgent(int yields, Func<Task> onYield, Func<Task>? onDispose = null)
         {
             this._yields = yields;
             this._onYield = onYield;
+            this._onDispose = onDispose;
         }
 
         protected override Task<AgentResponse> RunCoreAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, CancellationToken cancellationToken = default)
@@ -799,11 +1168,21 @@ public sealed class ClientHeadersExtensionsTests
 
         protected override async IAsyncEnumerable<AgentResponseUpdate> RunCoreStreamingAsync(IEnumerable<ChatMessage> messages, AgentSession? session = null, AgentRunOptions? options = null, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            for (int i = 0; i < this._yields; i++)
+            try
             {
-                this._onYield();
-                await Task.Yield();
-                yield return new AgentResponseUpdate();
+                for (int i = 0; i < this._yields; i++)
+                {
+                    await this._onYield();
+                    await Task.Yield();
+                    yield return new AgentResponseUpdate();
+                }
+            }
+            finally
+            {
+                if (this._onDispose is not null)
+                {
+                    await this._onDispose();
+                }
             }
         }
 

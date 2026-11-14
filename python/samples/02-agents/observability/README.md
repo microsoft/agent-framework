@@ -115,14 +115,15 @@ configure_azure_monitor(
 enable_sensitive_telemetry()
 ```
 
-For Microsoft Foundry projects, use `client.configure_azure_monitor()` which retrieves the connection string from the project and configures everything:
+For model calls through `FoundryChatClient`, use `client.configure_azure_monitor()`
+to retrieve the connection string and configure Azure Monitor:
 
 ```python
 from agent_framework.foundry import FoundryChatClient
 from azure.identity import AzureCliCredential
 
 client = FoundryChatClient(
-    project_endpoint="https://your-project.services.ai.azure.com",
+    project_endpoint="https://your-account.services.ai.azure.com/api/projects/your-project",
     model="gpt-4o",
     credential=AzureCliCredential(),
 )
@@ -130,6 +131,29 @@ client = FoundryChatClient(
 # Automatically configures Azure Monitor with connection string from project
 await client.configure_azure_monitor(enable_sensitive_data=True)
 ```
+
+For calls to an **existing prompt or hosted agent**, use
+[`foundry_agent_tracing.py`](foundry_agent_tracing.py) and
+`await agent.configure_azure_monitor()`.
+
+Install Azure Monitor 1.8.10 or later to connect client and service traces:
+
+```shell
+pip install --upgrade "azure-monitor-opentelemetry>=1.8.10,<2"
+```
+
+Connect Application Insights to your project and set `FOUNDRY_PROJECT_ENDPOINT`
+and `FOUNDRY_AGENT_NAME`. `FOUNDRY_AGENT_VERSION` is required for PromptAgents
+and optional for HostedAgents. Run from `python/` using the workspace packages:
+
+```powershell
+uv run python samples\02-agents\observability\foundry_agent_tracing.py
+uv run python samples\02-agents\observability\foundry_agent_tracing.py --stream
+```
+
+View the connected trace under **Build > Agents > your agent > Traces** in
+Foundry. Select the agent version and a time range covering the run, then open
+the printed trace ID.
 
 Or with [Langfuse](https://langfuse.com/integrations/frameworks/microsoft-agent-framework):
 
@@ -196,7 +220,7 @@ Because Agent Framework is **natively instrumented** with OpenTelemetry, you do 
 
 Whenever there is an active OpenTelemetry span context, Agent Framework automatically propagates trace context to MCP servers via the `params._meta` field of `tools/call` requests. It uses the globally configured OpenTelemetry propagator(s) — W3C Trace Context by default (producing `traceparent` and `tracestate`) — so custom propagators (B3, Jaeger, etc.) are also supported. This enables distributed tracing across agent-to-MCP-server boundaries, compliant with the [MCP `_meta` specification](https://modelcontextprotocol.io/specification/2025-11-25/basic#_meta).
 
-**Scope:** automatic `_meta` injection applies only to MCP sessions that the agent process itself opens — `MCPStreamableHTTPTool`, `MCPStdioTool`, and `MCPWebsocketTool` (or any other client-opened `MCPTool` subclass). It does **not** apply to hosted or provider-managed MCP tool configurations such as `FoundryChatClient.get_mcp_tool(...)`, `OpenAIChatClient.get_mcp_tool(...)`, `AnthropicClient.get_mcp_tool(...)`, `GeminiChatClient.get_mcp_tool(...)`, or toolbox-fetched tools (e.g. `toolbox = await client.get_toolbox(...)` then `Agent(tools=toolbox.tools)`). In those cases the `tools/call` message is issued by the provider service runtime rather than by the agent process, so propagating `traceparent`/`tracestate` across that boundary is the service runtime's responsibility. If you need end-to-end distributed tracing to the downstream MCP server, use a client-opened MCP transport instead of a hosted connector.
+**Scope:** automatic `_meta` injection applies only to MCP sessions that the agent process itself opens — `MCPStreamableHTTPTool`, `MCPStdioTool`, or another supported client-opened `MCPTool` subclass. It does **not** apply to hosted or provider-managed MCP tool configurations such as `FoundryChatClient.get_mcp_tool(...)`, `OpenAIChatClient.get_mcp_tool(...)`, `AnthropicClient.get_mcp_tool(...)`, `GeminiChatClient.get_mcp_tool(...)`, or toolbox-fetched tools (e.g. `toolbox = await client.get_toolbox(...)` then `Agent(tools=toolbox.tools)`). In those cases the `tools/call` message is issued by the provider service runtime rather than by the agent process, so propagating `traceparent`/`tracestate` across that boundary is the service runtime's responsibility. If you need end-to-end distributed tracing to the downstream MCP server, use a client-opened MCP transport instead of a hosted connector.
 
 ## Configuration
 

@@ -4,25 +4,31 @@
 
 import asyncio
 import json
-from collections.abc import AsyncGenerator, Awaitable, Mapping, MutableSequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, MutableSequence
 from contextlib import AbstractContextManager, nullcontext
-from typing import Any, cast
+from typing import Any
 
 import httpx
 import pytest
 from ag_ui.core import Interrupt, ResumeEntry
 from agent_framework import (
+    Agent,
+    AgentResponseUpdate,
+    ChatContext,
+    ChatMiddleware,
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
     Content,
     Message,
+    ResponseInvalidatedException,
     ResponseStream,
     tool,
 )
 from pytest import MonkeyPatch
 
 from agent_framework_ag_ui._client import AGUIChatClient
+from agent_framework_ag_ui._event_converters import AGUIEventConverter
 from agent_framework_ag_ui._http_service import AGUIHttpService
 
 
@@ -55,6 +61,125 @@ class StubAGUIChatClient(AGUIChatClient):
     ) -> Awaitable[ChatResponse] | ResponseStream[ChatResponseUpdate, ChatResponse]:
         """Proxy to protected response call."""
         return self._inner_get_response(messages=messages, options=options, stream=stream)  # type: ignore[arg-type]  # pyrefly: ignore[bad-argument-type]  # ty: ignore[invalid-argument-type]
+
+
+class _GatedSSEStream(httpx.AsyncByteStream):
+    """Yield one SSE chunk and keep the next event gated until another pull."""
+
+    def __init__(
+        self,
+        *,
+        aclose_error: BaseException | None = None,
+        iteration_error: BaseException | None = None,
+    ) -> None:
+        self._tail_release = asyncio.Event()
+        self._iterator: AsyncGenerator[bytes, None] | None = None
+        self.aclose_error = aclose_error
+        self.iteration_error = iteration_error
+        self.tail_waiting = asyncio.Event()
+        self.chunk_indexes_yielded: list[int] = []
+        self.tail_requested = False
+        self.tail_yielded = False
+        self.exhausted = False
+        self.aclose_calls = 0
+        self.closed = False
+        self.iterator_finally = False
+        events = [
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "first"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "later"},
+        ]
+        self._chunks = [f"data: {json.dumps(event)}\n\n".encode() for event in events]
+
+    def __aiter__(self) -> AsyncGenerator[bytes, None]:
+        if self._iterator is None:
+            self._iterator = self._iterate()
+        return self._iterator
+
+    async def _iterate(self) -> AsyncGenerator[bytes, None]:
+        try:
+            self.chunk_indexes_yielded.append(0)
+            yield self._chunks[0]
+            self.tail_requested = True
+            self.tail_waiting.set()
+            await self._tail_release.wait()
+            if self.iteration_error is not None:
+                raise self.iteration_error
+            self.chunk_indexes_yielded.append(1)
+            self.tail_yielded = True
+            yield self._chunks[1]
+            self.exhausted = True
+        finally:
+            self.iterator_finally = True
+
+    def release_tail(self) -> None:
+        self._tail_release.set()
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+        self.closed = True
+        self._tail_release.set()
+        if self._iterator is not None:
+            await self._iterator.aclose()
+        if self.aclose_error is not None and self.aclose_calls == 1:
+            raise self.aclose_error
+
+
+class _FailingAGUIEventStream:
+    """Yield a public AG-UI event, then fail or wait while its close fails."""
+
+    def __init__(
+        self,
+        event: dict[str, Any],
+        *,
+        close_error: OSError,
+        iteration_error: BaseException | None = None,
+        wait_after_event: bool = False,
+    ) -> None:
+        self._event = event
+        self._close_error = close_error
+        self._iteration_error = iteration_error
+        self._wait_after_event = wait_after_event
+        self._index = 0
+        self._release = asyncio.Event()
+        self.waiting = asyncio.Event()
+        self.aclose_calls = 0
+        self.aclose_completed = 0
+
+    def __aiter__(self) -> "_FailingAGUIEventStream":
+        return self
+
+    async def __anext__(self) -> dict[str, Any]:
+        if self._index == 0:
+            self._index += 1
+            return self._event
+        if self._wait_after_event:
+            self.waiting.set()
+            await self._release.wait()
+        if self._iteration_error is not None:
+            raise self._iteration_error
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.aclose_calls += 1
+        self._release.set()
+        await asyncio.sleep(0)
+        self.aclose_completed += 1
+        if self.aclose_calls == 1:
+            raise self._close_error
+
+
+class _OmitRunMetadata(ChatMiddleware):
+    """Omit optional run markers without changing streamed content."""
+
+    async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+        await call_next()
+
+        def omit(update: ChatResponseUpdate) -> ChatResponseUpdate:
+            if not update.contents and "run_id" in (update.additional_properties or {}):
+                return ChatResponseUpdate()
+            return update
+
+        context.stream_update_transforms.append(omit)
 
 
 class TestAGUIChatClient:
@@ -690,7 +815,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options=chat_options)
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(cast(ChatResponseUpdate, update))
+            updates.append(update)
 
         assert len(updates) == 4
         assert updates[0].additional_properties is not None
@@ -702,6 +827,368 @@ class TestAGUIChatClient:
         assert second_content.type == "text"
         assert first_content.text == "Hello"
         assert second_content.text == " world"
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize(
+        ("caller", "function_invocation_enabled", "close_mode"),
+        [
+            pytest.param("client", True, "explicit_close", id="client-fi_default-explicit_close"),
+            pytest.param("client", True, "async_with_break", id="client-fi_default-async_with_break"),
+            pytest.param("client", False, "explicit_close", id="client-fi_disabled-explicit_close"),
+            pytest.param("client", False, "async_with_break", id="client-fi_disabled-async_with_break"),
+            pytest.param("agent", True, "explicit_close", id="agent-fi_default-explicit_close"),
+            pytest.param("agent", True, "async_with_break", id="agent-fi_default-async_with_break"),
+            pytest.param("agent", False, "explicit_close", id="agent-fi_disabled-explicit_close"),
+            pytest.param("agent", False, "async_with_break", id="agent-fi_disabled-async_with_break"),
+        ],
+    )
+    async def test_public_stream_close_releases_http_response(
+        self,
+        caller: str,
+        function_invocation_enabled: bool,
+        close_mode: str,
+    ) -> None:
+        """Closing a public stream releases its HTTP response and preserves supplied clients."""
+        body = _GatedSSEStream()
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client_options: dict[str, Any] = {}
+            if not function_invocation_enabled:
+                client_options["function_invocation_configuration"] = {"enabled": False}
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                **client_options,
+            )
+            assert client.function_invocation_configuration["enabled"] is function_invocation_enabled
+
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            def assert_first_chunk_only() -> None:
+                assert response is not None
+                assert not response.is_closed
+                assert body.aclose_calls == 0
+                assert body.chunk_indexes_yielded == [0]
+                assert not body.tail_requested
+                assert not body.tail_yielded
+                assert not body.exhausted
+
+            try:
+                if close_mode == "explicit_close":
+                    # Keep pull and close in one task; wait_for creates a child task on Python 3.11.
+                    first = await anext(stream)
+                    assert isinstance(first, (ChatResponseUpdate, AgentResponseUpdate))
+                    assert first.text == "first"
+                    assert_first_chunk_only()
+                    await stream.close()
+                else:
+                    async with stream:
+                        async for update in stream:
+                            assert isinstance(update, (ChatResponseUpdate, AgentResponseUpdate))
+                            assert update.text == "first"
+                            assert_first_chunk_only()
+                            break
+
+                assert response is not None
+                assert response.is_closed
+                assert body.aclose_calls == 1
+                assert body.closed
+                assert body.iterator_finally
+                assert body.chunk_indexes_yielded == [0]
+                assert not body.tail_yielded
+                assert not body.exhausted
+
+                await stream.close()
+                assert body.aclose_calls == 1
+
+                if agent is not None:
+                    await agent.close()
+                else:
+                    await client.close()
+                assert not http_client.is_closed
+                health_response = await http_client.get("https://agui.example.test/health")
+                assert health_response.status_code == 204
+            finally:
+                try:
+                    await stream.close()
+                finally:
+                    try:
+                        if response is not None and not response.is_closed:
+                            await response.aclose()
+                    finally:
+                        if agent is not None:
+                            await agent.close()
+                        else:
+                            await client.close()
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    @pytest.mark.parametrize("failure_kind", ["iteration", "conversion", "cancel"])
+    async def test_primary_failure_survives_event_or_http_body_aclose_error(
+        self,
+        monkeypatch: MonkeyPatch,
+        caller: str,
+        failure_kind: str,
+    ) -> None:
+        """AG-UI keeps event, conversion, and cancellation failures over close errors."""
+        primary = RuntimeError("AG-UI primary failure")
+        close_failure = OSError("stream close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+        event_source = (
+            _FailingAGUIEventStream(
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "first"},
+                close_error=close_failure,
+                iteration_error=primary if failure_kind == "iteration" else None,
+                wait_after_event=failure_kind == "cancel",
+            )
+            if failure_kind != "conversion"
+            else None
+        )
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        if failure_kind == "conversion":
+
+            def fail_convert_event(_converter: AGUIEventConverter, _event: dict[str, Any]) -> ChatResponseUpdate | None:
+                raise primary
+
+            monkeypatch.setattr(AGUIEventConverter, "convert_event", fail_convert_event)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            if event_source is not None:
+                monkeypatch.setattr(client._http_service, "post_run", lambda *args, **kwargs: event_source)
+
+            if failure_kind == "iteration":
+                first = await stream.__anext__()
+                assert first.text == "first"
+                with pytest.raises(RuntimeError) as error:
+                    await stream.__anext__()
+                assert error.value is primary
+            elif failure_kind == "conversion":
+                with pytest.raises(RuntimeError) as error:
+                    await stream.__anext__()
+                assert error.value is primary
+            else:
+                first = await stream.__anext__()
+                assert first.text == "first"
+                consumer = asyncio.create_task(stream.__anext__())
+                try:
+                    assert event_source is not None
+                    await asyncio.wait_for(event_source.waiting.wait(), timeout=5)
+                    consumer.cancel("consumer cancelled")
+                    with pytest.raises(asyncio.CancelledError) as cancel_error:
+                        await consumer
+                    assert isinstance(cancel_error.value, asyncio.CancelledError)
+                    assert consumer.cancelled()
+                finally:
+                    consumer.cancel()
+                    await asyncio.gather(consumer, return_exceptions=True)
+
+        if failure_kind == "conversion":
+            assert response is not None
+            assert body.aclose_calls >= 1
+            assert body.closed
+            assert body.iterator_finally
+        else:
+            assert event_source is not None
+            assert event_source.aclose_calls >= 1
+            assert event_source.aclose_completed == event_source.aclose_calls
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    async def test_http_body_task_cancel_survives_aclose_error(self, caller: str) -> None:
+        """A task canceled during HTTP body iteration remains canceled when body close fails."""
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+            first = await stream.__anext__()
+            assert first.text == "first"
+            consumer = asyncio.create_task(stream.__anext__())
+            try:
+                await asyncio.wait_for(body.tail_waiting.wait(), timeout=5)
+                consumer.cancel("consumer cancelled")
+                with pytest.raises(asyncio.CancelledError):
+                    await consumer
+                assert consumer.cancelled()
+            finally:
+                consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    async def test_http_body_iteration_error_survives_aclose_error(
+        self,
+        caller: str,
+    ) -> None:
+        """An HTTP body iteration failure should remain primary when body close fails."""
+        primary = RuntimeError("HTTP event iteration failed")
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure, iteration_error=primary)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            first = await stream.__anext__()
+            assert first.text == "first"
+            body.release_tail()
+            with pytest.raises(RuntimeError) as error:
+                await stream.__anext__()
+
+        assert error.value is primary
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("caller", ["client", "agent"], ids=["client", "agent"])
+    @pytest.mark.parametrize("close_mode", ["explicit", "complete"], ids=["public-close", "normal-completion"])
+    async def test_http_body_aclose_error_propagates_without_primary_failure(
+        self,
+        caller: str,
+        close_mode: str,
+    ) -> None:
+        """A body close failure remains visible when no operation failure takes precedence."""
+        close_failure = OSError("HTTP response body close failed")
+        body = _GatedSSEStream(aclose_error=close_failure)
+        response: httpx.Response | None = None
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal response
+            if request.method == "GET":
+                return httpx.Response(204, request=request)
+            await request.aread()
+            response = httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=body,
+                request=request,
+            )
+            return response
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            client = AGUIChatClient(
+                endpoint="https://agui.example.test/run",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": False},
+            )
+            agent = Agent(client=client) if caller == "agent" else None
+            messages = [Message(role="user", contents=["Question"])]
+            stream = (
+                agent.run(messages, stream=True) if agent is not None else client.get_response(messages, stream=True)
+            )
+
+            if close_mode == "explicit":
+                first = await stream.__anext__()
+                assert first.text == "first"
+                with pytest.raises(OSError) as error:
+                    await stream.close()
+            else:
+                body.release_tail()
+                with pytest.raises(OSError) as error:
+                    async for _ in stream:
+                        pass
+
+            assert error.value is close_failure
+
+        assert response is not None
+        assert body.aclose_calls >= 1
+        assert body.closed
+        assert body.iterator_finally
 
     async def test_get_response_non_streaming(self, monkeypatch: MonkeyPatch) -> None:
         """Test non-streaming response method."""
@@ -726,6 +1213,430 @@ class TestAGUIChatClient:
         assert response is not None
         assert len(response.messages) > 0
         assert "Complete response" in response.text
+
+    @pytest.mark.parametrize(
+        "stream,invocation_enabled,consume_stream,strip_run_metadata",
+        [
+            (True, True, True, False),
+            (True, True, False, False),
+            (False, True, False, False),
+            (True, False, True, False),
+            (True, False, False, False),
+            (True, True, True, True),
+            (True, False, False, True),
+        ],
+        ids=[
+            "loop_iterated",
+            "loop_final_only",
+            "nonstream",
+            "direct_iterated",
+            "direct_final_only",
+            "filtered_loop",
+            "filtered_direct",
+        ],
+    )
+    @pytest.mark.parametrize("late_annotations", [False, True], ids=["before_later_message", "after_later_message"])
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_response_attaches_annotations_to_the_referenced_message(
+        self,
+        stream: bool,
+        invocation_enabled: bool,
+        consume_stream: bool,
+        strip_run_metadata: bool,
+        late_annotations: bool,
+        as_agent: bool,
+    ) -> None:
+        """Public finalization must attach annotations by message ID after later text arrives."""
+        annotations = [
+            {
+                "type": "citation",
+                "url": "https://example.test/source",
+                "annotated_regions": [{"type": "text_span", "start_index": 0, "end_index": 5}],
+            }
+        ]
+        annotation_event = {
+            "type": "CUSTOM",
+            "name": "annotations",
+            "value": {"messageId": "m1", "annotations": annotations},
+        }
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+            ]
+            if not late_annotations:
+                events.append(annotation_event)
+            events.extend(
+                [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                ]
+            )
+            if late_annotations:
+                events.append(annotation_event)
+            events.append({"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]})
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/",
+                http_client=http_client,
+                function_invocation_configuration={"enabled": invocation_enabled},
+                middleware=[_OmitRunMetadata()] if strip_run_metadata else [],
+            ) as client:
+                get_response = Agent(client=client).run if as_agent else client.get_response
+                messages = [Message(role="user", contents=["Question"])]
+                if stream:
+                    response_stream = get_response(messages, stream=True)
+                    updates = [update async for update in response_stream] if consume_stream else []
+                    response = await response_stream.get_final_response()
+                    annotation_updates = [
+                        update
+                        for update in updates
+                        if (update.additional_properties or {}).get("ag_ui_custom_event", {}).get("name")
+                        == "annotations"
+                    ]
+                    if consume_stream:
+                        assert len(annotation_updates) == 1
+                        assert "".join(update.text for update in updates) == "FirstSecond"
+                else:
+                    response = await get_response(messages)
+
+        assert [(message.message_id, message.text) for message in response.messages] == [
+            ("m1", "First"),
+            ("m2", "Second"),
+        ]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert response.messages[1].contents[0].annotations is None
+        assert response.additional_properties["ag_ui_custom_event"]["value"] == annotation_event["value"]
+
+    @pytest.mark.parametrize("reuse_message_id", [False, True], ids=["distinct_ids", "reused_id"])
+    @pytest.mark.parametrize(
+        "stream,strip_run_metadata",
+        [(False, False), (True, False), (True, True)],
+        ids=["nonstream", "stream", "filtered_stream"],
+    )
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_annotations_preserve_a_completed_client_tool_round(
+        self, stream: bool, as_agent: bool, reuse_message_id: bool, strip_run_metadata: bool
+    ) -> None:
+        """Late annotations must retain one executed call/result pair and the next request's history."""
+        executed: list[str] = []
+        requests: list[dict[str, Any]] = []
+        annotations = [{"type": "citation", "url": "https://example.test/source"}]
+        earlier_annotations = [{"type": "citation", "url": "https://example.test/earlier-source"}]
+        planning_id = "m1" if reuse_message_id else "planning"
+
+        @tool(approval_mode="never_require")
+        def echo(value: str) -> str:
+            """Return the requested value."""
+            executed.append(value)
+            return value
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            requests.append(payload)
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            if len(requests) == 1:
+                events.extend(
+                    [
+                        {"type": "TEXT_MESSAGE_START", "messageId": planning_id, "role": "assistant"},
+                        {"type": "TEXT_MESSAGE_CONTENT", "messageId": planning_id, "delta": "Checking"},
+                        {"type": "TEXT_MESSAGE_END", "messageId": planning_id},
+                        {"type": "TOOL_CALL_START", "toolCallId": "call-echo", "toolName": "echo"},
+                        {"type": "TOOL_CALL_ARGS", "toolCallId": "call-echo", "delta": '{"value":"done"}'},
+                        {"type": "TOOL_CALL_END", "toolCallId": "call-echo"},
+                    ]
+                )
+                if reuse_message_id:
+                    events.append(
+                        {
+                            "type": "CUSTOM",
+                            "name": "annotations",
+                            "value": {"messageId": "m1", "annotations": earlier_annotations},
+                        }
+                    )
+            else:
+                annotated_events: list[dict[str, Any]] = [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                    {
+                        "type": "CUSTOM",
+                        "name": "annotations",
+                        "value": {"messageId": "m1", "annotations": annotations},
+                    },
+                ]
+                events.extend(annotated_events)
+            events.append({"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]})
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                content="".join(f"data: {json.dumps(event)}\n\n" for event in events).encode(),
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/",
+                http_client=http_client,
+                middleware=[_OmitRunMetadata()] if strip_run_metadata else [],
+            ) as client:
+                get_response = Agent(client=client).run if as_agent else client.get_response
+                messages = [Message(role="user", contents=["Question"])]
+                options: ChatOptions[None] = ChatOptions(tools=[echo], metadata={"thread_id": "thread-1"})
+                if stream:
+                    response_stream = get_response(messages, stream=True, options=options)
+                    updates = [update async for update in response_stream]
+                    response = await response_stream.get_final_response()
+                    assert (
+                        sum(content.type == "function_result" for update in updates for content in update.contents) == 1
+                    )
+                else:
+                    response = await get_response(messages, options=options)
+
+        assert len(requests) == 2
+        assert [request["thread_id"] for request in requests] == ["thread-1", "thread-1"]
+        assert executed == ["done"]
+        assert len(messages) == 1
+        call_contents = [
+            content for message in response.messages for content in message.contents if content.type == "function_call"
+        ]
+        result_contents = [
+            content
+            for message in response.messages
+            for content in message.contents
+            if content.type == "function_result"
+        ]
+        assert len(call_contents) == len(result_contents) == 1
+        assert call_contents[0].call_id == result_contents[0].call_id == "call-echo"
+        text_messages = [(message.message_id, message.text) for message in response.messages if message.text]
+        assert text_messages == [(planning_id, "Checking"), ("m1", "First"), ("m2", "Second")]
+        first = next(message for message in response.messages if message.message_id == "m1" and message.text == "First")
+        assert first.contents[0].annotations == annotations
+        assert sum(message.message_id == "m1" for message in response.messages) == (2 if reuse_message_id else 1)
+        if reuse_message_id:
+            earlier = next(message for message in response.messages if message.text == "Checking")
+            assert earlier.contents[0].annotations == earlier_annotations
+        history = requests[1]["messages"]
+        results = [message for message in history if message.get("role") == "tool"]
+        assert len(results) == 1
+        assert results[0]["toolCallId"] == "call-echo"
+        assert results[0]["content"] == "done"
+
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_public_annotation_stream_preserves_structured_output(
+        self, monkeypatch: MonkeyPatch, as_agent: bool
+    ) -> None:
+        """The AG-UI whole-loop finalizer retains the requested structured response type."""
+        from pydantic import BaseModel
+
+        class Answer(BaseModel):
+            reply: str
+
+        annotations = [{"type": "citation", "url": "https://example.test/source"}]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": '{"reply":"First"}'},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+            {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": '{"reply":"Second"}'},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+            {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m1", "annotations": annotations}},
+        ]
+
+        async def post_run(**kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in events:
+                yield event
+
+        async with StubAGUIChatClient(endpoint="https://agui.example.test/") as client:
+            get_response = Agent(client=client).run if as_agent else client.get_response
+            monkeypatch.setattr(client.http_service, "post_run", post_run)
+            messages: list[Message] = [Message(role="user", contents=["Question"])]
+            options: ChatOptions[Any] = ChatOptions()
+            options["response_format"] = Answer
+            response_stream = get_response(messages, stream=True, options=options)
+            async for _ in response_stream:
+                pass
+            response = await response_stream.get_final_response()
+
+        assert [message.message_id for message in response.messages] == ["m1", "m2"]
+        assert response.messages[0].contents[0].annotations == annotations
+        assert isinstance(response.value, Answer)
+        assert response.value.reply == "Second"
+
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    @pytest.mark.parametrize("consume_stream", [False, True], ids=["final_only", "iterated"])
+    @pytest.mark.parametrize("replacement", [False, True], ids=["default_merge", "replace"])
+    async def test_buffered_final_message_redaction_preserves_previous_text_and_citations(
+        self, as_agent: bool, consume_stream: bool, replacement: bool
+    ) -> None:
+        """An authoritative empty final message must not replace an earlier message."""
+
+        class RedactFinalMessage(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                context.stream_buffer_updates = True
+
+                def to_updates(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
+                    updates = response.to_updates()
+                    if replacement:
+                        for update in updates:
+                            update.merge_mode = "replace"
+                    return updates
+
+                context.stream_result_to_updates = to_updates
+
+                def redact(response: ChatResponse[Any]) -> ChatResponse[Any]:
+                    for message in response.messages:
+                        if message.message_id == "m2":
+                            for content in message.contents:
+                                if content.type == "text":
+                                    content.text = ""
+                    return response
+
+                context.stream_result_transforms.append(redact)
+
+        annotations = [{"type": "citation", "url": "https://example.test/final-source"}]
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(await request.aread())
+            events: list[dict[str, Any]] = [
+                {"type": "RUN_STARTED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+                {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m2", "annotations": annotations}},
+                {"type": "RUN_FINISHED", "threadId": payload["thread_id"], "runId": payload["run_id"]},
+            ]
+            wire = "".join("data: " + json.dumps(event) + "\n\n" for event in events).encode()
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, content=wire)
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+            async with AGUIChatClient(
+                endpoint="https://agui.example.test/", http_client=http_client, middleware=[RedactFinalMessage()]
+            ) as client:
+                run = Agent(client=client).run if as_agent else client.get_response
+                messages: list[Message] = [Message(role="user", contents=["Question"])]
+                stream = run(messages, stream=True)
+                updates = [update async for update in stream] if consume_stream else []
+                response = await stream.get_final_response()
+
+        actual = [(message.message_id, message.text) for message in response.messages]
+        assert actual == [("m1", "First"), ("m2", "")], actual
+        assert response.messages[0].contents[0].annotations is None
+        assert response.messages[1].contents[0].annotations == annotations
+        assert response.additional_properties["ag_ui_custom_event"]["value"] == {
+            "messageId": "m2",
+            "annotations": annotations,
+        }
+        if consume_stream:
+            assert "".join(update.text for update in updates) == "First"
+
+    @pytest.mark.parametrize("transform_mode", ["uppercase", "redacted", "replacement"])
+    @pytest.mark.parametrize("message_count", [1, 2], ids=["same_message", "later_message"])
+    @pytest.mark.parametrize("batch_count", [1, 2], ids=["one_batch", "two_batches"])
+    @pytest.mark.parametrize("as_agent", [False, True], ids=["client", "agent"])
+    async def test_buffered_middleware_preserves_rebuilt_text_and_annotations(
+        self, monkeypatch: MonkeyPatch, as_agent: bool, message_count: int, batch_count: int, transform_mode: str
+    ) -> None:
+        """Response-level annotation metadata must not hide text rebuilt by middleware."""
+        from collections.abc import Callable
+
+        from agent_framework import ChatContext, ChatMiddleware
+
+        redact_text = transform_mode != "uppercase"
+
+        class TransformMiddleware(ChatMiddleware):
+            async def process(self, context: ChatContext, call_next: Callable[[], Awaitable[None]]) -> None:
+                await call_next()
+                context.stream_buffer_updates = True
+
+                def to_updates(response: ChatResponse[Any]) -> list[ChatResponseUpdate]:
+                    updates = response.to_updates()
+                    if transform_mode == "replacement":
+                        for update in updates:
+                            update.merge_mode = "replace"
+                    return updates
+
+                context.stream_result_to_updates = to_updates
+
+                def transform_text(response: ChatResponse[Any]) -> ChatResponse[Any]:
+                    for message in response.messages:
+                        for content in message.contents:
+                            if content.type == "text" and content.text is not None:
+                                content.text = "" if redact_text else content.text.upper()
+                            if transform_mode == "redacted":
+                                content.additional_properties["redacted"] = True
+                    return response
+
+                context.stream_result_transforms.append(transform_text)
+
+        annotations = [
+            {"type": "citation", "url": f"https://example.test/source-{index}"} for index in range(batch_count)
+        ]
+        events: list[dict[str, Any]] = [
+            {"type": "TEXT_MESSAGE_START", "messageId": "m1", "role": "assistant"},
+            {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m1", "delta": "First"},
+            {"type": "TEXT_MESSAGE_END", "messageId": "m1"},
+        ]
+        if message_count == 2:
+            events.extend(
+                [
+                    {"type": "TEXT_MESSAGE_START", "messageId": "m2", "role": "assistant"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "m2", "delta": "Second"},
+                    {"type": "TEXT_MESSAGE_END", "messageId": "m2"},
+                ]
+            )
+        events.extend(
+            {"type": "CUSTOM", "name": "annotations", "value": {"messageId": "m1", "annotations": [annotation]}}
+            for annotation in annotations
+        )
+
+        async def post_run(**kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            for event in events:
+                yield event
+
+        async with StubAGUIChatClient(
+            endpoint="https://agui.example.test/", middleware=[TransformMiddleware()]
+        ) as client:
+            get_response = Agent(client=client).run if as_agent else client.get_response
+            monkeypatch.setattr(client.http_service, "post_run", post_run)
+            messages: list[Message] = [Message(role="user", contents=["Question"])]
+            response_stream = get_response(messages, stream=True)
+            updates = [update async for update in response_stream]
+            response = await response_stream.get_final_response()
+
+        expected = [("m1", "" if redact_text else "FIRST")] + (
+            [("m2", "" if redact_text else "SECOND")] if message_count == 2 else []
+        )
+        assert [(message.message_id, message.text) for message in response.messages] == expected
+        assert "".join(update.text for update in updates) == "".join(text for _, text in expected)
+        assert response.messages[0].contents[0].annotations == annotations
+        if transform_mode == "redacted":
+            assert all(
+                content.additional_properties["redacted"]
+                for message in response.messages
+                for content in message.contents
+                if content.type == "text"
+            )
+        assert response.additional_properties["ag_ui_custom_event"]["value"]["messageId"] == "m1"
 
     async def test_tool_handling(self, monkeypatch: MonkeyPatch) -> None:
         """Test that client tool metadata is sent to server.
@@ -768,8 +1679,8 @@ class TestAGUIChatClient:
 
         assert response is not None
 
-    async def test_server_tool_calls_unwrapped_after_invocation(self, monkeypatch: MonkeyPatch) -> None:
-        """Ensure server-side tool calls are exposed as FunctionCallContent after processing."""
+    async def test_server_tool_calls_are_marked_hosted(self, monkeypatch: MonkeyPatch) -> None:
+        """Ensure server-side tool calls remain function calls and are not locally actionable."""
 
         mock_events = [
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
@@ -796,6 +1707,7 @@ class TestAGUIChatClient:
         ]
         assert function_calls
         assert function_calls[0].name == "get_time_zone"
+        assert function_calls[0].hosted is True
 
         assert not any(content.type == "server_function_call" for update in updates for content in update.contents)
 
@@ -874,15 +1786,6 @@ class TestAGUIChatClient:
         assert result_messages == []
         assert state is None
 
-    async def test_register_server_tool_non_dict_config(self) -> None:
-        """Non-dict function_invocation_configuration is a no-op."""
-        client = StubAGUIChatClient(
-            endpoint="http://localhost:8888/",
-            function_invocation_configuration=None,  # type: ignore[arg-type]
-        )
-        # Should not raise
-        client._register_server_tool_placeholder("some_tool")
-
     async def test_non_streaming_response(self, monkeypatch: MonkeyPatch) -> None:
         """Non-streaming path collects updates into ChatResponse."""
         mock_events = [
@@ -916,6 +1819,7 @@ class TestAGUIChatClient:
             {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
             {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "my_tool"},
             {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"param": "test"}'},
+            {"type": "TOOL_CALL_END", "toolCallId": "call_1"},
             {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
         ]
 
@@ -931,7 +1835,7 @@ class TestAGUIChatClient:
         stream = client.inner_get_response(messages=messages, stream=True, options={"tools": [my_tool]})
         assert isinstance(stream, ResponseStream)
         async for update in stream:
-            updates.append(cast(ChatResponseUpdate, update))
+            updates.append(update)
 
         # Find the function_call content - it should have agui_thread_id
         found = False
@@ -943,6 +1847,180 @@ class TestAGUIChatClient:
                     found = True
                     break
         assert found, "Expected to find function_call content for my_tool"
+
+    async def test_run_error_invalidates_partial_client_tool_call(self, monkeypatch: MonkeyPatch) -> None:
+        """RUN_ERROR invalidates exposed local client-tool fragments."""
+        executed: list[str] = []
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            events = [
+                {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "unsafe"}'},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+            ]
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        with pytest.raises(ResponseInvalidatedException, match="invalidated partial output"):
+            await client.get_response(
+                [Message(role="user", contents=["Test"])],
+                options={"tools": [write_value]},
+            )
+
+        assert executed == []
+
+    async def test_streaming_run_error_invalidates_partial_client_tool_call(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Streaming exposes partial deltas but invalidates iteration and finalization."""
+        executed: list[str] = []
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            del args, kwargs
+            for event in [
+                {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "unsafe"}'},
+                {"type": "RUN_ERROR", "threadId": "thread_1", "runId": "run_1", "message": "failed"},
+            ]:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.get_response(
+            [Message(role="user", contents=["Test"])],
+            stream=True,
+            options={"tools": [write_value]},
+        )
+        assert isinstance(stream, ResponseStream)
+        updates: list[ChatResponseUpdate] = []
+        with pytest.raises(ResponseInvalidatedException, match="invalidated partial output") as iteration_error:
+            async for update in stream:
+                updates.append(update)
+
+        assert any(content.type == "function_call" for update in updates for content in update.contents)
+        with pytest.raises(ResponseInvalidatedException) as finalization_error:
+            await stream.get_final_response()
+        assert finalization_error.value is iteration_error.value
+        assert executed == []
+
+    async def test_complete_client_tool_call_does_not_require_tool_call_end(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Complete provider arguments remain executable without TOOL_CALL_END."""
+        executed: list[str] = []
+        call_count = 0
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            del args, kwargs
+            call_count += 1
+            events = (
+                [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "safe"}'},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+                if call_count == 1
+                else [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            )
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        response = await client.get_response(
+            [Message(role="user", contents=["Test"])],
+            options={"tools": [write_value]},
+        )
+
+        assert response.text == "done"
+        assert executed == ["safe"]
+        assert call_count == 2
+
+    async def test_streaming_complete_client_tool_call_does_not_require_tool_call_end(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Streaming finalization executes a complete call once without TOOL_CALL_END."""
+        executed: list[str] = []
+        call_count = 0
+
+        @tool
+        def write_value(value: str) -> str:
+            """Record a local side effect."""
+            executed.append(value)
+            return value
+
+        async def mock_post_run(*args: object, **kwargs: Any) -> AsyncGenerator[dict[str, Any], None]:
+            nonlocal call_count
+            del args, kwargs
+            call_count += 1
+            events = (
+                [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_1"},
+                    {"type": "TOOL_CALL_START", "toolCallId": "call_1", "toolName": "write_value"},
+                    {"type": "TOOL_CALL_ARGS", "toolCallId": "call_1", "delta": '{"value": "safe"}'},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_1"},
+                ]
+                if call_count == 1
+                else [
+                    {"type": "RUN_STARTED", "threadId": "thread_1", "runId": "run_2"},
+                    {"type": "TEXT_MESSAGE_CONTENT", "messageId": "msg_1", "delta": "done"},
+                    {"type": "RUN_FINISHED", "threadId": "thread_1", "runId": "run_2"},
+                ]
+            )
+            for event in events:
+                yield event
+
+        client = StubAGUIChatClient(endpoint="http://localhost:8888/")
+        monkeypatch.setattr(client.http_service, "post_run", mock_post_run)
+
+        stream = client.get_response(
+            [Message(role="user", contents=["Test"])],
+            stream=True,
+            options={"tools": [write_value]},
+        )
+        assert isinstance(stream, ResponseStream)
+        updates = [update async for update in stream]
+        response = await stream.get_final_response()
+
+        assert any(update.text == "done" for update in updates)
+        assert response.text == "done"
+        assert executed == ["safe"]
+        assert call_count == 2
 
     async def test_tool_call_args_id_mismatch_does_not_execute_current_client_tool(
         self, monkeypatch: MonkeyPatch

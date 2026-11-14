@@ -41,8 +41,10 @@ internal sealed class ToolApprovalRequestEventGenerator(
             {
                 Id = functionCall.CallId,
                 Name = functionCall.Name,
+                // DevUI requires an arguments object. Represent a no-argument call as an empty object
+                // so its response can pass the same strict wire validation as calls with arguments.
                 Arguments = JsonSerializer.SerializeToElement(
-                    functionCall.Arguments,
+                    functionCall.Arguments ?? new Dictionary<string, object?>(),
                     jsonSerializerOptions.GetTypeInfo(typeof(IDictionary<string, object>)))
             }
         };

@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
 import asyncio
-from typing import cast
+from typing import Never, cast
 
 from agent_framework import (
     Executor,
@@ -9,7 +9,6 @@ from agent_framework import (
     WorkflowContext,
     handler,
 )
-from typing_extensions import Never
 
 """
 Sample: Sequential workflow with streaming.

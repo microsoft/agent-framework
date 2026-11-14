@@ -38,7 +38,9 @@ public sealed class ExternalInputRequest : IExternalRequestEnvelope
     /// <c>requireApproval: true</c>) over <see cref="FunctionCallContent"/> so that
     /// hosts which speak the approval protocol see the approval-bearing content.
     /// </remarks>
-    AIContent? IExternalRequestEnvelope.GetInnerRequestContent()
+    AIContent? IExternalRequestEnvelope.GetInnerRequestContent() => this.GetInnerRequestContent();
+
+    private AIContent? GetInnerRequestContent()
     {
         IList<ChatMessage>? messages = this.AgentResponse?.Messages;
         if (messages is null)
@@ -73,5 +75,16 @@ public sealed class ExternalInputRequest : IExternalRequestEnvelope
 
     /// <inheritdoc />
     object IExternalRequestEnvelope.CreateResponse(IList<ChatMessage> messages)
-        => new ExternalInputResponse(messages);
+        => new ExternalInputResponse(messages)
+        {
+            RequestId = GetContentId(this.GetInnerRequestContent()),
+        };
+
+    private static string? GetContentId(AIContent? content)
+        => content switch
+        {
+            ToolCallContent functionCall => functionCall.CallId,
+            InputRequestContent toolApprovalRequest => toolApprovalRequest.RequestId,
+            _ => null,
+        };
 }

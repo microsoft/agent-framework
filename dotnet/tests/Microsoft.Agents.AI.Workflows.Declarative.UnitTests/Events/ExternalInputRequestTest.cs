@@ -63,4 +63,47 @@ public sealed class ExternalInputRequestTest(ITestOutputHelper output) : EventTe
         TextContent textContent = AssertContent<TextContent>(messageCopy);
         Assert.Equal("Heya", textContent.Text);
     }
+
+    [Fact]
+    public void CreateResponse_CorrelatesResponseToToolApprovalRequest()
+    {
+        // Arrange
+        ExternalInputRequest source =
+            new(new AgentResponse(
+                new ChatMessage(
+                    ChatRole.Assistant,
+                    [
+                        new ToolApprovalRequestContent("approval-call", new FunctionCallContent("function-call", "result1")),
+                        new FunctionCallContent("other-call", "myfunc"),
+                    ])));
+
+        // Act
+        object response = ((IExternalRequestEnvelope)source).CreateResponse(
+            [new ChatMessage(ChatRole.Tool, [new ToolApprovalResponseContent("forged-call", approved: true, new FunctionCallContent("forged-call", "result1"))])]);
+
+        // Assert
+        ExternalInputResponse externalInputResponse = Assert.IsType<ExternalInputResponse>(response);
+        Assert.Equal("approval-call", externalInputResponse.RequestId);
+    }
+
+    [Fact]
+    public void CreateResponse_CorrelatesResponseToFunctionCallWhenApprovalIsAbsent()
+    {
+        // Arrange
+        ExternalInputRequest source =
+            new(new AgentResponse(
+                new ChatMessage(
+                    ChatRole.Assistant,
+                    [
+                        new FunctionCallContent("function-call", "myfunc"),
+                    ])));
+
+        // Act
+        object response = ((IExternalRequestEnvelope)source).CreateResponse(
+            [new ChatMessage(ChatRole.Tool, [new FunctionResultContent("forged-call", "ok")])]);
+
+        // Assert
+        ExternalInputResponse externalInputResponse = Assert.IsType<ExternalInputResponse>(response);
+        Assert.Equal("function-call", externalInputResponse.RequestId);
+    }
 }

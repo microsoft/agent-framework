@@ -35,6 +35,55 @@ internal sealed class PurviewWrapper : IDisposable
         this._backgroundJobRunner = backgroundJobRunner;
     }
 
+    /// <summary>
+    /// Builds the replacement response returned when policy blocks a response that was produced.
+    /// </summary>
+    /// <param name="evaluated">The response that was evaluated and blocked.</param>
+    /// <param name="blockedMessage">The notice to return in place of the blocked content.</param>
+    /// <returns>A response carrying the original control metadata with only the messages replaced.</returns>
+    /// <remarks>
+    /// The control fields are carried over so the caller can still identify the call and resume it;
+    /// only the messages are replaced. <see cref="ChatResponse.RawRepresentation"/> is deliberately
+    /// not carried, because it holds the content that was blocked.
+    /// </remarks>
+    private static ChatResponse BuildBlockedResponse(ChatResponse evaluated, string blockedMessage) =>
+        new(new ChatMessage(ChatRole.System, blockedMessage))
+        {
+            ResponseId = evaluated.ResponseId,
+            ConversationId = evaluated.ConversationId,
+            ModelId = evaluated.ModelId,
+            CreatedAt = evaluated.CreatedAt,
+            FinishReason = evaluated.FinishReason,
+            Usage = evaluated.Usage,
+            ContinuationToken = evaluated.ContinuationToken,
+            AdditionalProperties = evaluated.AdditionalProperties,
+        };
+
+    /// <summary>
+    /// Builds the replacement response returned when policy blocks a response that was produced.
+    /// </summary>
+    /// <param name="evaluated">The response that was evaluated and blocked.</param>
+    /// <param name="blockedMessage">The notice to return in place of the blocked content.</param>
+    /// <returns>A response carrying the original control metadata with only the messages replaced.</returns>
+    /// <remarks>
+    /// The control fields are carried over so the caller can still identify the run and resume it;
+    /// only the messages are replaced. <see cref="AgentResponse.RawRepresentation"/> is deliberately
+    /// not carried, because it holds the content that was blocked.
+    /// </remarks>
+    private static AgentResponse BuildBlockedResponse(AgentResponse evaluated, string blockedMessage) =>
+#pragma warning disable MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+        new(new ChatMessage(ChatRole.System, blockedMessage))
+        {
+            ResponseId = evaluated.ResponseId,
+            AgentId = evaluated.AgentId,
+            CreatedAt = evaluated.CreatedAt,
+            FinishReason = evaluated.FinishReason,
+            Usage = evaluated.Usage,
+            ContinuationToken = evaluated.ContinuationToken,
+            AdditionalProperties = evaluated.AdditionalProperties,
+        };
+#pragma warning restore MEAI001 // Type is for evaluation purposes only and is subject to change or removal in future updates. Suppress this diagnostic to proceed.
+
     private static string GetSessionIdFromAgentSession(AgentSession? session, IEnumerable<ChatMessage> messages)
     {
         if (session is ChatClientAgentSession chatClientAgentSession &&
@@ -107,7 +156,7 @@ internal sealed class PurviewWrapper : IDisposable
                     this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
                 }
 
-                return new ChatResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
+                return BuildBlockedResponse(response, this._purviewSettings.BlockedResponseMessage);
             }
         }
         catch (Exception ex)
@@ -197,7 +246,7 @@ internal sealed class PurviewWrapper : IDisposable
                     this._logger.LogInformation("Response blocked by policy. Sending message: {Message}", this._purviewSettings.BlockedResponseMessage);
                 }
 
-                return new AgentResponse(new ChatMessage(ChatRole.System, this._purviewSettings.BlockedResponseMessage));
+                return BuildBlockedResponse(response, this._purviewSettings.BlockedResponseMessage);
             }
         }
         catch (Exception ex)

@@ -11,10 +11,8 @@
 // Only deploy this sample to an externally sandboxed environment such as a
 // Foundry hosted-agent container.
 //
-// RUNTIME: this sample runs generated Python with a Python interpreter. The
-// hosted dotnet_10 source-deployment runtime provides python3. Local runs use
-// python.exe on Windows and python3 elsewhere; LOCAL_CODEACT_PYTHON overrides
-// that selection when a different executable is required.
+// RUNTIME: set LOCAL_CODEACT_PYTHON to the fully qualified path of an existing
+// Python interpreter, both locally and in the hosted dotnet_10 environment.
 
 using System.ComponentModel;
 using Azure.AI.Projects;
@@ -36,15 +34,24 @@ var endpoint = System.Environment.GetEnvironmentVariable("FOUNDRY_PROJECT_ENDPOI
 // environment does not define the variable referenced from azure.yaml. An empty string is not
 // null, so a plain ?? chain would pass the blank straight through and fail deep inside the SDK.
 var deploymentName = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     System.Environment.GetEnvironmentVariable("FOUNDRY_MODEL"),
+    System.Environment.GetEnvironmentVariable("AZURE_AI_MODEL_DEPLOYMENT_NAME"),
     "gpt-4o");
 
 var agentName = System.Environment.GetEnvironmentVariable("AGENT_NAME") ?? "hosted-local-codeact";
 
-var pythonExecutable = FirstNonBlank(
-    System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON"),
-    OperatingSystem.IsWindows() ? "python.exe" : "python3");
+var pythonExecutable = System.Environment.GetEnvironmentVariable("LOCAL_CODEACT_PYTHON");
+// The published package used by this standalone sample does not yet validate the interpreter path.
+if (string.IsNullOrWhiteSpace(pythonExecutable) || !Path.IsPathFullyQualified(pythonExecutable))
+{
+    throw new InvalidOperationException(
+        "Set LOCAL_CODEACT_PYTHON to the fully qualified path of a trusted Python interpreter.");
+}
+
+if (!File.Exists(pythonExecutable))
+{
+    throw new FileNotFoundException("The configured Python executable file was not found.", pythonExecutable);
+}
 
 // ── Sandbox-only tools (model never sees these directly) ─────────────────────
 
@@ -123,7 +130,7 @@ AIAgent agent = new AIProjectClient(new Uri(endpoint), new DefaultAzureCredentia
 
 // Host the agent using the Responses protocol.
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent);
+builder.AddFoundryResponses(agent);
 
 var app = builder.Build();
 app.MapFoundryResponses();

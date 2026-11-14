@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import threading
+import time
 import uuid
 import warnings
 import weakref
@@ -32,10 +33,12 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Itera
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from functools import partial
+from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypeAlias, TypeVar, cast
 
 import msgspec
+from typing_extensions import TypedDict
 
 from ._feature_stage import ExperimentalFeature, experimental
 from ._filesystem import (
@@ -67,11 +70,18 @@ logger = logging.getLogger("agent_framework")
 
 MESSAGE_INJECTION_PENDING_MESSAGES_STATE_KEY: str = "message_injection.pending_messages"
 _MESSAGE_INJECTION_LOCK = threading.Lock()
+_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY = "workflow.defer_computer_function_results"
+_SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_service_continuation"
+_INITIAL_SERVICE_CONTINUATION_CONTEXT_KEY = "_agent_framework_initial_service_continuation"
+_LOADED_HISTORY_MESSAGES_CONTEXT_KEY = "_agent_framework_loaded_history_messages"
+_SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY = "_agent_framework_service_history_verified_sources"
+_SERVICE_HISTORY_COVERAGE_STATE_KEY = "_agent_framework_service_history_coverage"
 
 JsonDumps: TypeAlias = Callable[[Any], str | bytes]
 JsonLoads: TypeAlias = Callable[[str | bytes], Any]
 ServiceSessionId: TypeAlias = Mapping[str, Any]
 MessageIdentity: TypeAlias = tuple[str, ...]
+_ServiceContinuation: TypeAlias = tuple[bool, str | None]
 StateT = TypeVar("StateT")
 StateEncoder: TypeAlias = Callable[[Any], Mapping[str, Any]]
 StateDecoder: TypeAlias = Callable[[Mapping[str, Any]], Any]
@@ -174,7 +184,7 @@ def _get_message_hash(message: Message) -> MessageIdentity:
 
 
 def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]) -> list[Message]:
-    """Filters incoming messages to only those that are truly new.
+    """Return messages after the ordered overlap with persisted history.
 
     Handles both 'append-only' and 'full transcript replay' scenarios.
     Prevents superlinear growth and preserves legitimate duplicate turns.
@@ -185,23 +195,20 @@ def filter_new_messages(existing: Sequence[Message], incoming: Sequence[Message]
     existing_hashes = [_get_message_hash(m) for m in existing]
     incoming_hashes = [_get_message_hash(m) for m in incoming]
 
-    if len(incoming) >= len(existing) and incoming_hashes[: len(existing_hashes)] == existing_hashes:
-        return list(incoming[len(existing) :])
+    for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
+        if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
+            if i == 0 and len(existing) == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+                break  # A repeated input without an ID is more important to retain than a possible replay.
+            return list(incoming[i + len(existing_hashes) :])
 
-    try:
-        for i in range(len(incoming_hashes) - len(existing_hashes) + 1):
-            if incoming_hashes[i : i + len(existing_hashes)] == existing_hashes:
-                return list(incoming[i + len(existing_hashes) :])
-    except Exception:
-        logger.debug("sequence alignment check failed, falling back to set-based deduplication")
+    for overlap in range(min(len(existing_hashes), len(incoming_hashes)), 0, -1):
+        if existing_hashes[-overlap:] != incoming_hashes[:overlap]:
+            continue
+        if overlap == 1 and existing[-1].role == "user" and existing_hashes[-1][0] != "id":
+            continue
+        return list(incoming[overlap:])
 
-    existing_set = set(existing_hashes)
-    new_msgs: list[Message] = []
-    for m, h in zip(incoming, incoming_hashes):
-        if h not in existing_set:
-            new_msgs.append(m)
-            existing_set.add(h)
-    return new_msgs
+    return list(incoming)
 
 
 @dataclass(frozen=True, slots=True)
@@ -830,17 +837,14 @@ class ContextProvider:
         """
 
 
-def _is_approval_placeholder_result(content: Content) -> bool:
-    result = getattr(content, "result", None)
-    return isinstance(result, str) and "[APPROVAL_PENDING]" in result
-
-
 def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
     unresolved_requests_by_id: dict[str, Content] = {}
     local_request_ids_by_call_id: dict[str, deque[str]] = {}
     local_request_ids_by_occurrence: dict[str, str] = {}
+    local_requests_by_id: dict[str, Content] = {}
+    closed_request_occurrences: set[int] = set()
     unresolved_local_responses_by_id: dict[str, Content] = {}
-    local_responses_by_call_id: dict[str, deque[tuple[str, str | None]]] = {}
+    local_responses_by_call_id: dict[str, deque[tuple[str, Content | None]]] = {}
 
     for message in messages:
         for content in message.contents:
@@ -849,6 +853,7 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 if content.id is not None and function_call is not None and function_call.call_id is not None:
                     if content.id not in unresolved_requests_by_id:
                         unresolved_requests_by_id[content.id] = content
+                        local_requests_by_id[content.id] = content
                         local_request_ids_by_call_id.setdefault(function_call.call_id, deque()).append(content.id)
                         if function_call.id is not None:
                             local_request_ids_by_occurrence[function_call.id] = content.id
@@ -863,25 +868,31 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 continue
             if content.type == "function_approval_response":
                 function_call = content.function_call
-                if content.id is not None:
-                    unresolved_requests_by_id.pop(local_request_ids_by_occurrence.get(content.id, content.id), None)
+                request_id = (
+                    local_request_ids_by_occurrence.get(content.id, content.id) if content.id is not None else None
+                )
+                request = local_requests_by_id.get(request_id) if request_id is not None else None
+                if request_id is not None:
+                    unresolved_requests_by_id.pop(request_id, None)
+                if request is not None and id(request) in closed_request_occurrences:
+                    continue
                 if (
                     content.id is not None
                     and function_call is not None
                     and function_call.call_id is not None
-                    and not function_call.additional_properties.get("server_label")
+                    # server_name is descriptive; only hosted controls execution ownership.
+                    and not function_call.hosted
                     and content.id not in unresolved_local_responses_by_id
                 ):
                     unresolved_local_responses_by_id[content.id] = content
-                    request_id = local_request_ids_by_occurrence.get(content.id)
                     local_responses_by_call_id.setdefault(function_call.call_id, deque()).append((
                         content.id,
-                        request_id,
+                        request,
                     ))
                 continue
             if content.call_id is None:
                 continue
-            is_terminal_result = content.type == "function_result" and not _is_approval_placeholder_result(content)
+            is_terminal_result = content.type == "function_result"
             is_follow_up_request = content.user_input_request and content.type not in {
                 "function_approval_request",
                 "function_approval_response",
@@ -893,16 +904,20 @@ def _approval_controls_to_keep(messages: Sequence[Message]) -> set[int]:
                 while responses and responses[0][0] not in unresolved_local_responses_by_id:
                     responses.popleft()
                 if responses:
-                    response_id, request_id = responses.popleft()
+                    response_id, request = responses.popleft()
                     unresolved_local_responses_by_id.pop(response_id, None)
-                    if request_id is not None:
-                        unresolved_requests_by_id.pop(request_id, None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
+                        if request.id is not None:
+                            unresolved_requests_by_id.pop(request.id, None)
                     resolved_response = True
             if not resolved_response and (request_ids := local_request_ids_by_call_id.get(content.call_id)):
                 while request_ids and request_ids[0] not in unresolved_requests_by_id:
                     request_ids.popleft()
                 if request_ids:
-                    unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    request = unresolved_requests_by_id.pop(request_ids.popleft(), None)
+                    if request is not None:
+                        closed_request_occurrences.add(id(request))
 
     return {
         id(content) for content in (*unresolved_requests_by_id.values(), *unresolved_local_responses_by_id.values())
@@ -929,6 +944,53 @@ def _filter_approval_control_messages(messages: Sequence[Message]) -> list[Messa
         filtered_message.contents = filtered_contents
         filtered_messages.append(filtered_message)
     return filtered_messages
+
+
+def _paired_local_function_results(contents: Sequence[Content]) -> dict[int, Content]:
+    """Match completed local results to their function-call occurrences."""
+    results_by_call_id: dict[str, deque[Content]] = {}
+    for content in contents:
+        if content.type == "function_result" and content.call_id:
+            results_by_call_id.setdefault(content.call_id, deque()).append(content)
+    pairs: dict[int, Content] = {}
+    for content in contents:
+        if (
+            content.type == "function_call"
+            and not content.informational_only
+            and content.id
+            and content.call_id
+            and (results := results_by_call_id.get(content.call_id))
+        ):
+            pairs[id(content)] = results.popleft()
+    return pairs
+
+
+def _without_deferred_workflow_function_results(messages: Sequence[Message]) -> list[Message]:
+    """Persist mixed computer turns without results staged for workflow resume."""
+    start = next(
+        (
+            index
+            for index, message in enumerate(messages)
+            if any(content.type == "computer_tool_call" and content.user_input_request for content in message.contents)
+        ),
+        None,
+    )
+    if start is None:
+        return list(messages)
+    contents = [content for message in messages[start:] for content in message.contents]
+    deferred_ids = {id(result) for result in _paired_local_function_results(contents).values()}
+    if not deferred_ids:
+        return list(messages)
+    stored = list(messages[:start])
+    for message in messages[start:]:
+        kept = [content for content in message.contents if id(content) not in deferred_ids]
+        if len(kept) == len(message.contents):
+            stored.append(message)
+        elif kept:
+            copied = copy.copy(message)
+            copied.contents = kept
+            stored.append(copied)
+    return stored
 
 
 class HistoryProvider(ContextProvider):
@@ -1045,6 +1107,11 @@ class HistoryProvider(ContextProvider):
     ) -> None:
         """Load history into context. Skipped by the agent when load_messages=False."""
         history = _filter_approval_control_messages(await self.get_messages(context.session_id, state=state))
+        loaded_history = context.metadata.get(_LOADED_HISTORY_MESSAGES_CONTEXT_KEY)
+        if not isinstance(loaded_history, dict):
+            loaded_history = {}
+            context.metadata[_LOADED_HISTORY_MESSAGES_CONTEXT_KEY] = loaded_history
+        cast(dict[str, list[Message]], loaded_history)[self.source_id] = list(history)
         context.extend_messages(self, history)
 
     async def after_run(
@@ -1056,14 +1123,44 @@ class HistoryProvider(ContextProvider):
         state: dict[str, Any],
     ) -> None:
         """Store messages based on configuration."""
+        initial_continuation_present, _ = _get_initial_service_continuation(context)
+        raw_verified_sources = context.metadata.get(_SERVICE_HISTORY_VERIFIED_SOURCES_CONTEXT_KEY)
+        verified_sources: set[str] = (
+            cast(set[str], raw_verified_sources)
+            if isinstance(raw_verified_sources, set)
+            and all(isinstance(source_id, str) for source_id in cast(set[Any], raw_verified_sources))
+            else set[str]()
+        )
+        may_certify_history = not initial_continuation_present or self.source_id in verified_sources
+        state.pop(_SERVICE_HISTORY_COVERAGE_STATE_KEY, None)
         messages_to_store: list[Message] = []
         messages_to_store.extend(self._get_context_messages_to_store(context))
         if self.store_inputs:
             messages_to_store.extend(context.input_messages)
         if self.store_outputs and context.response and context.response.messages:
-            messages_to_store.extend(context.response.messages)
+            output_messages = context.response.messages
+            if (
+                self.load_messages
+                and self.store_inputs
+                and session.state.get(_WORKFLOW_DEFER_COMPUTER_FUNCTION_RESULTS_KEY)
+            ):
+                output_messages = _without_deferred_workflow_function_results(output_messages)
+            messages_to_store.extend(output_messages)
         if messages_to_store:
             await self.save_messages(context.session_id, messages_to_store, state=state)
+        continuation_present, continuation_identity = _get_service_continuation(context)
+        loaded = _loaded_history_messages(context, self.source_id)
+        stores_complete_history = self.load_messages and self.store_inputs and self.store_outputs
+        if not may_certify_history or not continuation_present or continuation_identity is None:
+            return
+        if loaded is None or not stores_complete_history:
+            return
+        expected_history = _filter_approval_control_messages([*loaded, *messages_to_store])
+        if (fingerprint := _history_messages_fingerprint(expected_history)) is not None:
+            state[_SERVICE_HISTORY_COVERAGE_STATE_KEY] = {
+                "identity": continuation_identity,
+                "fingerprint": fingerprint,
+            }
 
 
 # Run-scoped gate for durable persistence side effects. Egress-enforcement middleware
@@ -1306,6 +1403,157 @@ def is_local_history_conversation_id(conversation_id: str | None) -> bool:
     return conversation_id == LOCAL_HISTORY_CONVERSATION_ID
 
 
+def _strict_service_continuation_value(value: Any, *, active_container_ids: set[int] | None = None) -> Any:
+    """Return a canonical JSON value for a service continuation carrier."""
+    if active_container_ids is None:
+        active_container_ids = set()
+    if type(value) in (str, int, bool, type(None)):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise ValueError("Service continuation values must be finite.")
+        return value
+    if isinstance(value, Mapping):
+        container_id = id(cast(object, value))
+        if container_id in active_container_ids:
+            raise ValueError("Service continuation values must not contain cycles.")
+        active_container_ids.add(container_id)
+        try:
+            normalized: dict[str, Any] = {}
+            for key, item in cast(Mapping[Any, Any], value).items():
+                if not isinstance(key, str):
+                    raise TypeError("Service continuation mapping keys must be strings.")
+                normalized[key] = _strict_service_continuation_value(
+                    item,
+                    active_container_ids=active_container_ids,
+                )
+            return normalized
+        finally:
+            active_container_ids.remove(container_id)
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        container_id = id(cast(object, value))
+        if container_id in active_container_ids:
+            raise ValueError("Service continuation values must not contain cycles.")
+        active_container_ids.add(container_id)
+        try:
+            return [
+                _strict_service_continuation_value(item, active_container_ids=active_container_ids)
+                for item in cast(Sequence[Any], value)
+            ]
+        finally:
+            active_container_ids.remove(container_id)
+    raise TypeError(f"Unsupported service continuation value type: {type(value).__name__}.")
+
+
+def _normalize_service_continuation(
+    option_names: Sequence[str],
+    options: Mapping[str, Any],
+) -> _ServiceContinuation:
+    """Detect declared continuation carriers and return their canonical identity."""
+    entries: list[list[Any]] = []
+    seen_names: set[str] = set()
+    continuation_present = False
+    normalization_failed = False
+    for option_name in option_names:
+        if not isinstance(option_name, str) or option_name in seen_names:
+            continue
+        seen_names.add(option_name)
+        value = options.get(option_name)
+        if value is None or (isinstance(value, str) and value == ""):
+            continue
+        if option_name == "conversation_id" and isinstance(value, str) and is_local_history_conversation_id(value):
+            continue
+        continuation_present = True
+        try:
+            entries.append([option_name, _strict_service_continuation_value(value)])
+        except (RecursionError, TypeError, ValueError):
+            normalization_failed = True
+    if not continuation_present:
+        return False, None
+    if normalization_failed:
+        return True, None
+    return (
+        True,
+        json.dumps(entries, ensure_ascii=True, allow_nan=False, separators=(",", ":"), sort_keys=True),
+    )
+
+
+def _set_service_continuation(context: SessionContext, continuation: _ServiceContinuation) -> None:
+    """Attach current and initial service continuation identities to one provider context."""
+    context.metadata.setdefault(_INITIAL_SERVICE_CONTINUATION_CONTEXT_KEY, continuation)
+    context.metadata[_SERVICE_CONTINUATION_CONTEXT_KEY] = continuation
+
+
+def _get_service_continuation(context: SessionContext) -> _ServiceContinuation:
+    """Return the current effective service continuation attached by agent preparation."""
+    return _service_continuation_from_metadata(context.metadata.get(_SERVICE_CONTINUATION_CONTEXT_KEY))
+
+
+def _get_initial_service_continuation(context: SessionContext) -> _ServiceContinuation:
+    """Return the service continuation active when this run began."""
+    return _service_continuation_from_metadata(context.metadata.get(_INITIAL_SERVICE_CONTINUATION_CONTEXT_KEY))
+
+
+def _service_continuation_from_metadata(value: Any) -> _ServiceContinuation:
+    """Validate one run-local continuation metadata value."""
+    if not isinstance(value, tuple):
+        return False, None
+    items = cast(tuple[Any, ...], value)
+    if len(items) == 2 and isinstance(items[0], bool) and (items[1] is None or isinstance(items[1], str)):
+        return cast(_ServiceContinuation, items)
+    return False, None
+
+
+def _history_messages_fingerprint(messages: Sequence[Message]) -> str | None:
+    """Return a stable fingerprint for an exact loaded history snapshot."""
+    try:
+        payload = json.dumps(
+            [message.to_dict() for message in messages],
+            ensure_ascii=True,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    except (RecursionError, TypeError, ValueError):
+        return None
+    return sha256(payload).hexdigest()
+
+
+def _loaded_history_messages(context: SessionContext, source_id: str) -> list[Message] | None:
+    """Return the exact filtered snapshot loaded for one history source."""
+    loaded_history = context.metadata.get(_LOADED_HISTORY_MESSAGES_CONTEXT_KEY)
+    if not isinstance(loaded_history, Mapping):
+        return None
+    messages = cast(Mapping[str, Any], loaded_history).get(source_id)
+    if not isinstance(messages, list):
+        return None
+    message_items = cast(list[Any], messages)
+    if any(not isinstance(message, Message) for message in message_items):
+        return None
+    return cast(list[Message], message_items)
+
+
+def _history_provider_covers_service_continuation(  # pyright: ignore[reportUnusedFunction]
+    provider: HistoryProvider,
+    *,
+    context: SessionContext,
+    state: Mapping[str, Any],
+    continuation_identity: str,
+) -> bool:
+    """Return whether one loaded provider snapshot exactly covers a continuation."""
+    coverage = state.get(_SERVICE_HISTORY_COVERAGE_STATE_KEY)
+    if not isinstance(coverage, Mapping):
+        return False
+    coverage_mapping = cast(Mapping[str, Any], coverage)
+    if coverage_mapping.get("identity") != continuation_identity:
+        return False
+    loaded = _loaded_history_messages(context, provider.source_id)
+    if loaded is None:
+        return False
+    fingerprint = _history_messages_fingerprint(loaded)
+    return fingerprint is not None and fingerprint == coverage_mapping.get("fingerprint")
+
+
 def _response_contains_follow_up_request(response: ChatResponse) -> bool:
     """Return whether a response requires another model call in the current run."""
     return any(
@@ -1540,7 +1788,10 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         agent: SupportsAgentRun,
         session: AgentSession,
         providers: Sequence[HistoryProvider],
+        run_context: SessionContext,
         service_stores_history: bool = False,
+        prepared_context: SessionContext | None = None,
+        service_continuation_option_names: Sequence[str] = ("conversation_id",),
     ) -> None:
         """Initialize the middleware.
 
@@ -1548,32 +1799,57 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             agent: The agent that owns the history providers.
             session: The active session for the current run.
             providers: The history providers participating in per-service-call persistence.
+            run_context: The owning run's SessionContext.
             service_stores_history: When True, the chat client stores history server-side. The
                 middleware then skips loading providers and leaves the real conversation id
                 untouched, persisting each service call without driving the function loop with a
                 local sentinel. When False, the middleware loads providers and uses a local
                 sentinel conversation id so the function loop runs without service-side storage.
+            prepared_context: Optional history snapshot already prepared for the first service call.
+            service_continuation_option_names: Client-declared options that identify service continuation.
         """
         self._agent = agent
         self._session = session
         self._providers = list(providers)
+        self._run_context = run_context
         self._service_stores_history = service_stores_history
+        self._prepared_context = prepared_context
+        self._service_continuation_option_names = tuple(service_continuation_option_names)
         self._merged_provider_tool_names: set[str] = set()
         self._merged_provider_instructions: set[str] = set()
+        if prepared_context is not None:
+            from ._tools import _get_tool_name  # pyright: ignore[reportPrivateUsage]
 
-    async def _prepare_service_call_context(self, messages: Sequence[Message]) -> SessionContext:
+            self._merged_provider_tool_names.update(
+                name for tool in prepared_context.tools if (name := _get_tool_name(tool)) is not None
+            )
+            self._merged_provider_instructions.update(prepared_context.instructions)
+
+    async def _prepare_service_call_context(self, context: ChatContext) -> tuple[SessionContext, bool]:
         """Create a per-call SessionContext and load history providers into it."""
-        input_messages, context_messages = _split_service_call_messages(messages)
+        if self._prepared_context is not None:
+            prepared_context = self._prepared_context
+            self._prepared_context = None
+            return prepared_context, True
+
+        input_messages, context_messages = _split_service_call_messages(context.messages)
+        options = dict(context.options or {})
         service_call_context = SessionContext(
             session_id=self._session.session_id,
-            service_session_id=None,
+            service_session_id=self._session.service_session_id,
             input_messages=list(input_messages),
+            options=options,
+            metadata=self._run_context.metadata,
+        )
+        _set_service_continuation(
+            service_call_context,
+            _normalize_service_continuation(self._service_continuation_option_names, options),
         )
         for source_id, source_messages in context_messages.items():
             service_call_context.extend_messages(source_id, source_messages)
         # When the service stores history, it owns loading; the providers are write-only sinks.
         if self._service_stores_history:
-            return service_call_context
+            return service_call_context, False
         for provider in self._providers:
             if not provider.load_messages:
                 continue
@@ -1583,7 +1859,14 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 context=service_call_context,
                 state=self._session.state.setdefault(provider.source_id, {}),
             )
-        return service_call_context
+        return service_call_context, False
+
+    @staticmethod
+    def _capture_finalized_messages(service_call_context: SessionContext, messages: Sequence[Message]) -> None:
+        """Replace the persistence snapshot with the request finalized by downstream middleware."""
+        input_messages, context_messages = _split_service_call_messages(messages)
+        service_call_context.input_messages = input_messages
+        service_call_context.context_messages = context_messages
 
     async def _persist_service_call_response(
         self,
@@ -1666,6 +1949,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
         self,
         *,
         service_call_context: SessionContext,
+        chat_context: ChatContext,
         response: ChatResponse,
     ) -> ChatResponse:
         """Persist a model response and apply the local follow-up sentinel when needed."""
@@ -1690,6 +1974,22 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
                 "history may not resume. Set store=False to load and resume from the HistoryProvider "
                 "instead."
             )
+
+        self._capture_finalized_messages(service_call_context, chat_context.messages)
+        effective_options = dict(chat_context.options or {})
+        if response.conversation_id is not None and not is_local_history_conversation_id(response.conversation_id):
+            for option_name in self._service_continuation_option_names:
+                if option_name != "conversation_id":
+                    effective_options.pop(option_name, None)
+            effective_options["conversation_id"] = response.conversation_id
+            service_call_context.service_session_id = response.conversation_id
+        service_call_context.options = effective_options
+        continuation = _normalize_service_continuation(
+            self._service_continuation_option_names,
+            effective_options,
+        )
+        _set_service_continuation(service_call_context, continuation)
+        self._run_context.metadata[_SERVICE_CONTINUATION_CONTEXT_KEY] = continuation
 
         # Durability is gated: when an egress-enforcement gate is active for this run,
         # the persist is deferred until the model-call verdict permits the content
@@ -1721,13 +2021,14 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             ValueError: If the downstream middleware contract returns the wrong
                 result type for streaming or non-streaming execution.
         """
-        service_call_context = await self._prepare_service_call_context(context.messages)
+        service_call_context, reused_prepared_context = await self._prepare_service_call_context(context)
         # When the service stores history, leave the outgoing messages and the real conversation
         # id untouched (pass-through); the middleware only persists. Otherwise reconstruct the
         # outgoing messages from the loaded local history and strip the local sentinel.
         if not self._service_stores_history:
-            context.messages = service_call_context.get_messages(include_input=True)
-            self._merge_provider_context(context, service_call_context)
+            if not reused_prepared_context:
+                context.messages = service_call_context.get_messages(include_input=True)
+                self._merge_provider_context(context, service_call_context)
             self._strip_local_conversation_id(context)
 
         await call_next()
@@ -1741,6 +2042,7 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             context.result = context.result.with_result_hook(
                 lambda response: self._finalize_response(
                     service_call_context=service_call_context,
+                    chat_context=context,
                     response=response,
                 )
             )
@@ -1750,8 +2052,35 @@ class PerServiceCallHistoryPersistingMiddleware(ChatMiddleware):
             raise ValueError("Non-streaming chat middleware requires a ChatResponse result.")
         context.result = await self._finalize_response(
             service_call_context=service_call_context,
+            chat_context=context,
             response=context.result,
         )
+
+
+class _AgentSessionDictRequired(TypedDict):
+    """Required fields for a serialized :class:`AgentSession`."""
+
+    session_id: str
+
+
+class AgentSessionDict(_AgentSessionDictRequired, total=False):
+    """Serialized :class:`AgentSession` payload shape produced by :meth:`AgentSession.to_dict`.
+
+    ``AgentSession.to_dict`` returns a plain ``dict[str, Any]`` that conforms to this
+    schema. Callers that need a TypedDict view can ``cast`` the result.
+
+    Built as a required base plus ``total=False`` optional fields so postponed
+    annotations do not turn optional keys into required runtime metadata.
+
+    ``service_session_id`` may be a plain string or a structured
+    :data:`ServiceSessionId` mapping, matching :attr:`AgentSession.service_session_id`.
+    ``state`` holds session-local data and may be incomplete when the session uses
+    service-side storage.
+    """
+
+    type: str
+    service_session_id: str | ServiceSessionId | None
+    state: dict[str, Any]
 
 
 class AgentSession:
@@ -1796,6 +2125,11 @@ class AgentSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize session to a plain dict for storage/transfer.
+
+        The returned mapping matches :class:`AgentSessionDict`. The annotated
+        return type stays ``dict[str, Any]`` so subclasses and callers that
+        extend or pass the payload as a mutable ``dict`` remain type-correct
+        (TypedDict is not assignable to ``dict`` under pyright).
 
         Registered custom values use their configured codecs. Unregistered
         values defining ``to_dict`` retain the established dictionary behavior.
@@ -1906,6 +2240,37 @@ class SessionStore:
         mark_feature_used(FeatureIndex.CORE_SESSION_STORE)
         SessionStore.validate_session_id(session_id)
         self._sessions.pop(session_id, None)
+
+
+_SESSION_FILE_REPLACE_ATTEMPTS = 3
+_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS = 0.01
+# Only Windows reports a briefly-held destination as ``PermissionError``; on POSIX the
+# same code means the caller genuinely may not replace the file.
+_RETRY_REPLACE_ON_THIS_PLATFORM: bool = os.name == "nt"
+
+
+def _replace_session_file(source: Path, target: Path) -> None:
+    """Replace ``target`` with ``source``, retrying briefly on transient lock contention.
+
+    Windows raises :class:`PermissionError` when the destination file is briefly held
+    open (for example right after a previous replacement), even though callers already
+    serialize access per snapshot. A bounded retry preserves the documented
+    last-writer-wins behaviour instead of surfacing the transient failure.
+
+    The retry is Windows-only: on POSIX a :class:`PermissionError` means the caller
+    really is not allowed to replace the file, so retrying would only delay the same
+    failure. The whole sequence is bounded at ~30 ms and re-raises the original error
+    once the attempts are exhausted.
+    """
+    attempts = _SESSION_FILE_REPLACE_ATTEMPTS if _RETRY_REPLACE_ON_THIS_PLATFORM else 1
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(_SESSION_FILE_REPLACE_RETRY_DELAY_SECONDS * (attempt + 1))
 
 
 @experimental(feature_id=ExperimentalFeature.SESSION_STORE)
@@ -2059,7 +2424,7 @@ class FileSessionStore(SessionStore):
                 temp_path = file_path.with_name(f".{file_path.name}.{uuid.uuid4().hex}.tmp")
                 try:
                     temp_path.write_bytes(serialized)
-                    os.replace(temp_path, file_path)
+                    _replace_session_file(temp_path, file_path)
                 finally:
                     temp_path.unlink(missing_ok=True)
 
@@ -2364,21 +2729,7 @@ class FileHistoryProvider(HistoryProvider):
         def _append_messages() -> None:
             with file_lock:
                 if self.serialization_format == "json":
-                    existing_messages: list[Message] = []
-                    if file_path.exists():
-                        with file_path.open("r", encoding="utf-8") as f:
-                            for line in f:
-                                line = line.strip()
-                                if not line:
-                                    continue
-                                try:
-                                    payload = self.loads(line)
-                                    msg = Message.from_dict(dict(cast(Mapping[str, Any], payload)))
-                                    existing_messages.append(msg)
-                                except Exception:
-                                    logger.debug("failed to parse history line for deduplication")
-                                    continue
-
+                    existing_messages = self._read_json_messages(file_path) if file_path.exists() else []
                     new_messages = filter_new_messages(existing_messages, messages)
                     if new_messages:
                         with file_path.open("a", encoding="utf-8") as file_handle:
@@ -2389,14 +2740,38 @@ class FileHistoryProvider(HistoryProvider):
                 new_messages = filter_new_messages(existing_messages, messages)
                 if not new_messages:
                     return
+                # Check the whole batch first so a record the reader would reject never reaches
+                # the file and the existing history stays loadable. Records are encoded into one
+                # reused buffer, once to check and once to write, so memory is bounded by the
+                # largest record rather than the batch.
+                record = bytearray()
+                for message in new_messages:
+                    self._encode_msgpack_record(message, record)
                 with file_path.open("ab") as file_handle:
-                    for message in new_messages:
-                        serialized = _DEFAULT_MSGPACK_ENCODER.encode(message.to_dict())
-                        file_handle.write(len(serialized).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
-                        file_handle.write(serialized)
+                    append_offset = file_handle.seek(0, os.SEEK_END)
+                    try:
+                        for message in new_messages:
+                            # Encode and check again: the bytes written must be the checked bytes,
+                            # and to_dict() may not return the same result as during the preflight.
+                            self._encode_msgpack_record(message, record)
+                            file_handle.write(len(record).to_bytes(self._MSGPACK_RECORD_HEADER_BYTES, "big"))
+                            file_handle.write(record)
+                    except BaseException:
+                        # Drop any records this call already appended so the history stays loadable.
+                        file_handle.truncate(append_offset)
+                        raise
 
         async with async_lock:
             await asyncio.to_thread(_append_messages)
+
+    def _encode_msgpack_record(self, message: Message, record: bytearray) -> None:
+        """Encode ``message`` into ``record`` and reject it if the reader would refuse the record."""
+        _DEFAULT_MSGPACK_ENCODER.encode_into(message.to_dict(), record)
+        if len(record) > self._MAX_MSGPACK_RECORD_BYTES:
+            raise ValueError(
+                f"Message encodes to {len(record)} bytes, which exceeds the "
+                f"{self._MAX_MSGPACK_RECORD_BYTES}-byte MessagePack history record limit."
+            )
 
     def _read_json_messages(self, file_path: Path) -> list[Message]:
         """Read JSON Lines messages from ``file_path``."""

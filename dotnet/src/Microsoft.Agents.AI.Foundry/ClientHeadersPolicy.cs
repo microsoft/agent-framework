@@ -52,6 +52,13 @@ internal sealed class ClientHeadersPolicy : PipelinePolicy
             return;
         }
 
+        // Validate the entire snapshot before mutating the request so invalid input cannot
+        // leave a partially stamped header set behind.
+        foreach (var kvp in headers)
+        {
+            ClientHeaderValidation.Validate(kvp.Key, kvp.Value);
+        }
+
         foreach (var kvp in headers)
         {
             // Per-call wins: Set overwrites any same-name header previously stamped by other policies.

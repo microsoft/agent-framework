@@ -742,6 +742,56 @@ public sealed class ScopedContentProcessorTests
     }
 
     [Fact]
+    public async Task ProcessMessagesAsync_WithAppTokenHistory_InheritsAndUpdatesMessageUserIdsAsync()
+    {
+        // Arrange
+        string firstUserId = Guid.NewGuid().ToString();
+        string secondUserId = Guid.NewGuid().ToString();
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.System, "System context"),
+            new(ChatRole.User, "First user's message")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "userId", firstUserId }
+                }
+            },
+            new(ChatRole.Assistant, "Assistant response"),
+            new(ChatRole.Tool, "Tool response"),
+            new(ChatRole.User, "Second user's message")
+            {
+                AdditionalProperties = new AdditionalPropertiesDictionary
+                {
+                    { "userId", secondUserId }
+                }
+            },
+            new(ChatRole.Assistant, "Second assistant response")
+        ];
+        PurviewSettings settings = CreateValidPurviewSettings();
+        TokenInfo tokenInfo = new() { TenantId = "tenant-123", ClientId = "client-123" };
+        List<string> capturedUserIds = [];
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), settings.TenantId))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProtectionScopesResponse?)null);
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProcessContentRequest, CancellationToken>((request, _) => capturedUserIds.Add(request.UserId))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        var result = await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal([firstUserId, firstUserId, firstUserId, firstUserId, secondUserId, secondUserId], capturedUserIds);
+        Assert.Equal(secondUserId, result.userId);
+    }
+
+    [Fact]
     public async Task ProcessMessagesAsync_IgnoresInvalidAdditionalPropertiesUserId_Async()
     {
         // Arrange
@@ -1212,6 +1262,58 @@ public sealed class ScopedContentProcessorTests
 
         // Content entries must be individually addressable, not collapsed onto one identifier.
         Assert.NotEqual(binaryEntry.Identifier, functionCallEntry.Identifier);
+    }
+
+    /// <summary>
+    /// Verifies annotations, error details and data names are submitted alongside the main payload.
+    /// </summary>
+    [Fact]
+    public async Task ProcessMessagesAsync_WithAnnotationsErrorDetailsAndDataName_SubmitsThemForEvaluationAsync()
+    {
+        // Arrange
+        List<ChatMessage> messages =
+        [
+            new(ChatRole.Assistant,
+            [
+                new TextContent("see sources") { Annotations = [new CitationAnnotation { Title = "cited-title-111", Url = new Uri("https://example.com/cited") }] },
+                new ErrorContent("failed") { Details = "error-details-222" },
+                new DataContent(new byte[] { 1, 2, 3 }, "application/octet-stream") { Name = "file-name-333.bin" },
+                new DataContent(ReadOnlyMemory<byte>.Empty, "application/octet-stream") { Name = "empty-file-name-444.bin" }
+            ])
+        ];
+        PurviewSettings settings = CreateValidPurviewSettings();
+        TokenInfo tokenInfo = new() { TenantId = "tenant-123", UserId = "user-123", ClientId = "client-123" };
+
+        this._mockPurviewClient.Setup(x => x.GetUserInfoFromTokenAsync(It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(tokenInfo);
+        this._mockCacheProvider.Setup(x => x.GetAsync<ProtectionScopesCacheKey, ProtectionScopesResponse>(
+            It.IsAny<ProtectionScopesCacheKey>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateApplicableProtectionScopesResponse());
+
+        List<ProcessContentRequest> capturedRequests = [];
+        this._mockPurviewClient.Setup(x => x.ProcessContentAsync(
+            It.IsAny<ProcessContentRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProcessContentRequest, CancellationToken>((request, _) => capturedRequests.Add(request))
+            .ReturnsAsync(new ProcessContentResponse());
+
+        // Act
+        await this._processor.ProcessMessagesAsync(
+            messages, "session-123", Activity.UploadText, settings, "user-123", CancellationToken.None);
+
+        // Assert
+        List<string> texts = [];
+        foreach (ProcessContentRequest request in capturedRequests)
+        {
+            if (request.ContentToProcess.ContentEntries[0].Content is PurviewTextContent text)
+            {
+                texts.Add(text.Data);
+            }
+        }
+
+        Assert.Contains(texts, t => t.Contains("cited-title-111", StringComparison.Ordinal));
+        Assert.Contains("error-details-222", texts);
+        Assert.Contains("file-name-333.bin", texts);
+        Assert.Contains("empty-file-name-444.bin", texts);
     }
 
     [Fact]

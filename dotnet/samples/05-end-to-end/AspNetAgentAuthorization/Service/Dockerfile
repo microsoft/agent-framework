@@ -2,7 +2,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /repo
 
 # Copy solution-level files for restore
-COPY Directory.Build.props Directory.Build.targets Directory.Packages.props global.json nuget.config ./
+COPY Directory.Build.props Directory.Build.targets Directory.Packages.props global.json ./
 COPY eng/ eng/
 COPY nuget/ nuget/
 COPY src/Shared/ src/Shared/

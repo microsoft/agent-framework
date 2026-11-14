@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import os
+import threading
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -79,6 +80,37 @@ def _checkpoint_to_cosmos_document(checkpoint: WorkflowCheckpoint) -> dict[str, 
         "_ts": 1700000000,
     }
     return doc
+
+
+def _mock_get_latest_queries(container: MagicMock, docs: list[dict[str, Any]]) -> None:
+    """Answer get_latest's newest-first query the way Cosmos orders it, keeping tied rows in the given order."""
+    newest_first = sorted(docs, key=lambda doc: doc["timestamp"], reverse=True)
+    container.query_items.return_value = _to_async_iter(newest_first)
+
+
+class _ConcurrentlyWrittenContainer:
+    """A Cosmos container whose partition another writer changes right after each query is issued.
+
+    Each query reads a snapshot of the partition, newest first, as Cosmos serves one result page.
+    """
+
+    def __init__(self, documents: list[dict[str, Any]], concurrent_write: Any) -> None:
+        self.documents = list(documents)
+        self._concurrent_write = concurrent_write
+        self.queries: list[str] = []
+
+    def query_items(self, *, query: str, partition_key: str, **kwargs: Any) -> AsyncIterator[Any]:
+        assert "ORDER BY c.timestamp DESC" in query
+        self.queries.append(query)
+        snapshot = sorted(
+            (doc for doc in self.documents if doc["workflow_name"] == partition_key),
+            key=lambda doc: doc["timestamp"],
+            reverse=True,
+        )
+        write, self._concurrent_write = self._concurrent_write, None
+        if write is not None:
+            write(self.documents)
+        return _to_async_iter(snapshot)
 
 
 @pytest.fixture
@@ -201,6 +233,18 @@ async def test_save_returns_checkpoint_id(mock_container: MagicMock) -> None:
     result = await storage.save(checkpoint)
 
     assert result == "cp-123"
+
+
+async def test_save_unencodable_state_raises_checkpoint_exception(mock_container: MagicMock) -> None:
+    """save wraps encoding failures in WorkflowCheckpointException and writes nothing."""
+    checkpoint = _make_checkpoint()
+    checkpoint.state = {"lock": threading.Lock()}
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="cannot be encoded"):
+        await storage.save(checkpoint)
+
+    mock_container.upsert_item.assert_not_awaited()
 
 
 # --- Tests for load ---
@@ -351,9 +395,7 @@ async def test_delete_cosmos_not_found_returns_false(mock_container: MagicMock) 
 
 async def test_get_latest_returns_latest_checkpoint(mock_container: MagicMock) -> None:
     cp = _make_checkpoint(checkpoint_id="cp-latest", timestamp="2025-06-01T00:00:00+00:00")
-    mock_container.query_items.return_value = _to_async_iter([
-        _checkpoint_to_cosmos_document(cp),
-    ])
+    _mock_get_latest_queries(mock_container, [_checkpoint_to_cosmos_document(cp)])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
     result = await storage.get_latest(workflow_name="test-workflow")
@@ -371,15 +413,134 @@ async def test_get_latest_returns_none_when_empty(mock_container: MagicMock) -> 
     assert result is None
 
 
-async def test_get_latest_uses_order_by_desc_with_limit(mock_container: MagicMock) -> None:
-    mock_container.query_items.return_value = _to_async_iter([])
+async def test_get_latest_reads_the_newest_rows_with_one_ordered_query(mock_container: MagicMock) -> None:
+    cp = _make_checkpoint(checkpoint_id="cp-latest", timestamp="2025-06-01T00:00:00+00:00")
+    _mock_get_latest_queries(mock_container, [_checkpoint_to_cosmos_document(cp)])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
     await storage.get_latest(workflow_name="test-workflow")
 
-    kwargs = mock_container.query_items.call_args.kwargs
-    assert "ORDER BY c.timestamp DESC" in kwargs["query"]
-    assert "OFFSET 0 LIMIT 1" in kwargs["query"]
+    (query_call,) = mock_container.query_items.call_args_list
+    assert "ORDER BY c.timestamp DESC" in query_call.kwargs["query"]
+    assert "MAX(" not in query_call.kwargs["query"]
+    assert "LIMIT" not in query_call.kwargs["query"]
+    assert query_call.kwargs["parameters"] == [{"name": "@workflow_name", "value": "test-workflow"}]
+    assert query_call.kwargs["partition_key"] == "test-workflow"
+    assert query_call.kwargs["max_item_count"] > 0
+
+
+async def test_get_latest_stops_reading_at_the_first_older_checkpoint(mock_container: MagicMock) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    tied = [
+        _checkpoint_to_cosmos_document(_make_checkpoint(checkpoint_id="parent", timestamp=timestamp)),
+        _checkpoint_to_cosmos_document(
+            _make_checkpoint(checkpoint_id="child", previous_checkpoint_id="parent", timestamp=timestamp)
+        ),
+    ]
+    older = _checkpoint_to_cosmos_document(
+        _make_checkpoint(checkpoint_id="older", timestamp="2025-05-01T00:00:00+00:00")
+    )
+
+    async def _rows() -> AsyncIterator[Any]:
+        for doc in [*tied, older]:
+            yield doc
+        raise AssertionError("get_latest read past the first older checkpoint")
+
+    mock_container.query_items.return_value = _rows()
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert result.checkpoint_id == "child"
+
+
+async def test_get_latest_is_not_pinned_to_a_stale_timestamp_by_a_concurrent_save() -> None:
+    older = _make_checkpoint(checkpoint_id="cp-1", timestamp="2025-05-01T00:00:00+00:00")
+    newest = _make_checkpoint(
+        checkpoint_id="cp-2", previous_checkpoint_id="cp-1", timestamp="2025-06-01T00:00:00+00:00"
+    )
+    saved = _make_checkpoint(checkpoint_id="cp-3", previous_checkpoint_id="cp-2", timestamp="2025-07-01T00:00:00+00:00")
+    container = _ConcurrentlyWrittenContainer(
+        [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
+        lambda documents: documents.append(_checkpoint_to_cosmos_document(saved)),
+    )
+    storage = CosmosCheckpointStorage(container_client=cast(Any, container))
+
+    during_save = await storage.get_latest(workflow_name="test-workflow")
+    after_save = await storage.get_latest(workflow_name="test-workflow")
+
+    # The first call answers from the one read it made, before the save landed.
+    assert during_save is not None
+    assert during_save.checkpoint_id == "cp-2"
+    assert len(container.queries) == 2
+    assert after_save is not None
+    assert after_save.checkpoint_id == "cp-3"
+
+
+async def test_get_latest_falls_back_to_older_checkpoints_when_the_newest_is_deleted_concurrently() -> None:
+    older = _make_checkpoint(checkpoint_id="cp-1", timestamp="2025-05-01T00:00:00+00:00")
+    newest = _make_checkpoint(
+        checkpoint_id="cp-2", previous_checkpoint_id="cp-1", timestamp="2025-06-01T00:00:00+00:00"
+    )
+    container = _ConcurrentlyWrittenContainer(
+        [_checkpoint_to_cosmos_document(older), _checkpoint_to_cosmos_document(newest)],
+        lambda documents: documents.remove(next(doc for doc in documents if doc["checkpoint_id"] == "cp-2")),
+    )
+    storage = CosmosCheckpointStorage(container_client=cast(Any, container))
+
+    during_delete = await storage.get_latest(workflow_name="test-workflow")
+    after_delete = await storage.get_latest(workflow_name="test-workflow")
+
+    # The first call returns the checkpoint its one read saw, never None while checkpoints remain.
+    assert during_delete is not None
+    assert during_delete.checkpoint_id == "cp-2"
+    assert len(container.queries) == 2
+    assert after_delete is not None
+    assert after_delete.checkpoint_id == "cp-1"
+
+
+@pytest.mark.parametrize("row_order", [("parent", "child", "grandchild"), ("grandchild", "child", "parent")])
+async def test_get_latest_resolves_timestamp_ties_through_lineage(
+    mock_container: MagicMock, row_order: tuple[str, ...]
+) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    checkpoints = {
+        "parent": _make_checkpoint(checkpoint_id="parent", timestamp=timestamp),
+        "child": _make_checkpoint(checkpoint_id="child", previous_checkpoint_id="parent", timestamp=timestamp),
+        "grandchild": _make_checkpoint(checkpoint_id="grandchild", previous_checkpoint_id="child", timestamp=timestamp),
+    }
+    _mock_get_latest_queries(
+        mock_container, [_checkpoint_to_cosmos_document(checkpoints[checkpoint_id]) for checkpoint_id in row_order]
+    )
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert result.checkpoint_id == "grandchild"
+
+
+@pytest.mark.parametrize("row_order", [("leaf-a", "leaf-b"), ("leaf-b", "leaf-a")])
+async def test_get_latest_breaks_ties_between_unsuperseded_checkpoints_by_id(
+    mock_container: MagicMock, row_order: tuple[str, ...]
+) -> None:
+    timestamp = "2025-06-01T00:00:00+00:00"
+    _mock_get_latest_queries(
+        mock_container,
+        [
+            _checkpoint_to_cosmos_document(
+                _make_checkpoint(checkpoint_id=checkpoint_id, previous_checkpoint_id="parent", timestamp=timestamp)
+            )
+            for checkpoint_id in row_order
+        ],
+    )
+
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+    result = await storage.get_latest(workflow_name="test-workflow")
+
+    assert result is not None
+    assert result.checkpoint_id == "leaf-b"
 
 
 # --- Tests for list_checkpoint_ids ---
@@ -740,7 +901,7 @@ async def test_get_latest_blocks_unlisted_app_type(mock_container: MagicMock) ->
     """get_latest raises when the checkpoint contains an unlisted application type."""
     checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
     doc = _checkpoint_to_cosmos_document(checkpoint)
-    mock_container.query_items.return_value = _to_async_iter([doc])
+    _mock_get_latest_queries(mock_container, [doc])
 
     storage = CosmosCheckpointStorage(container_client=mock_container)
 
@@ -752,7 +913,7 @@ async def test_get_latest_allows_listed_app_type(mock_container: MagicMock) -> N
     """get_latest decodes checkpoints with listed application types."""
     checkpoint = _make_checkpoint_with_state({"data": _AppState(label="latest", count=9)})
     doc = _checkpoint_to_cosmos_document(checkpoint)
-    mock_container.query_items.return_value = _to_async_iter([doc])
+    _mock_get_latest_queries(mock_container, [doc])
 
     storage = CosmosCheckpointStorage(
         container_client=mock_container,
@@ -763,3 +924,46 @@ async def test_get_latest_allows_listed_app_type(mock_container: MagicMock) -> N
     assert result is not None
     assert isinstance(result.state["data"], _AppState)
     assert result.state["data"].label == "latest"
+
+
+async def test_save_rejects_unlisted_app_type(mock_container: MagicMock) -> None:
+    """save refuses a checkpoint that the same storage could not load back."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    storage = CosmosCheckpointStorage(container_client=mock_container)
+
+    with pytest.raises(WorkflowCheckpointException, match="deserialization blocked"):
+        await storage.save(checkpoint)
+
+    mock_container.upsert_item.assert_not_awaited()
+
+
+async def test_save_rejected_checkpoint_does_not_create_database(
+    mock_cosmos_client: MagicMock, mock_container: MagicMock
+) -> None:
+    """A refused save does not create the database or container."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="x", count=1)})
+    storage = CosmosCheckpointStorage(
+        cosmos_client=mock_cosmos_client,
+        database_name="db1",
+        container_name="checkpoints",
+    )
+
+    with pytest.raises(WorkflowCheckpointException):
+        await storage.save(checkpoint)
+
+    mock_cosmos_client.create_database_if_not_exists.assert_not_awaited()
+    mock_container.upsert_item.assert_not_awaited()
+
+
+async def test_save_allows_listed_app_type(mock_container: MagicMock) -> None:
+    """save accepts application types listed in allowed_checkpoint_types."""
+    checkpoint = _make_checkpoint_with_state({"data": _AppState(label="ok", count=7)})
+    storage = CosmosCheckpointStorage(
+        container_client=mock_container,
+        allowed_checkpoint_types=[_APP_STATE_TYPE_KEY],
+    )
+
+    result = await storage.save(checkpoint)
+
+    assert result == checkpoint.checkpoint_id
+    mock_container.upsert_item.assert_awaited_once()

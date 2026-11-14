@@ -211,3 +211,39 @@ async def test_real_world_scenario():
 
     token_count = provider._get_token_count(truncated)
     assert token_count <= provider.max_tokens * 1.1
+
+
+def test_get_token_count_warns_over_max():
+    """The over-max warning must win over the half-of-max warning (#9338)."""
+    import io
+
+    from loguru import logger
+
+    provider = SlidingWindowHistoryProvider(max_tokens=10)
+    messages = [
+        Message(
+            role="user",
+            contents=[
+                Content.from_text(
+                    text=(
+                        "hello world, this message is intentionally long "
+                        "so it clearly exceeds the tiny ten token budget"
+                    )
+                )
+            ],
+        )
+    ]
+
+    total = provider._get_token_count(messages)
+    assert total > provider.max_tokens
+
+    buffer = io.StringIO()
+    handler_id = logger.add(buffer, format="{message}")
+    try:
+        provider._get_token_count(messages)
+    finally:
+        logger.remove(handler_id)
+
+    logged = buffer.getvalue()
+    assert "over max tokens" in logged
+    assert "Will truncate messages" in logged

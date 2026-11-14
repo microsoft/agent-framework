@@ -43,39 +43,84 @@ asyncio.run(main())
 ### Safety
 
 > **`LocalShellTool` is not a sandbox.** It runs commands directly on the
-> host with the agent process's privileges. The actual security boundary
-> is **approval-in-the-loop**. For untrusted input use a sandboxed
-> executor — see [`agent-framework-hyperlight`](#relationship-to-agent-framework-hyperlight).
+> host with the agent process's permissions. Human approval provides a check
+> before agent-requested commands run, but does not isolate the shell.
+> Production use needs separately enforced isolation and restricted permissions.
+> For untrusted input use a sandboxed executor, such as `DockerShellTool` for
+> shell commands — see also
+> [`agent-framework-hyperlight`](#relationship-to-agent-framework-hyperlight).
 
 Defenses (in priority order):
 
-- **Approval-in-the-loop** — every command surfaces as a
-  `user_input_request`; nothing runs without consent. Disabling this
-  requires `acknowledge_unsafe=True`.
+- **Approval-in-the-loop** — when an agent calls the tool returned by
+  `as_function()` with `approval_mode="always_require"` (the default),
+  commands require approval through a `user_input_request` before they run.
+  Disabling this requires `acknowledge_unsafe=True`. Direct calls to
+  `run()` do not request approval, regardless of the configured approval mode.
 - **Process-tree termination on timeout** via `psutil`, so child
-  processes (`make`, watchers, network tools) cannot survive the timeout.
-- **Output truncation** to 64 KiB (head + tail with marker).
+  processes (`make`, watchers, network tools) cannot survive the timeout. On
+  Windows, a timed-out persistent session is closed even if the interrupted
+  command emits its completion marker. The next command starts a fresh shell;
+  shell-local variables and working-directory changes from that session are lost.
+- **Bounded output capture** with independent `max_stdout_bytes` and
+  `max_stderr_bytes` settings, each defaulting to 64 KiB and requiring a positive
+  value. Beginning and end portions are retained while excess bytes
+  are discarded as the streams are read. Capture uses additional bounded
+  read/decoding buffers; truncation notices and UTF-8 replacement can make the
+  returned text larger than the data allowance. This is not a whole-process
+  memory limit. Container memory limits do not cover the agent's host-side
+  output buffers; enforce host resource limits separately.
 - **Audit hook** (`on_command=…`) for SIEM / append-only logs.
 - **Optional command-pattern filter** via `ShellPolicy(denylist=[...],
   allowlist=[...])`. **Empty by default.** This is a UX pre-filter, not a
   security boundary — operators are expected to supply patterns that
   match their workload (and they can be defeated by trivial obfuscation
   such as `\rm -rf /`, `${RM:=rm} -rf /`, `python -c "…"`, encoded
-  payloads, or PowerShell-native equivalents). Real isolation comes from
-  approval gating and the sandbox tier (`DockerShellTool`). See
+  payloads, or PowerShell-native equivalents). Isolation must be enforced
+  separately, for example by the sandbox tier (`DockerShellTool`);
+  neither approval nor command filters isolate the shell. See
   `tests/test_security.py` for the documented residual risk surface.
 
-Override with `ShellPolicy`:
+Command-text filtering with `ShellPolicy` and required human approval:
+
+> [!WARNING]
+> The filters below can allow embedded commands, including `$(...)` and
+> backticks, and do not enforce read-only access. Review the full command before
+> approving it. Approval does not isolate the shell: commands still run with
+> the application's permissions.
 
 ```python
 from agent_framework.tools import LocalShellTool, ShellPolicy
 
 shell = LocalShellTool(
     policy=ShellPolicy(allowlist=[r"^ls\b", r"^cat\b", r"^git status$"]),
-    approval_mode="never_require",
-    acknowledge_unsafe=True,  # required to bypass approval
+    approval_mode="always_require",
 )
 ```
+
+Expose this tool to the agent through `shell.as_function()` and handle its
+approval requests with human review. Calling `shell.run()` directly does not
+request approval.
+
+### Output limits
+
+Both `LocalShellTool` and `DockerShellTool` accept separate limits for normal
+output (`stdout`) and error output (`stderr`):
+
+```python
+from agent_framework.tools import DockerShellTool, LocalShellTool
+
+local_shell = LocalShellTool(max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024)
+docker_shell = DockerShellTool(
+    docker_binary="/usr/bin/docker", max_stdout_bytes=16 * 1024, max_stderr_bytes=4 * 1024
+)
+```
+
+These settings limit retained output, not how much a command may produce.
+Persistent sessions keep the existing normal-output interruption threshold of
+four times `max_stdout_bytes`. Changing `max_stderr_bytes` does not change that
+threshold or introduce an error-output interruption rule. Stateless commands
+are not stopped solely because either output allowance is exceeded.
 
 ### Cross-OS
 
@@ -83,6 +128,30 @@ shell = LocalShellTool(
 - **Linux / macOS**: `/bin/bash --noprofile --norc` (falls back to `/bin/sh`).
 - Override via the `shell=` constructor argument or the
   `AGENT_FRAMEWORK_SHELL` environment variable.
+- **Full paths required**: `shell=`, `AGENT_FRAMEWORK_SHELL`, and the
+  `docker_binary` of `DockerShellTool` must be full paths, such as
+  `/usr/bin/zsh` or `C:\Program Files\PowerShell\7\pwsh.exe`. On Windows the
+  path must also include the file extension. Short names (`zsh`) and relative
+  paths (`bin/zsh`, `.\pwsh.exe`) are rejected, because they could pick up a
+  file in the current directory. On Windows, wrap a path that contains spaces
+  in double quotes when passing it as a string, for example
+  `"C:\Program Files\PowerShell\7\pwsh.exe" -NoLogo`, or pass `shell=` as a
+  list.
+- **Default shell lookup**: the Windows default (`pwsh.exe`, then
+  `powershell.exe`) is looked up only in the fully qualified entries of
+  `PATH`. The current directory and relative `PATH` entries are never
+  searched.
+- **Shell `PATH`**: before the shell starts, empty and relative entries (such
+  as `.` or `bin`) are removed from its `PATH`, so commands it runs are never
+  looked up in the current directory. On Windows,
+  `NoDefaultCurrentDirectoryInExePath=1` is also set, so `cmd.exe` runs a
+  program from the working directory only when the command gives its relative
+  path (for example `.\tool`). On Linux and macOS, `LocalShellTool` raises
+  `ValueError` if no full directory path is left in `PATH` (for example
+  `clean_env=True` without a `PATH` in `env`), because an empty or missing
+  `PATH` would search the current directory. This can't be turned off.
+- A path, like a `PATH` match, shows only that the file exists, not that it can
+  be trusted, so keep `PATH` and the directories on it protected.
 
 ## `ShellEnvironmentProvider` — context provider
 
@@ -132,6 +201,7 @@ from agent_framework.tools import DockerShellTool
 
 async def main() -> None:
     async with DockerShellTool(
+        docker_binary="/usr/bin/docker",  # full path to the container runtime
         image="mcr.microsoft.com/azurelinux/base/core:3.0",
         approval_mode="never_require",  # container is the boundary
     ) as shell:
@@ -151,8 +221,24 @@ Defaults applied to every container:
 - `--memory 512m`, `--pids-limit 256`, ephemeral `tmpfs /tmp`.
 
 To expose a host directory, pass `host_workdir="/path"` (mounted
-read-only by default; `mount_readonly=False` to allow writes). Swap the
-container runtime with `docker_binary="podman"`.
+read-only by default; `mount_readonly=False` to allow writes).
+`docker_binary` is required and must be the full path to the container
+runtime (for example `docker_binary="/usr/bin/podman"` to use Podman). On
+Windows include the extension, for example
+`C:\Program Files\Docker\Docker\resources\bin\docker.exe`.
+
+Applications that must pass additional Docker options can use
+`unsafe_extra_run_args`. These trusted setup options are appended verbatim
+and must come only from developer-controlled configuration. Never use values
+from users, model output, or other untrusted sources. These options can weaken
+or completely remove isolation. Review every option carefully. In particular,
+avoid `--privileged`, `--network=host`, host-path volume mounts, and added
+capabilities unless the application explicitly requires and secures them.
+
+Arbitrary Docker configuration is trusted application setup. The
+model-facing function accepts only a shell command and cannot choose Docker
+options, but the restrictive profile is effective only when the complete
+application configuration preserves it.
 
 ## Sandbox tiers at a glance
 
@@ -160,7 +246,7 @@ container runtime with `docker_binary="podman"`.
 |---|---|---|
 | Run *code* (untrusted) | `HyperlightCodeActProvider.execute_code` (`agent-framework-hyperlight`) | Hyperlight WASM microVM |
 | Run *shell* (untrusted) | `DockerShellTool` | OCI container (network-off, non-root, capabilities dropped) |
-| Run *shell* (trusted dev) | `LocalShellTool` | Approval-in-the-loop |
+| Run *shell* (trusted dev) | `LocalShellTool` | None; human approval for agent calls by default |
 
 ## Relationship to `agent-framework-hyperlight`
 

@@ -21,13 +21,16 @@ enforces an allowlist or DNS-rebinding-resistant policy. This split mirrors the
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+import sys
+import zlib
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
+from dataclasses import dataclass, field, replace
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 from typing import Any, Protocol, runtime_checkable
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import httpx
+from httpx._client import ACCEPT_ENCODING
 
 __all__ = [
     "DefaultHttpRequestHandler",
@@ -131,10 +134,26 @@ class DefaultHttpRequestHandler:
        provider's clients retain their cookie behavior and are not closed by :meth:`aclose`.
        Returning ``None`` falls back to ``client``, if supplied, then to the owned client.
 
+    The provider receives a new :class:`HttpRequestInfo` with an absolute HTTP(S) URL
+    normalized by ``httpx`` and ``query_parameters`` already appended to ``url``.
+    The snapshot's ``query_parameters`` is empty; the original request is not modified.
+    Client-level query defaults are applied after selection, and supplied clients retain
+    their redirect behavior. The provider is not called again for automatic redirects.
+
     Applications requiring persistent cookies must supply a client through ``client``
     or ``client_provider`` scoped to one authenticated principal and manage its lifetime.
     Explicit outbound ``Cookie`` headers and response ``Set-Cookie`` headers are preserved;
     the owned-client policy only prevents automatic cookie persistence.
+
+    Response bodies are limited to ``max_response_body_bytes`` (10 MiB by default),
+    both on the wire and after each gzip/deflate decoding stage. Other content encodings
+    are rejected. The limit also applies to redirect and authentication responses.
+    Caller-supplied response hooks must not eagerly read response bodies.
+
+    Keyword Args:
+        client: Optional caller-owned HTTP client.
+        client_provider: Optional per-request client provider.
+        max_response_body_bytes: Positive wire and decoded response-body limit in bytes.
 
     .. warning::
 
@@ -147,7 +166,13 @@ class DefaultHttpRequestHandler:
         *,
         client: httpx.AsyncClient | None = None,
         client_provider: ClientProvider | None = None,
+        max_response_body_bytes: int = 10 * 1024 * 1024,
     ) -> None:
+        if isinstance(max_response_body_bytes, bool) or not isinstance(max_response_body_bytes, int):
+            raise ValueError("max_response_body_bytes must be a positive integer.")
+        if max_response_body_bytes <= 0:
+            raise ValueError("max_response_body_bytes must be a positive integer.")
+        self._max_response_body_bytes = max_response_body_bytes
         self._owned_client: httpx.AsyncClient | None = None
         self._caller_client = client
         self._client_provider = client_provider
@@ -162,6 +187,22 @@ class DefaultHttpRequestHandler:
         if not info.method:
             raise ValueError("HttpRequestInfo.method must be a non-empty string.")
 
+        url = httpx.URL(info.url)
+        if not url.is_absolute_url or url.scheme not in {"http", "https"}:
+            raise ValueError("HttpRequestInfo.url must be an absolute HTTP or HTTPS URL.")
+
+        # Preserve the authored query bytes, appending rather than replacing duplicate
+        # keys. QueryParams would rewrite escapes, bare flags and duplicate ordering.
+        query = urlsplit(info.url).query
+        explicit_pairs = [(key, value) for key, value in info.query_parameters.items() if key]
+        if explicit_pairs:
+            query += ("&" if query else "") + urlencode(explicit_pairs, quote_via=quote)
+        raw_path = url.raw_path.split(b"?", 1)[0]
+        if query:
+            raw_path += b"?" + _encode_query(query)
+        url = url.copy_with(raw_path=raw_path)
+
+        info = replace(info, url=str(url), headers=dict(info.headers), query_parameters={})
         client = await self._resolve_client(info)
 
         timeout: httpx.Timeout | object
@@ -171,6 +212,8 @@ class DefaultHttpRequestHandler:
             timeout = httpx.USE_CLIENT_DEFAULT
 
         headers = dict(info.headers)
+        if not _has_header(headers, "accept-encoding") and client.headers.get("accept-encoding") == ACCEPT_ENCODING:
+            headers["Accept-Encoding"] = "gzip, deflate"
         content: bytes | str | None = None
         if info.body is not None:
             content = info.body
@@ -181,56 +224,40 @@ class DefaultHttpRequestHandler:
                 # callers (not just the YAML executor) get sensible defaults.
                 headers["Content-Type"] = info.body_content_type or "text/plain"
 
-        # Compose the query as raw bytes rather than routing it through ``params=``.
-        # Anything that reaches ``httpx.QueryParams`` -- ``params=`` or the client's own
-        # ``AsyncClient.params`` merge -- is decoded and re-encoded. Measured against
-        # httpx 0.28.1, that rewrites ``%20`` in a value as ``+``, expands a bare
-        # ``download`` into ``download=``, and reorders interleaved duplicates
-        # (``x=1&y=2&x=3`` becomes ``x=1&x=3&y=2``), all of it even when nothing needed
-        # merging. Base64 and ``%3A`` round-trip unchanged, so a signature is not
-        # rewritten by itself, but any scheme that signs a value holding an encoded
-        # space is, and a server that distinguishes ``download`` from ``download=`` or
-        # reads repeated keys positionally sees a different request either way.
-        # Building the query here and writing it back over the request's ``raw_path``
-        # keeps the caller's bytes exactly as given.
-        raw = urlsplit(info.url)
-
-        # ``query_parameters`` append rather than replace, so a URL carrying
-        # ``filter=region&filter=status`` plus ``{"filter": "tenant"}`` sends all three,
-        # matching the .NET handler. Client-level params are defaults only: they apply
-        # for a key absent from both request-level sources.
-        explicit_pairs = [(key, value) for key, value in info.query_parameters.items() if key]
-        request_keys = {key for key, _ in parse_qsl(raw.query, keep_blank_values=True)}
-        request_keys.update(key for key, _ in explicit_pairs)
+        # Selected-client params remain defaults for keys absent from the workflow's
+        # composed query. They are host configuration, unavailable before selection.
+        request_keys = {key for key, _ in parse_qsl(url.query.decode("ascii"), keep_blank_values=True)}
         client_defaults = [(key, value) for key, value in client.params.multi_items() if key not in request_keys]
-
-        query_segments: list[str] = []
-        if raw.query:
-            query_segments.append(raw.query)
-        # ``quote_via=quote`` keeps spaces as ``%20`` instead of ``+``, so appended
-        # parameters are encoded the same way the preserved URL query is.
-        for pairs in (explicit_pairs, client_defaults):
-            if pairs:
-                query_segments.append(urlencode(pairs, quote_via=quote))
-        query = "&".join(segment for segment in query_segments if segment)
+        if client_defaults:
+            encoded_query = url.query + (b"&" if url.query else b"")
+            encoded_query += urlencode(client_defaults, quote_via=quote).encode("ascii")
+            url = url.copy_with(query=encoded_query)
 
         # Build without the query so the client's params merge has nothing to clobber --
         # it drops the URL's query outright -- then overwrite the query httpx composed
         # with ours. The fragment stays on the built URL; httpx does not send it.
         request = client.build_request(
             method=info.method,
-            url=urlunsplit((raw.scheme, raw.netloc, raw.path, "", raw.fragment)),
+            url=url.copy_with(query=None),
             headers=headers or None,
             content=content,
             timeout=timeout,
         )
-        # Reuse httpx's own path encoding and replace only the query part of ``raw_path``.
-        raw_path = request.url.raw_path.split(b"?", 1)[0]
-        if query:
-            raw_path += b"?" + _encode_query(query)
-        request.url = request.url.copy_with(raw_path=raw_path)
+        request.url = url
 
-        response = await client.send(request)
+        auth = client.auth
+        if auth is None:
+            auth = httpx.BasicAuth(url.username, url.password) if url.username or url.password else httpx.Auth()
+        response = await client.send(
+            request,
+            stream=True,
+            follow_redirects=False,
+            auth=_ResponseLimitAuth(
+                auth,
+                limit=self._max_response_body_bytes,
+                follow_redirects=client.follow_redirects,
+            ),
+        )
 
         # Preserve multi-value headers (e.g. multiple Set-Cookie) as list[str].
         # Normalize names to lowercase so lookups are consistent and case
@@ -302,3 +329,130 @@ def _has_header(headers: Mapping[str, str], name: str) -> bool:
     """Case-insensitive header presence check."""
     needle = name.lower()
     return any(key.lower() == needle for key in headers)
+
+
+class _ResponseLimitAuth(httpx.Auth):
+    """Read every response within bounds before HTTPX can buffer intermediate bodies."""
+
+    def __init__(self, auth: httpx.Auth, *, limit: int, follow_redirects: bool) -> None:
+        self._auth = auth
+        self._limit = limit
+        self._follow_redirects = follow_redirects
+
+    async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        flow = self._auth.async_auth_flow(request)
+        try:
+            request = await flow.__anext__()
+            while True:
+                response = yield request
+                await _read_bounded_response(response, self._limit)
+                if self._follow_redirects and response.next_request is not None:
+                    request = response.next_request
+                    continue
+                try:
+                    request = await flow.asend(response)
+                except StopAsyncIteration:
+                    return
+        finally:
+            await flow.aclose()
+
+
+async def _read_bounded_response(response: httpx.Response, limit: int) -> None:
+    """Cache only bounded decoded content, preserving HTTPX text and auth behavior."""
+    try:
+        if response.is_stream_consumed:
+            if len(response.content) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            return
+
+        encodings = [
+            encoding.strip().lower()
+            for encoding in response.headers.get("content-encoding", "").split(",")
+            if encoding.strip().lower() != "identity" and encoding.strip()
+        ]
+        if (
+            response.request.method == "HEAD"
+            or 100 <= response.status_code < 200
+            or response.status_code in {204, 205, 304}
+            or (response.request.method == "CONNECT" and 200 <= response.status_code < 300)
+        ):
+            encodings = []
+        if len(encodings) > 4:
+            raise httpx.DecodingError("HTTP response has too many content encoding stages.", request=response.request)
+        decoders = [_BoundedContentDecoder(encoding, limit) for encoding in reversed(encodings)]
+        body = bytearray()
+        received = 0
+        async for chunk in response.aiter_raw():
+            received += len(chunk)
+            if received > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            for decoder in decoders:
+                chunk = decoder.decode(chunk)
+            if len(body) + len(chunk) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            body.extend(chunk)
+        for index, decoder in enumerate(decoders):
+            chunk = decoder.finish()
+            for downstream in decoders[index + 1 :]:
+                chunk = downstream.decode(chunk)
+            if len(body) + len(chunk) > limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            body.extend(chunk)
+        # HTTPX rereads intermediate responses during auth/redirect handling. Populate
+        # its content cache so those reads cannot trigger automatic decoding again.
+        response._content = bytes(body)  # pyright: ignore[reportPrivateUsage]
+    finally:
+        await response.aclose()
+
+
+class _BoundedContentDecoder:
+    def __init__(self, encoding: str, limit: int) -> None:
+        if encoding not in {"gzip", "deflate"}:
+            raise httpx.DecodingError(f"Unsupported HTTP response content encoding: {encoding}.")
+        self._limit = limit
+        self._decoded = 0
+        self._input = bytearray()
+        self._decoder = zlib.decompressobj(zlib.MAX_WBITS | 16) if encoding == "gzip" else None
+
+    def decode(self, data: bytes) -> bytes:
+        if self._decoder is None:
+            # Raw deflate can share a wrapped stream's prefix. Retain bounded input
+            # until finalization so a failed candidate never reaches downstream stages.
+            if len(self._input) + len(data) > self._limit:
+                raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+            self._input.extend(data)
+            return b""
+        try:
+            decoded = self._decoder.decompress(data, min(self._limit - self._decoded + 1, sys.maxsize))
+        except zlib.error as exc:
+            raise httpx.DecodingError(str(exc)) from exc
+        self._decoded += len(decoded)
+        if self._decoded > self._limit:
+            raise httpx.StreamError("HTTP response body exceeds the configured limit.")
+        if self._decoder.unused_data:
+            raise httpx.DecodingError("Unexpected data after HTTP response content encoding.")
+        return decoded
+
+    def finish(self) -> bytes:
+        if self._decoder is not None:
+            if not self._decoder.eof:
+                raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+            return b""
+
+        data = bytes(self._input)
+        self._input.clear()
+        failures: list[httpx.DecodingError | httpx.StreamError] = []
+        for mode in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+            self._decoder = zlib.decompressobj(mode)
+            self._decoded = 0
+            try:
+                decoded = self.decode(data)
+                if not self._decoder.eof:
+                    raise httpx.DecodingError("Incomplete HTTP response content encoding.")
+                return decoded
+            except (httpx.DecodingError, httpx.StreamError) as exc:
+                failures.append(exc)
+        for error in failures:
+            if isinstance(error, httpx.StreamError):
+                raise error
+        raise failures[-1]

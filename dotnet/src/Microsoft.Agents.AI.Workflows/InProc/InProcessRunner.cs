@@ -68,6 +68,9 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
     /// <inheritdoc cref="ISuperStepRunner.StartExecutorId"/>
     public string StartExecutorId { get; }
 
+    /// <inheritdoc cref="ISuperStepRunner.WorkflowName"/>
+    public string? WorkflowName => this.Workflow.Name;
+
     /// <summary>
     /// Gating flag for deferred event republishing after checkpoint restore.
     /// </summary>
@@ -416,14 +419,21 @@ internal sealed class InProcessRunner : ISuperStepRunner, ICheckpointingHandle
         await this.RunContext.StateManager.ImportStateAsync(checkpoint).ConfigureAwait(false);
         await this.RunContext.ImportStateAsync(checkpoint).ConfigureAwait(false);
 
-        Task executorNotifyTask = this.RunContext.NotifyCheckpointLoadedAsync(cancellationToken);
-
         await this.RunContext.ImportEdgeStateAsync(checkpoint.EdgeStateData).ConfigureAwait(false);
-        await Task.WhenAll(executorNotifyTask,
-                           restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
+        try
+        {
+            await Task.WhenAll(this.RunContext.NotifyCheckpointLoadedAsync(checkpoint, cancellationToken),
+                               restoreCheckpointIndexTask.AsTask()).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Both tasks have completed; discard hook writes without reverting published restoration state.
+            this.RunContext.StateManager.DiscardQueuedUpdates();
+            throw;
+        }
 
         this._lastCheckpointInfo = checkpointInfo;
-        this.StepTracer.Reload(this.StepTracer.StepNumber);
+        this.StepTracer.Reload(checkpoint.StepNumber);
 
         async ValueTask UpdateCheckpointIndexAsync()
         {

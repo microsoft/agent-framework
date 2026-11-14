@@ -71,5 +71,5 @@ dotnet run
 This sample is part of the repo's solution and targets .NET 10 like every other sample, but it
 deliberately opts out of **Central Package Management** and does **not** reference `Microsoft.Agents.AI`
 via the repo's in-source project — it consumes the **published** `AgentMemory` NuGet packages instead
-(which target `Microsoft.Agents.AI` 1.9.0). A version that references the repo's current
+(which target `Microsoft.Agents.AI` 1.23.0). A version that references the repo's current
 `Microsoft.Agents.AI` source would require AgentMemory to be rebuilt against that version first.

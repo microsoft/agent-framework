@@ -14,7 +14,7 @@ All three classes are available from `agent_framework.azure` or
 
 ## Installation
 
-Requires Python 3.10 or later.
+Supports Python 3.11–3.15.
 
 ```bash
 pip install agent-framework-azure-ai-search --pre
@@ -39,6 +39,10 @@ explicit values override the file selected by `env_file_path`, then environment 
 `index_name` or `AZURE_SEARCH_INDEX_NAME`; for agentic mode, use
 `mode="agentic"` and `knowledge_base_name` or `AZURE_SEARCH_KNOWLEDGE_BASE_NAME`.
 Attach the provider through your agent's `context_provider` parameter.
+
+In agentic mode, pass `knowledge_source_params` to set per-source retrieval options,
+such as `SearchIndexKnowledgeSourceParams(knowledge_source_name=..., filter_add_on=...)`.
+Each entry replaces the provider's defaults for the source with the same name.
 
 Injected SDK clients bypass connection settings and remain caller-owned unless
 `managed_client=True`. Use async context managers to close owned store/collection

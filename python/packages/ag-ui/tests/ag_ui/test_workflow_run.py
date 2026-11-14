@@ -12,7 +12,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
-from ag_ui.core import EventType, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
+from ag_ui.core import ActivitySnapshotEvent, EventType, RunFinishedEvent, RunStartedEvent, StateSnapshotEvent
 from agent_framework import (
     Agent,
     AgentContext,
@@ -517,7 +517,10 @@ async def test_workflow_run_roleless_intermediate_update_becomes_reasoning():
     assert not [event for event in events if event.type == "CUSTOM" and event.name == "workflow_output"]  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
 
-async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("workflow_name", [None, "customer_support_pipeline"])
+async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(
+    monkeypatch: pytest.MonkeyPatch, workflow_name: str | None
+) -> None:
     """Workflow spans use supplied AG-UI threads without replacing provider fallback behavior."""
     import agent_framework.observability as observability
     from opentelemetry.sdk.trace import TracerProvider
@@ -561,7 +564,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
         name="workflow-agent",
         middleware=[passthrough_middleware],
     )
-    workflow = WorkflowBuilder(start_executor=participant, output_from="all").build()
+    workflow = WorkflowBuilder(start_executor=participant, output_from="all", name=workflow_name).build()
 
     for run_number in (1, 2):
         events = [
@@ -601,11 +604,16 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
             "ag-ui-workflow-thread",
         ]
 
-    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == "workflow.run"]
+    expected_span_name = f"invoke_workflow {workflow_name}" if workflow_name else "invoke_workflow"
+    workflow_spans = [span for span in exporter.get_finished_spans() if span.name == expected_span_name]
     assert len(workflow_spans) == 2
     workflow_conversation_ids = []
     for span in workflow_spans:
         assert span.attributes is not None
+        if workflow_name:
+            assert span.attributes["gen_ai.workflow.name"] == workflow_name
+        else:
+            assert "gen_ai.workflow.name" not in span.attributes
         workflow_conversation_ids.append(span.attributes.get("gen_ai.conversation.id"))
 
     assert workflow_conversation_ids == [
@@ -631,7 +639,7 @@ async def test_workflow_and_agent_spans_use_supplied_agui_thread_id(monkeypatch:
     assert fallback_agent_span.attributes is not None
     assert fallback_agent_span.attributes.get("gen_ai.conversation.id") == "provider-conversation"
 
-    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == "workflow.run")
+    fallback_workflow_span = next(span for span in exporter.get_finished_spans() if span.name == expected_span_name)
     assert fallback_workflow_span.attributes is not None
     assert "gen_ai.conversation.id" not in fallback_workflow_span.attributes
 
@@ -1324,6 +1332,34 @@ async def test_workflow_participant_tool_call_emits_standard_tool_events() -> No
     assert not [
         event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
     ]
+
+
+@pytest.mark.parametrize("intermediate", [False, True])
+async def test_workflow_metadata_only_updates_do_not_emit_custom_output(intermediate: bool) -> None:
+    @executor(id="participant")
+    async def participant(message: Any, ctx: WorkflowContext[Any, AgentResponseUpdate]) -> None:
+        del message
+        update = AgentResponseUpdate(additional_properties={"custom": {"metadata": "only"}})
+        await ctx.yield_output(update)
+
+    workflow = WorkflowBuilder(
+        start_executor=participant,
+        output_from=[] if intermediate else [participant],
+        intermediate_output_from=[participant] if intermediate else [],
+    ).build()
+    events = [
+        event
+        async for event in run_workflow_stream(
+            {"messages": [{"role": "user", "content": "Test"}]},
+            workflow,
+        )
+    ]
+
+    assert not [
+        event for event in events if event.type == "CUSTOM" and getattr(event, "name", None) == "workflow_output"
+    ]
+    assert not [event for event in events if event.type == "RUN_ERROR"]
+    assert events[-1].type == "RUN_FINISHED"
 
 
 async def test_workflow_stream_reconciles_result_from_final_response() -> None:
@@ -3051,6 +3087,79 @@ async def test_workflow_run_status_enum_state():
     event_types = [event.type for event in events]
     assert "RUN_STARTED" in event_types
     assert "RUN_FINISHED" in event_types
+
+
+@pytest.mark.parametrize("terminal_type", ["executor_completed", "executor_failed"])
+async def test_executor_activity_ids_are_scoped_to_run(terminal_type: str) -> None:
+    """Progress replaces its own activity, without overwriting a previous run."""
+
+    class ActivityWorkflow:
+        def run(self, **kwargs: Any) -> AsyncIterator[Any]:
+            async def stream() -> AsyncIterator[Any]:
+                for executor_id in ("researcher", "writer"):
+                    yield SimpleNamespace(type="executor_invoked", executor_id=executor_id, data=None)
+                    yield SimpleNamespace(type=terminal_type, executor_id=executor_id, data=None)
+
+            return stream()
+
+    activities_by_run: list[list[Any]] = []
+    for run_id in ("first-run", "second-run"):
+        events = [
+            event
+            async for event in run_workflow_stream(
+                {
+                    "thread_id": "same-thread",
+                    "run_id": run_id,
+                    "messages": [{"role": "user", "content": "go"}],
+                },
+                cast(Any, ActivityWorkflow()),
+            )
+        ]
+        activities = [event for event in events if isinstance(event, ActivitySnapshotEvent)]
+        assert len(activities) == 4
+        assert activities[0].message_id == activities[1].message_id
+        assert activities[2].message_id == activities[3].message_id
+        assert activities[0].message_id != activities[2].message_id
+        assert [event.content["executor_id"] for event in activities] == [
+            "researcher",
+            "researcher",
+            "writer",
+            "writer",
+        ]
+        activities_by_run.append(activities)
+
+    assert {event.message_id for event in activities_by_run[0]}.isdisjoint(
+        event.message_id for event in activities_by_run[1]
+    )
+
+
+async def test_executor_activity_ids_do_not_collide_with_delimiters() -> None:
+    """Unrestricted run and executor IDs must not alias another pair."""
+
+    class ActivityWorkflow:
+        def __init__(self, executor_id: str) -> None:
+            self.executor_id = executor_id
+
+        def run(self, **kwargs: Any) -> AsyncIterator[Any]:
+            async def stream() -> AsyncIterator[Any]:
+                yield SimpleNamespace(type="executor_invoked", executor_id=self.executor_id, data=None)
+
+            return stream()
+
+    message_ids: list[str] = []
+    for run_id, executor_id in (("a", "b:executor:c"), ("a:executor:b", "c")):
+        events = [
+            event
+            async for event in run_workflow_stream(
+                {"thread_id": "same-thread", "run_id": run_id, "messages": [{"role": "user", "content": "go"}]},
+                cast(Any, ActivityWorkflow(executor_id)),
+            )
+        ]
+        activities = [event for event in events if isinstance(event, ActivitySnapshotEvent)]
+        assert len(activities) == 1
+        message_ids.append(activities[0].message_id)
+
+    assert message_ids[0] != message_ids[1]
 
 
 async def test_workflow_run_executor_invoked_drains_text():

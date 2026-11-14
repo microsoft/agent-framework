@@ -29,6 +29,7 @@ Console.WriteLine(await agent.RunAsync("Write a haiku about Microsoft Agent Fram
 - [Getting Started with Agents](./samples/02-agents/Agents): basic agent creation and tool usage
 - [Agent Provider Samples](./samples/02-agents/AgentProviders): samples showing different agent providers
 - [Workflow Samples](./samples/03-workflows): advanced multi-agent patterns and workflow orchestration
+- [Hosting guidance](./samples/04-hosting/README.md): authentication, endpoint authorization, and caller isolation across hosting protocols
 
 ## Agent Framework Documentation
 

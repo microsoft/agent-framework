@@ -4,7 +4,11 @@ from typing import Final
 
 __version__: Final[str]
 
-from ._agent_hooks import create_agent_hooks_middleware, create_agent_hooks_middleware_from_emitter
+from ._agent_hooks import (
+    create_agent_hooks_middleware,
+    create_agent_hooks_middleware_from_declaration,
+    create_agent_hooks_middleware_from_emitter,
+)
 from ._agents import Agent, BaseAgent, RawAgent, SupportsAgentRun
 from ._clients import (
     BaseChatClient,
@@ -31,6 +35,7 @@ from ._compaction import (
     SUMMARIZED_BY_SUMMARY_ID_KEY,
     SUMMARY_OF_GROUP_IDS_KEY,
     SUMMARY_OF_MESSAGE_IDS_KEY,
+    AgentTriggeredCompactionStrategy,
     CharacterEstimatorTokenizer,
     CompactionProvider,
     CompactionStrategy,
@@ -42,6 +47,7 @@ from ._compaction import (
     TokenizerProtocol,
     ToolResultCompactionStrategy,
     TruncationStrategy,
+    UnloadSkillsCompactionStrategy,
     annotate_message_groups,
     apply_compaction,
     included_messages,
@@ -220,6 +226,7 @@ from ._types import (
     ChatOptions,
     ChatResponse,
     ChatResponseUpdate,
+    ComputerSafetyCheck,
     Content,
     ContinuationToken,
     Embedding,
@@ -242,7 +249,9 @@ from ._types import (
     UsageDetails,
     add_usage_details,
     detect_media_type_from_base64,
+    get_namespaced_value,
     map_chat_to_agent_update,
+    merge_additional_properties,
     merge_chat_options,
     normalize_messages,
     normalize_tools,
@@ -250,6 +259,7 @@ from ._types import (
     validate_chat_options,
     validate_tool_mode,
     validate_tools,
+    with_namespaced_value,
 )
 from ._vector_filters import Filter, FilterGroup, FilterGroupOperator, FilterOperator, Param
 from ._vectors import (
@@ -278,7 +288,12 @@ from ._vectors import (
     vectorstoremodel,
 )
 from ._workflows._agent import WorkflowAgent
-from ._workflows._agent_executor import AgentExecutor, AgentExecutorRequest, AgentExecutorResponse
+from ._workflows._agent_executor import (
+    AgentExecutor,
+    AgentExecutorCheckpointState,
+    AgentExecutorRequest,
+    AgentExecutorResponse,
+)
 from ._workflows._agent_utils import resolve_agent_id
 from ._workflows._checkpoint import (
     CheckpointID,
@@ -384,6 +399,7 @@ __all__ = [
     "AgentContext",
     "AgentEvalConverter",
     "AgentExecutor",
+    "AgentExecutorCheckpointState",
     "AgentExecutorRequest",
     "AgentExecutorResponse",
     "AgentFileStore",
@@ -397,6 +413,7 @@ __all__ = [
     "AgentResponseUpdate",
     "AgentRunInputs",
     "AgentSession",
+    "AgentTriggeredCompactionStrategy",
     "AggregatingSkillsSource",
     "Annotation",
     "BackgroundAgentsProvider",
@@ -425,6 +442,7 @@ __all__ = [
     "ClassSkill",
     "CompactionProvider",
     "CompactionStrategy",
+    "ComputerSafetyCheck",
     "Content",
     "ContextProvider",
     "ContextWindowCompactionStrategy",
@@ -589,6 +607,7 @@ __all__ = [
     "ToolTypes",
     "TruncationStrategy",
     "TypeCompatibilityError",
+    "UnloadSkillsCompactionStrategy",
     "UpdateT",
     "UsageDetails",
     "UserInputRequiredException",
@@ -626,6 +645,7 @@ __all__ = [
     "background_tasks_running_message",
     "chat_middleware",
     "create_agent_hooks_middleware",
+    "create_agent_hooks_middleware_from_declaration",
     "create_agent_hooks_middleware_from_emitter",
     "create_always_approve_tool_response",
     "create_always_approve_tool_with_arguments_response",
@@ -643,6 +663,7 @@ __all__ = [
     "executor",
     "function_middleware",
     "get_agent_mode",
+    "get_namespaced_value",
     "get_run_context",
     "handler",
     "included_messages",
@@ -650,6 +671,7 @@ __all__ = [
     "keyword_check",
     "load_settings",
     "map_chat_to_agent_update",
+    "merge_additional_properties",
     "merge_chat_options",
     "normalize_function_invocation_configuration",
     "normalize_messages",
@@ -674,5 +696,6 @@ __all__ = [
     "validate_tools",
     "validate_workflow_graph",
     "vectorstoremodel",
+    "with_namespaced_value",
     "workflow",
 ]

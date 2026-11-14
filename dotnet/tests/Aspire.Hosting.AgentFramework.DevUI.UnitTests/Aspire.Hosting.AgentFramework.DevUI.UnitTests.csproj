@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Aspire.Hosting.AgentFramework.DevUI\Aspire.Hosting.AgentFramework.DevUI.csproj" />
+    <ProjectReference Include="..\..\src\Microsoft.Agents.AI.DevUI\Microsoft.Agents.AI.DevUI.csproj" />
   </ItemGroup>
 
 </Project>

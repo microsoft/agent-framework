@@ -51,6 +51,9 @@ from fastapi.responses import JSONResponse
 app = FastAPI()
 state = AgentState(agent)
 
+# Request options are caller-controlled; pass through only the ones this route honors.
+ALLOWED_REQUEST_OPTIONS = frozenset({"max_tokens", "reasoning"})
+
 
 @app.post("/responses")
 async def responses(body: dict = Body(...)) -> JSONResponse:
@@ -58,10 +61,11 @@ async def responses(body: dict = Body(...)) -> JSONResponse:
     session_id, is_conversation_id = responses_session_id(body)
     response_id = create_response_id()
     session = await state.get_or_create_session(session_id or response_id)
+    options = {key: value for key, value in run["options"].items() if key in ALLOWED_REQUEST_OPTIONS}
     result = await (await state.get_target()).run(
         run["messages"],
         session=session,
-        options=run["options"],
+        options=options,
     )
     if is_conversation_id:
         # The app must serialize writers that advance this stable id.

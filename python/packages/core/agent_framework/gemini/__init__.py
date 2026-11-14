@@ -11,9 +11,11 @@ from typing import Any
 _IMPORTS: dict[str, tuple[str, str]] = {
     "GeminiChatClient": ("agent_framework_gemini", "agent-framework-gemini"),
     "GeminiChatOptions": ("agent_framework_gemini", "agent-framework-gemini"),
-    "GeminiSettings": ("agent_framework_gemini", "agent-framework-gemini"),
+    "GeminiEmbeddingClient": ("agent_framework_gemini", "agent-framework-gemini"),
+    "GeminiEmbeddingOptions": ("agent_framework_gemini", "agent-framework-gemini"),
     "GoogleGeminiSettings": ("agent_framework_gemini", "agent-framework-gemini"),
     "RawGeminiChatClient": ("agent_framework_gemini", "agent-framework-gemini"),
+    "RawGeminiEmbeddingClient": ("agent_framework_gemini", "agent-framework-gemini"),
     "ThinkingConfig": ("agent_framework_gemini", "agent-framework-gemini"),
 }
 

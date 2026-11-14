@@ -11,7 +11,7 @@ An alpha MongoDB integration for [Microsoft Agent Framework](https://learn.micro
 pip install agent-framework-mongodb --pre
 ```
 
-Requires Python 3.10+, PyMongo 4.13.2+, and a MongoDB deployment with
+Supports Python 3.11–3.15. Requires PyMongo 4.15+ and a MongoDB deployment with
 [MongoDB Vector Search](https://www.mongodb.com/docs/vector-search/). Search-index
 creation requires the corresponding database permissions.
 
@@ -22,8 +22,9 @@ Constructors resolve explicit arguments first, then an explicitly selected
 `.env` file, then process environment variables. URIs accept `str` or AF
 `SecretString` and are unwrapped only for PyMongo.
 
-You can instead inject an `AsyncMongoClient` and pass `database_name`. An
-injected client bypasses URI, app-name, and `.env` loading and always remains
+You can instead inject an `AsyncMongoClient`. The database name is required and
+resolves from an explicit `database_name`, then `MONGODB_DATABASE_NAME`. An injected
+client bypasses URI, app-name, and `.env` loading and always remains
 caller-owned. Connector-created clients are closed by `close()` or async context
 exit. Collections created by a store borrow its already-resolved client.
 
@@ -66,6 +67,33 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Retrieval-augmented generation
+
+`VectorCollectionContextProvider` exposes a vector collection to an agent as tools,
+so grounding an agent on MongoDB needs nothing beyond Agent Framework. Turning off
+the write tools keeps retrieval read-only.
+
+```python
+from agent_framework import Agent, VectorCollectionContextProvider
+
+knowledge_base = VectorCollectionContextProvider(
+    collection,
+    scope_filter=None,
+    include_upsert_tool=False,
+    include_get_tool=False,
+    include_delete_tool=False,
+)
+
+async with Agent(client=chat_client, context_providers=[knowledge_base]) as agent:
+    print((await agent.run("How long does a refund take?")).text)
+```
+
+As with any MongoDB record type, the model must not declare `is_full_text_indexed`; mark
+metadata you want to filter on with `is_indexed` instead. Newly written records become
+searchable asynchronously, so an ingestion path should confirm they are retrievable before
+querying them. See [`samples/mongodb_agent_rag.py`](samples/mongodb_agent_rag.py) for a
+runnable example that does both.
+
 ## Capabilities and limits
 
 - String, signed 64-bit integer, and BSON `ObjectId` `_id` values retain native
@@ -91,7 +119,9 @@ asyncio.run(main())
   membership, AND, and OR only. Nested paths, NOT, null/missing, list membership,
   and literal/analyzed text are rejected for vector search.
 - Keyword-hybrid search, sparse/binary vectors, provider-side embedding
-  generation, and automatic schema migration are not supported.
+  generation, and automatic schema migration are not supported. A model that
+  declares `is_full_text_indexed` is rejected when the collection is constructed,
+  because there is no Search text index to back it.
 - ANN defaults `numCandidates` to the MongoDB recommendation of 20 times
   `skip + top`, capped at MongoDB's maximum of 10,000. Explicit values must be
   1-10,000 and at least `skip + top`; larger result windows require exact search.

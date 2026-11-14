@@ -2,16 +2,25 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Agents.AI.Workflows.Checkpointing;
 using Microsoft.Agents.AI.Workflows.Declarative.Interpreter;
 using Microsoft.Agents.AI.Workflows.Declarative.Kit;
 using Microsoft.Agents.AI.Workflows.Declarative.PowerFx;
 using Microsoft.Agents.ObjectModel;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.PowerFx.Types;
 using Moq;
+using Shared.UnitTests;
 using Xunit.Sdk;
 
 namespace Microsoft.Agents.AI.Workflows.Declarative.UnitTests;
@@ -24,6 +33,168 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
     private List<WorkflowEvent> WorkflowEvents { get; } = [];
 
     private Dictionary<Type, int> WorkflowEventCounts { get; set; } = [];
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResumeAsync_LegacyCheckpointPreservesNextAssignmentAsync(bool offThread, bool clear)
+    {
+        // Arrange
+        (Workflow workflow, CheckpointManager checkpoints, CheckpointInfo checkpoint) =
+            await CreateLegacyCheckpointAsync(offThread, clear, completed: false);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await foreach (WorkflowEvent evt in resumed.WatchStreamAsync())
+        {
+            Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+        }
+
+        // Assert
+        WorkflowFormulaState state = GetRootState(workflow);
+        Assert.Equal(clear ? null : "updated", state.Get("TestValue").ToObject());
+    }
+
+    [Theory]
+    [InlineData("de-DE")]
+    [InlineData("fr-FR")]
+    public async Task DeclarativeWorkflowExecution_UsesInvariantCulture_ForFormulasAndNumberParsingAsync(string cultureName)
+    {
+        CultureInfo originalCulture = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo(cultureName);
+
+            const string Yaml = """
+                kind: Workflow
+                trigger:
+                  kind: OnConversationStart
+                  id: repro
+                  actions:
+                    - kind: ParseValue
+                      id: parse_price
+                      variable: Local.Price
+                      value: ="3.14"
+                      valueType: Number
+                    - kind: SetVariable
+                      id: set_max
+                      variable: Local.Max
+                      value: =Max(1, 2)
+                    - kind: SendActivity
+                      id: send_max
+                      activity: "Max is {Local.Max}"
+                """;
+
+            using StringReader yamlReader = new(Yaml);
+            DeclarativeWorkflowOptions options = new(new MockAgentProvider().Object);
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "start");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                Assert.False(evt is ExecutorFailedEvent, (evt as ExecutorFailedEvent)?.Data?.ToString());
+            }
+
+            WorkflowFormulaState state = GetRootState(workflow);
+            Assert.Equal(3.14D, Convert.ToDouble(state.Get("Price").ToObject(), CultureInfo.InvariantCulture));
+            Assert.Equal(2.0D, Convert.ToDouble(state.Get("Max").ToObject(), CultureInfo.InvariantCulture));
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResumeAsync_LegacyCheckpointSupportsImmediateRestoresAsync(bool offThread)
+    {
+        // Arrange
+        (Workflow workflow, CheckpointManager checkpoints, CheckpointInfo checkpoint) =
+            await CreateLegacyCheckpointAsync(offThread, clear: false, completed: true);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+
+        // Act
+        await using StreamingRun resumed = await environment.ResumeStreamingAsync(workflow, checkpoint);
+        await resumed.RestoreCheckpointAsync(checkpoint);
+        await resumed.RestoreCheckpointAsync(checkpoint);
+
+        // Assert
+        Assert.Equal("updated", GetRootState(workflow).Get("TestValue").ToObject());
+    }
+
+    private static async Task<(Workflow Workflow, CheckpointManager Checkpoints, CheckpointInfo Checkpoint)> CreateLegacyCheckpointAsync(
+        bool offThread, bool clear, bool completed)
+    {
+        Dictionary<CheckpointInfo, JsonElement> stored = [];
+        Mock<ICheckpointStore<JsonElement>> store = new();
+        store.Setup(s => s.CreateCheckpointAsync(It.IsAny<string>(), It.IsAny<JsonElement>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, JsonElement value, CheckpointInfo? _) =>
+            {
+                CheckpointInfo info = new(sessionId, Guid.NewGuid().ToString("N"));
+                stored.Add(info, value);
+                return info;
+            });
+        store.Setup(s => s.RetrieveCheckpointAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo>()))
+            .ReturnsAsync((string _, CheckpointInfo info) => stored[info]);
+        store.Setup(s => s.RetrieveIndexAsync(It.IsAny<string>(), It.IsAny<CheckpointInfo?>()))
+            .ReturnsAsync((string sessionId, CheckpointInfo? _) =>
+                stored.Keys.Where(info => string.Equals(info.SessionId, sessionId, StringComparison.Ordinal)).ToArray().AsEnumerable());
+        CheckpointManager checkpoints = CheckpointManager.CreateJson(store.Object, DeclarativeWorkflowJsonOptions.Default);
+        var environment = (offThread ? InProcessExecution.OffThread : InProcessExecution.Lockstep).WithCheckpointing(checkpoints);
+        List<CheckpointInfo> saved = [];
+        await using (StreamingRun run = await environment.RunStreamingAsync(BuildWorkflow(), "start"))
+        {
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                Assert.False(evt is WorkflowErrorEvent, (evt as WorkflowErrorEvent)?.Exception?.ToString());
+                if (evt is SuperStepCompletedEvent { CompletionInfo.Checkpoint: { } checkpoint })
+                {
+                    saved.Add(checkpoint);
+                }
+            }
+        }
+        Assert.True(saved.Count >= 3);
+        CheckpointInfo legacy = completed ? saved[^1] : saved.First(info =>
+            stored[info].GetProperty("stateData").EnumerateObject().Any(entry =>
+                entry.Name.EndsWith("|@Local|TestValue", StringComparison.Ordinal)));
+        JsonNode? node = JsonNode.Parse(stored[legacy].GetRawText());
+        Assert.NotNull(node);
+        JsonObject stateData = Assert.IsType<JsonObject>(node["stateData"]);
+        string localKey = Assert.Single(stateData.Select(entry => entry.Key),
+            key => key.EndsWith("|@Local|TestValue", StringComparison.Ordinal));
+        JsonNode? value = stateData[localKey];
+        Assert.True(stateData.Remove(localKey));
+        stateData.Add(localKey.Replace("|@Local|", "|@Topic|"), value);
+        Assert.True(stateData.Remove(localKey.Replace("|@Local|", $"|@{WorkflowFormulaState.LocalOwnershipScopeName}|")));
+        stored[legacy] = JsonSerializer.SerializeToElement(node);
+        return (BuildWorkflow(), checkpoints, legacy);
+
+        Workflow BuildWorkflow()
+        {
+            using StringReader reader = new($$"""
+                kind: Workflow
+                trigger:
+                  kind: OnConversationStart
+                  id: legacy_restore
+                  actions:
+                    - kind: SetVariable
+                      id: seed_value
+                      variable: Local.TestValue
+                      value: legacy
+                    - kind: SetVariable
+                      id: update_value
+                      variable: Topic.TestValue
+                      value: {{(clear ? "=Blank()" : "updated")}}
+                """);
+            return DeclarativeWorkflowBuilder.Build<string>(reader, new(new MockAgentProvider().Object));
+        }
+    }
 
     [Theory]
     [InlineData("BadEmpty.yaml")]
@@ -123,6 +294,233 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.DoesNotContain("EMBER-QUARTZ-7319", secondImplicitResponse.Text, StringComparison.Ordinal);
         Assert.True(provider.MessageConversations.Count >= 2);
         Assert.NotEqual(provider.MessageConversations[0], provider.MessageConversations[1]);
+    }
+
+    [Fact]
+    public async Task Build_OnlyInitializesAllowedReferencedEnvironmentVariablesAsync()
+    {
+        // Arrange
+        const string AllowedName = "AllowedConfig";
+        const string HiddenName = "HiddenConfig";
+        const string ProcessOnlyName = "ProcessOnlyConfig";
+        const string ProcessOnlyValue = "process-value";
+
+        string? originalProcessOnlyValue = Environment.GetEnvironmentVariable(ProcessOnlyName);
+        Environment.SetEnvironmentVariable(ProcessOnlyName, ProcessOnlyValue);
+
+        try
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [AllowedName] = "allowed-value",
+                    [HiddenName] = "hidden-value",
+                })
+                .Build();
+            using StringReader yamlReader = new(
+                """
+                    kind: Workflow
+                    trigger:
+
+                      kind: OnConversationStart
+                      id: env_boundary_workflow
+                      actions:
+
+                        - kind: SetVariable
+                          id: referenced_allowed_configuration
+                          variable: Local.Allowed
+                          value: =Env.AllowedConfig
+
+                        - kind: SetVariable
+                          id: referenced_hidden_configuration
+                          disabled: true
+                          variable: Local.Hidden
+                          value: =Env.HiddenConfig
+
+                        - kind: SetVariable
+                          id: referenced_process_configuration
+                          disabled: true
+                          variable: Local.ProcessOnly
+                          value: =Env.ProcessOnlyConfig
+                    """);
+            Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("Test input message");
+            DeclarativeWorkflowOptions options =
+                new(mockAgentProvider.Object)
+                {
+                    Configuration = configuration,
+                    AllowedEnvironmentVariables = [AllowedName, ProcessOnlyName],
+                    LoggerFactory = this.Output,
+                };
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+            WorkflowFormulaState rootState = GetRootState(workflow);
+
+            // Act
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "Test input message");
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                this.WorkflowEvents.Add(workflowEvent);
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+                }
+            }
+
+            // Assert
+            StringValue allowedValue = Assert.IsType<StringValue>(rootState.Get(AllowedName, VariableScopeNames.Environment));
+            Assert.Equal("allowed-value", allowedValue.Value);
+            Assert.IsType<BlankValue>(rootState.Get(HiddenName, VariableScopeNames.Environment));
+            Assert.IsType<BlankValue>(rootState.Get(ProcessOnlyName, VariableScopeNames.Environment));
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(AllowedName, VariableScopeNames.Environment));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessOnlyName, originalProcessOnlyValue);
+        }
+    }
+
+    [Fact]
+    public async Task Build_WithProcessEnvironmentFallback_LoadsAllowedMissingConfigurationFromProcessEnvironmentAsync()
+    {
+        // Arrange
+        const string ProcessOnlyName = "ProcessOnlyConfigForFallback";
+        const string ExplicitName = "ExplicitConfigWinsForFallback";
+        const string HiddenName = "HiddenConfigForFallback";
+        const string ProcessOnlyValue = "process-only-value";
+        const string ExplicitConfigurationValue = "configuration-value";
+        const string ExplicitProcessValue = "process-value";
+        const string HiddenValue = "hidden-value";
+
+        string? originalProcessOnlyValue = Environment.GetEnvironmentVariable(ProcessOnlyName);
+        string? originalExplicitValue = Environment.GetEnvironmentVariable(ExplicitName);
+        string? originalHiddenValue = Environment.GetEnvironmentVariable(HiddenName);
+        Environment.SetEnvironmentVariable(ProcessOnlyName, ProcessOnlyValue);
+        Environment.SetEnvironmentVariable(ExplicitName, ExplicitProcessValue);
+        Environment.SetEnvironmentVariable(HiddenName, HiddenValue);
+
+        try
+        {
+            IConfiguration configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [ExplicitName] = ExplicitConfigurationValue,
+                })
+                .Build();
+            using StringReader yamlReader = new(
+                """
+                    kind: Workflow
+                    trigger:
+
+                      kind: OnConversationStart
+                      id: env_fallback_workflow
+                      actions:
+
+                        - kind: SetVariable
+                          id: referenced_process_configuration
+                          variable: Local.ProcessOnly
+                          value: =Env.ProcessOnlyConfigForFallback
+
+                        - kind: SetVariable
+                          id: referenced_explicit_configuration
+                          variable: Local.Explicit
+                          value: =Env.ExplicitConfigWinsForFallback
+
+                        - kind: SetVariable
+                          id: referenced_hidden_process_environment
+                          disabled: true
+                          variable: Local.Hidden
+                          value: =Env.HiddenConfigForFallback
+                    """);
+            Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("Test input message");
+            DeclarativeWorkflowOptions options =
+                new(mockAgentProvider.Object)
+                {
+                    Configuration = configuration,
+                    AllowedEnvironmentVariables = [ProcessOnlyName, ExplicitName],
+                    AllowProcessEnvironmentVariableFallback = true,
+                    LoggerFactory = this.Output,
+                };
+            Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(yamlReader, options);
+            WorkflowFormulaState rootState = GetRootState(workflow);
+
+            // Act
+            await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "Test input message");
+
+            await foreach (WorkflowEvent workflowEvent in run.WatchStreamAsync())
+            {
+                this.WorkflowEvents.Add(workflowEvent);
+                if (workflowEvent is WorkflowErrorEvent errorEvent)
+                {
+                    throw errorEvent.Data as Exception ?? new XunitException("Unexpected failure...");
+                }
+            }
+
+            // Assert
+            StringValue processOnlyValue = Assert.IsType<StringValue>(rootState.Get(ProcessOnlyName, VariableScopeNames.Environment));
+            Assert.Equal(ProcessOnlyValue, processOnlyValue.Value);
+            StringValue explicitValue = Assert.IsType<StringValue>(rootState.Get(ExplicitName, VariableScopeNames.Environment));
+            Assert.Equal(ExplicitConfigurationValue, explicitValue.Value);
+            Assert.IsType<BlankValue>(rootState.Get(HiddenName, VariableScopeNames.Environment));
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(ProcessOnlyName, VariableScopeNames.Environment));
+            Assert.Equal(SensitivityLevel.Sensitive, rootState.GetSensitivity(ExplicitName, VariableScopeNames.Environment));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ProcessOnlyName, originalProcessOnlyValue);
+            Environment.SetEnvironmentVariable(ExplicitName, originalExplicitValue);
+            Environment.SetEnvironmentVariable(HiddenName, originalHiddenValue);
+        }
+    }
+
+    [Theory]
+    [InlineData("enabled")]
+    [InlineData("disabled")]
+    public async Task ConditionRejectsEnvironmentInputBeforeBranchActionsAsync(string setting)
+    {
+        // Arrange
+        using StringReader reader = new(
+            """
+            kind: Workflow
+            trigger:
+              kind: OnConversationStart
+              id: condition_validation
+              actions:
+                - kind: ConditionGroup
+                  id: select_branch
+                  conditions:
+                    - id: enabled_branch
+                      condition: =Left(Env.Setting, 2) = "en"
+                      actions:
+                        - kind: SendActivity
+                          id: enabled_activity
+                          activity: Enabled
+                  elseActions:
+                    - kind: SendActivity
+                      id: disabled_activity
+                      activity: Disabled
+            """);
+        IConfiguration configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Setting"] = setting })
+            .Build();
+        DeclarativeWorkflowOptions options = new(CreateMockProvider("input").Object)
+        {
+            Configuration = configuration,
+            AllowedEnvironmentVariables = ["Setting"],
+        };
+        Workflow workflow = DeclarativeWorkflowBuilder.Build<string>(reader, options);
+
+        // Act
+        await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, "input");
+        WorkflowEvent[] events = await run.WatchStreamAsync().ToArrayAsync();
+
+        // Assert
+        ExecutorFailedEvent failure = Assert.Single(events.OfType<ExecutorFailedEvent>());
+        DeclarativeActionException exception = Assert.IsType<DeclarativeActionException>(failure.Data);
+        Assert.Contains("condition", exception.Message);
+        Assert.Empty(events.OfType<MessageActivityEvent>());
+        Assert.DoesNotContain(events.OfType<DeclarativeActionInvokedEvent>(),
+            e => string.Equals(e.ActionId, "enabled_activity", StringComparison.Ordinal) ||
+                 string.Equals(e.ActionId, "disabled_activity", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -294,6 +692,36 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
         Assert.True(visitor.HasUnsupportedActions);
     }
 
+    [Fact]
+    public void UnsupportedActionLogsWarning()
+    {
+        SearchKnowledgeSources.Builder unsupportedAction = new() { Id = "action_bad" };
+        AdaptiveDialog.Builder dialogBuilder =
+            new()
+            {
+                BeginDialog =
+                    new OnActivity.Builder()
+                    {
+                        Id = "anything",
+                        Actions = [unsupportedAction]
+                    }
+            };
+        AdaptiveDialog dialog = dialogBuilder.Build();
+
+        WorkflowFormulaState state = new(RecalcEngineFactory.Create());
+        Mock<ResponseAgentProvider> mockAgentProvider = CreateMockProvider("1");
+        CapturingLoggerFactory loggerFactory = new();
+        DeclarativeWorkflowOptions options = new(mockAgentProvider.Object) { LoggerFactory = loggerFactory };
+        WorkflowActionVisitor visitor = new(new DeclarativeWorkflowExecutor<string>(WorkflowActionVisitor.Steps.Root("anything"), options, state, (message) => DeclarativeWorkflowBuilder.DefaultTransform(message)), state, options);
+        WorkflowElementWalker walker = new(visitor);
+        walker.Visit(dialog);
+
+        Assert.True(visitor.HasUnsupportedActions);
+        (LogLevel Level, string Message) warning = Assert.Single(loggerFactory.Entries, entry => entry.Level == LogLevel.Warning);
+        Assert.Contains(nameof(SearchKnowledgeSources), warning.Message, StringComparison.Ordinal);
+        Assert.Contains("action_bad", warning.Message, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("CaseInsensitive.yaml", "end_when_match")]
     [InlineData("ClearAllVariables.yaml", "clear_all")]
@@ -371,6 +799,14 @@ public sealed class DeclarativeWorkflowTest(ITestOutputHelper output) : Workflow
 
     private void AssertMessage(string message) =>
         Assert.Contains(this.WorkflowEvents.OfType<MessageActivityEvent>(), e => string.Equals(e.Message.Trim(), message, StringComparison.Ordinal));
+
+    private static WorkflowFormulaState GetRootState(Workflow workflow)
+    {
+        ExecutorBinding rootBinding = workflow.ReflectExecutors()[workflow.StartExecutorId];
+        Executor rootExecutor = Assert.IsAssignableFrom<Executor>(rootBinding.RawValue);
+        FieldInfo stateField = Assert.Single(rootExecutor.GetType().GetFields(BindingFlags.Instance | BindingFlags.NonPublic), field => field.FieldType == typeof(WorkflowFormulaState));
+        return Assert.IsType<WorkflowFormulaState>(stateField.GetValue(rootExecutor));
+    }
 
     private Task RunWorkflowAsync(string workflowPath) =>
         this.RunWorkflowAsync(workflowPath, "Test input message");

@@ -1,10 +1,19 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
 using System;
+using System.ClientModel.Primitives;
 using System.Linq;
+using System.Text.Json;
+using Azure.AI.AgentServer.Responses;
 using Azure.AI.AgentServer.Responses.Models;
 using Microsoft.Extensions.AI;
 using MeaiTextContent = Microsoft.Extensions.AI.TextContent;
+using OpenAIComputerCallActionKind = OpenAI.Responses.ComputerCallActionKind;
+using OpenAIComputerCallOutputResponseItem = OpenAI.Responses.ComputerCallOutputResponseItem;
+using OpenAIComputerCallResponseItem = OpenAI.Responses.ComputerCallResponseItem;
+using OpenAIComputerCallStatus = OpenAI.Responses.ComputerCallStatus;
+
+#pragma warning disable OPENAI001 // Experimental Responses API surfaces
 
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
@@ -709,118 +718,36 @@ public class InputConverterTests
         Assert.Null(options.ModelId);
     }
 
-    // ── ReadMcpToolboxMarkers tests ──────────────────────────────────────────────
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_NullTools_ReturnsEmpty()
-    {
-        var request = new CreateResponse();
-        // Tools defaults to null when not set via JSON deserialization.
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Empty(markers);
-    }
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_McpToolWithToolboxAddress_ReturnsMarker()
-    {
-        var request = new CreateResponse();
-        request.Tools.Add(new MCPTool("test-toolbox")
-        {
-            ServerUrl = new Uri("foundry-toolbox://my-toolbox")
-        });
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Single(markers);
-        Assert.Equal("my-toolbox", markers[0].Name);
-        Assert.Null(markers[0].Version);
-    }
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_McpToolWithVersionedAddress_ReturnsNameAndVersion()
-    {
-        var request = new CreateResponse();
-        request.Tools.Add(new MCPTool("test-toolbox")
-        {
-            ServerUrl = new Uri("foundry-toolbox://my-toolbox?version=v3")
-        });
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Single(markers);
-        Assert.Equal("my-toolbox", markers[0].Name);
-        Assert.Equal("v3", markers[0].Version);
-    }
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_McpToolWithNonToolboxUrl_SkipsIt()
-    {
-        var request = new CreateResponse();
-        request.Tools.Add(new MCPTool("external-mcp")
-        {
-            ServerUrl = new Uri("https://example.com/mcp")
-        });
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Empty(markers);
-    }
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_McpToolWithNullServerUrl_SkipsIt()
-    {
-        var request = new CreateResponse();
-        request.Tools.Add(new MCPTool("test") { ServerUrl = null });
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Empty(markers);
-    }
-
-    [Fact]
-    public void ReadMcpToolboxMarkers_MixedTools_ReturnsOnlyToolboxMarkers()
-    {
-        var request = new CreateResponse();
-        request.Tools.Add(new MCPTool("external")
-        {
-            ServerUrl = new Uri("https://example.com/mcp")
-        });
-        request.Tools.Add(new MCPTool("toolbox-1")
-        {
-            ServerUrl = new Uri("foundry-toolbox://box-a")
-        });
-        request.Tools.Add(new MCPTool("toolbox-2")
-        {
-            ServerUrl = new Uri("foundry-toolbox://box-b?version=2025-01")
-        });
-
-        var markers = InputConverter.ReadMcpToolboxMarkers(request);
-
-        Assert.Equal(2, markers.Count);
-        Assert.Equal("box-a", markers[0].Name);
-        Assert.Null(markers[0].Version);
-        Assert.Equal("box-b", markers[1].Name);
-        Assert.Equal("2025-01", markers[1].Version);
-    }
-
     // === Tool-approval (HITL) wire-format coverage ===
 
     [Fact]
     public void ConvertItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_weather";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_weather",
+            "get_weather",
+            "{\"city\":\"Seattle\"}");
         var item = new ItemMcpApprovalRequest(
-            id: "mcpr_" + new string('a', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "get_weather",
             arguments: "{\"city\":\"Seattle\"}");
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertItemsToMessages([item], stateBag);
 
+        // Assert
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(item.Id, content.RequestId);
+        Assert.Equal(AfRequestId, content.RequestId);
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_weather", fc.CallId);
         Assert.Equal("get_weather", fc.Name);
         Assert.NotNull(fc.Arguments);
         Assert.Equal("Seattle", fc.Arguments!["city"]?.ToString());
@@ -872,23 +799,128 @@ public class InputConverterTests
         Assert.Equal("call_xyz", fcc.CallId);
         Assert.Equal("issue_refund", fcc.Name);
         Assert.NotNull(fcc.Arguments);
-        Assert.Equal(123, ((System.Text.Json.JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
+        Assert.Equal(123, ((JsonElement)fcc.Arguments!["order_id"]!).GetInt32());
     }
 
     [Fact]
     public void ConvertOutputItemsToMessages_McpApprovalRequest_ProducesToolApprovalRequest()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_delete";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_delete",
+            "delete_file",
+            "{}");
         var item = new OutputItemMcpApprovalRequest(
-            id: "mcpr_" + new string('b', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "delete_file",
             arguments: "{}");
 
-        var messages = InputConverter.ConvertOutputItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
+
+        // Assert
+        var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
+        var functionCall = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_delete", functionCall.CallId);
+        Assert.Equal("delete_file", functionCall.Name);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ResolvesAfRequestFromStateBag()
+    {
+        const string AfRequestId = "ficc_call_history";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_history",
+            "delete_file",
+            "{\"path\":\"/tmp/x\"}");
+
+        var item = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "delete_file",
+            arguments: "{\"path\":\"/tmp/x\"}");
+
+        var messages = InputConverter.ConvertOutputItemsToMessages([item], stateBag);
 
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
-        Assert.Equal(item.Id, content.RequestId);
-        Assert.Equal("delete_file", Assert.IsType<FunctionCallContent>(content.ToolCall).Name);
+        Assert.Equal(AfRequestId, content.RequestId);
+
+        var fcc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_history", fcc.CallId);
+        Assert.Equal("delete_file", fcc.Name);
+        Assert.NotNull(fcc.Arguments);
+        Assert.Equal("/tmp/x", ((JsonElement)fcc.Arguments!["path"]!).GetString());
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_McpApprovalRequest_ThrowsWhenMappedMetadataDisagrees()
+    {
+        const string AfRequestId = "ficc_reused_call";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "reused_call",
+            "new_tool",
+            "{\"value\":2}");
+
+        var replayedItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "old_tool",
+            arguments: "{\"value\":1}");
+
+        var ex = Assert.Throws<InvalidOperationException>(() => InputConverter.ConvertOutputItemsToMessages([replayedItem], stateBag));
+        Assert.Contains(wireId, ex.Message);
+        Assert.Contains("does not match", ex.Message);
+    }
+
+    [Fact]
+    public void ConvertOutputAndInputItems_McpApprovalRoundTrip_UsesSameAfRequestId()
+    {
+        const string AfRequestId = "ficc_call_roundtrip";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_roundtrip",
+            "get_monster",
+            "{\"slug\":\"goblin\"}");
+
+        var historyItem = new OutputItemMcpApprovalRequest(
+            id: wireId,
+            serverLabel: "agent_framework",
+            name: "get_monster",
+            arguments: "{\"slug\":\"goblin\"}");
+        var approvalResponse = new MCPApprovalResponse(approvalRequestId: wireId, approve: true);
+
+        var historyMessages = InputConverter.ConvertOutputItemsToMessages([historyItem], stateBag);
+        var inputMessages = InputConverter.ConvertItemsToMessages([approvalResponse], stateBag);
+
+        var request = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(historyMessages[0].Contents));
+        var response = Assert.IsType<ToolApprovalResponseContent>(Assert.Single(inputMessages[0].Contents));
+        Assert.Equal(request.RequestId, response.RequestId);
+        Assert.Equal(AfRequestId, request.RequestId);
+
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(request.ToolCall).CallId);
+        Assert.Equal("call_roundtrip", Assert.IsType<FunctionCallContent>(response.ToolCall).CallId);
     }
 
     [Fact]
@@ -924,18 +956,34 @@ public class InputConverterTests
     [Fact]
     public void ConvertItemsToMessages_McpApprovalRequest_MalformedArguments_PreservesRaw()
     {
+        // Arrange
+        const string AfRequestId = "ficc_call_noisy";
+        const string Arguments = "not valid json";
+        var wireId = ToolApprovalIdMap.ComputeWireId(AfRequestId);
+        var stateBag = new AgentSessionStateBag();
+        ToolApprovalIdMap.Record(
+            stateBag,
+            wireId,
+            AfRequestId,
+            "call_noisy",
+            "noisy",
+            Arguments);
         var item = new ItemMcpApprovalRequest(
-            id: "mcpr_" + new string('c', 50),
+            id: wireId,
             serverLabel: "agent_framework",
             name: "noisy",
-            arguments: "not valid json");
+            arguments: Arguments);
 
-        var messages = InputConverter.ConvertItemsToMessages([item]);
+        // Act
+        var messages = InputConverter.ConvertItemsToMessages([item], stateBag);
 
+        // Assert
         var content = Assert.IsType<ToolApprovalRequestContent>(Assert.Single(messages[0].Contents));
+        Assert.Equal(AfRequestId, content.RequestId);
         var fc = Assert.IsType<FunctionCallContent>(content.ToolCall);
+        Assert.Equal("call_noisy", fc.CallId);
         Assert.NotNull(fc.Arguments);
-        Assert.Equal("not valid json", fc.Arguments!["_raw"]?.ToString());
+        Assert.Equal(Arguments, fc.Arguments!["_raw"]?.ToString());
     }
 
     [Fact]
@@ -1318,4 +1366,175 @@ public class InputConverterTests
         // Should have fallen back to DataContent (carrying the original opaque blob).
         Assert.Contains(messages[0].Contents, c => c is DataContent);
     }
+
+    // --- Computer tool items (GA batched actions and preview single action) ---
+
+    // Shape the service returns for the GA tool: an ordered actions batch, and neither "action" nor "pending_safety_checks".
+    private const string GaComputerCallJson =
+        "{\"type\":\"computer_call\",\"id\":\"cu_input_1\",\"call_id\":\"call_cu_1\"," +
+        "\"actions\":[{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20},{\"type\":\"type\",\"text\":\"penguin\"}]," +
+        "\"status\":\"completed\"}";
+
+    private const string ComputerCallOutputJson =
+        "{\"type\":\"computer_call_output\",\"call_id\":\"call_cu_1\"," +
+        "\"output\":{\"type\":\"computer_screenshot\",\"image_url\":\"data:image/png;base64,iVBORw0KGgo=\",\"detail\":\"original\"}}";
+
+    [Fact]
+    public void ConvertInputToMessages_GaComputerCall_ProducesAssistantToolCallCarryingOpenAIItem()
+    {
+        // Arrange
+        var request = new CreateResponse { Input = BinaryData.FromString("[" + GaComputerCallJson + "]") };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var toolCall = Assert.Single(message.Contents);
+        Assert.Equal(typeof(ToolCallContent), toolCall.GetType());
+        Assert.Equal("call_cu_1", ((ToolCallContent)toolCall).CallId);
+
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+        Assert.Equal("call_cu_1", item.CallId);
+
+        using var json = JsonDocument.Parse(ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString());
+        var actions = json.RootElement.GetProperty("actions").EnumerateArray().ToList();
+        Assert.Equal(2, actions.Count);
+        Assert.Equal("click", actions[0].GetProperty("type").GetString());
+        Assert.Equal("penguin", actions[1].GetProperty("text").GetString());
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_ComputerCallOutput_ProducesToolResultCarryingOpenAIItem()
+    {
+        // Arrange
+        var request = new CreateResponse { Input = BinaryData.FromString("[" + ComputerCallOutputJson + "]") };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        var toolResult = Assert.Single(message.Contents);
+        Assert.Equal(typeof(ToolResultContent), toolResult.GetType());
+        Assert.Equal("call_cu_1", ((ToolResultContent)toolResult).CallId);
+
+        var item = Assert.IsType<OpenAIComputerCallOutputResponseItem>(toolResult.RawRepresentation);
+        Assert.Equal("call_cu_1", item.CallId);
+
+        using var json = JsonDocument.Parse(ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString());
+        var screenshot = json.RootElement.GetProperty("output");
+        Assert.Equal("computer_screenshot", screenshot.GetProperty("type").GetString());
+        Assert.Equal("data:image/png;base64,iVBORw0KGgo=", screenshot.GetProperty("image_url").GetString());
+
+        // "detail" is not typed by either SDK yet; it must still survive as additional data.
+        Assert.Equal("original", screenshot.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public void ConvertInputToMessages_PreviewComputerCall_KeepsSingleAction()
+    {
+        // Arrange
+        var request = new CreateResponse
+        {
+            Input = BinaryData.FromString(
+                "[{\"type\":\"computer_call\",\"id\":\"cu_preview_1\",\"call_id\":\"call_preview_1\"," +
+                "\"action\":{\"type\":\"click\",\"button\":\"left\",\"x\":10,\"y\":20}," +
+                "\"pending_safety_checks\":[],\"status\":\"completed\"}]"),
+        };
+
+        // Act
+        var messages = InputConverter.ConvertInputToMessages(request);
+
+        // Assert
+        var toolCall = Assert.Single(Assert.Single(messages).Contents);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(toolCall.RawRepresentation);
+        Assert.Equal("call_preview_1", item.CallId);
+        Assert.Equal(OpenAIComputerCallActionKind.Click, item.Action.Kind);
+
+        // A preview call is resent with its single action, not rewritten to the GA shape.
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.Contains("\"action\":{\"type\":\"click\"", json);
+        Assert.DoesNotContain("\"actions\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_HistoryComputerCall_DropsAgentServerEnvelopeFields()
+    {
+        // Arrange: AgentServer adds response_id and agent_reference to stored output items. They are not part of the
+        // model's item schema, and the model API rejects unknown input parameters.
+        var history = ReadOutputItem(
+            GaComputerCallJson.Replace(
+                "\"status\":\"completed\"",
+                "\"status\":\"completed\",\"response_id\":\"resp_previous\",\"agent_reference\":{\"type\":\"agent_reference\",\"name\":\"computer-agent\"}"));
+        Assert.IsType<OutputItemComputerToolCall>(history);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Assistant, message.Role);
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(message.Contents).RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("response_id", json);
+        Assert.DoesNotContain("agent_reference", json);
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_HistoryComputerCallOutput_ProducesToolResultWithoutEnvelopeFields()
+    {
+        // Arrange
+        var history = ReadOutputItem(
+            ComputerCallOutputJson.Replace(
+                "\"type\":\"computer_call_output\",",
+                "\"type\":\"computer_call_output\",\"id\":\"cuo_history_1\",\"response_id\":\"resp_previous\","));
+        Assert.IsType<OutputItemComputerToolCallOutput>(history);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert
+        var message = Assert.Single(messages);
+        Assert.Equal(ChatRole.Tool, message.Role);
+        var toolResult = Assert.Single(message.Contents);
+        Assert.Equal("call_cu_1", Assert.IsType<ToolResultContent>(toolResult).CallId);
+        var item = Assert.IsType<OpenAIComputerCallOutputResponseItem>(toolResult.RawRepresentation);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("response_id", json);
+        Assert.Contains("\"detail\":\"original\"", json);
+    }
+
+    [Fact]
+    public void ConvertOutputItemsToMessages_GaComputerCall_ReplaysWithoutNullAction()
+    {
+        // Arrange
+        var history = ReadOutputItem(GaComputerCallJson);
+
+        // Act
+        var messages = InputConverter.ConvertOutputItemsToMessages([history]);
+
+        // Assert: OpenAI .NET 2.13.0 models only the preview item and would write "action": null next to "actions",
+        // which the Responses API rejects ("Computer call input must include exactly one of `action` or `actions`.").
+        // The resent item keeps the typed surface of the SDK item but writes the GA shape.
+        var item = Assert.IsAssignableFrom<OpenAIComputerCallResponseItem>(Assert.Single(Assert.Single(messages).Contents).RawRepresentation);
+        Assert.Equal("cu_input_1", item.Id);
+        Assert.Equal("call_cu_1", item.CallId);
+        Assert.Equal(OpenAIComputerCallStatus.Completed, item.Status);
+        Assert.Null(item.Action);
+
+        string json = ModelReaderWriter.Write(item, ModelReaderWriterOptions.Json).ToString();
+        Assert.DoesNotContain("\"action\"", json);
+        Assert.Contains("\"actions\":[{\"type\":\"click\"", json);
+    }
+
+    private static OutputItem ReadOutputItem(string json) =>
+        ModelReaderWriter.Read<OutputItem>(BinaryData.FromString(json), ModelReaderWriterOptions.Json, AzureAIAgentServerResponsesContext.Default)!;
 }

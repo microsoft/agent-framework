@@ -8,7 +8,7 @@ import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, ClassVar, Generic, cast
+from typing import Any, ClassVar, Generic, Self, cast
 
 from agent_framework import (
     BaseVectorCollection,
@@ -23,7 +23,12 @@ from agent_framework import (
 )
 from agent_framework._telemetry import FeatureIndex, mark_feature_used
 from agent_framework._vector_filters import FilterExpression
-from agent_framework._vectors import EmbeddingClient, SearchType, Vector
+from agent_framework._vectors import (
+    _VECTOR_MODEL_REGISTRY,  # pyright: ignore[reportPrivateUsage]
+    EmbeddingClient,
+    SearchType,
+    Vector,
+)
 from agent_framework.exceptions import IntegrationException, IntegrationInvalidResponseException
 from bson import BSON
 from bson.errors import InvalidDocument
@@ -31,7 +36,7 @@ from pymongo import AsyncMongoClient, ReplaceOne
 from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.asynchronous.database import AsyncDatabase
 from pymongo.errors import CollectionInvalid, OperationFailure, PyMongoError
-from typing_extensions import Self, TypedDict, TypeVar
+from typing_extensions import TypedDict, TypeVar
 
 KeyT = TypeVar("KeyT", default=Any)
 ModelT = TypeVar("ModelT", default=Any)
@@ -108,6 +113,35 @@ def _validate_collection_name(name: Any) -> str:
     return name
 
 
+class _AzureDocumentDBDatabaseSettings(TypedDict, total=False):
+    database_name: str | None
+
+
+class _AzureDocumentDBCollectionSettings(TypedDict, total=False):
+    collection_name: str | None
+
+
+def _resolve_resource_name(value: str | None, kind: str) -> str:
+    if value is None:
+        if kind == "database":
+            settings = load_settings(
+                _AzureDocumentDBDatabaseSettings,
+                env_prefix="AZURE_DOCUMENTDB_",
+                required_fields=["database_name"],
+            )
+            value = settings.get("database_name")
+        else:
+            settings = load_settings(
+                _AzureDocumentDBCollectionSettings,
+                env_prefix="AZURE_DOCUMENTDB_",
+                required_fields=["collection_name"],
+            )
+            value = settings.get("collection_name")
+    if kind == "database":
+        return _validate_database_name(value)
+    return _validate_collection_name(value)
+
+
 def _validate_storage_name(name: str, *, indexed: bool) -> str:
     encoded = name.encode("utf-8")
     if not name or "\0" in name or "." in name or name.startswith("$"):
@@ -163,29 +197,18 @@ def _create_client(
     env_file_encoding: str | None,
 ) -> _Client:
     if database is not None:
-        if any(
-            value is not None
-            for value in (
-                connection_string,
-                database_name,
-                client,
-                client_options,
-                env_file_path,
-                env_file_encoding,
-            )
-        ):
-            raise ValueError("database cannot be combined with a client or connection settings.")
+        if client is not None:
+            raise ValueError("Provide at most one of client or database.")
         if not isinstance(database, AsyncDatabase):
             raise TypeError("database must be a PyMongo AsyncDatabase.")
+        resolved_name = _validate_database_name(database.name)
+        if database_name is not None and database_name != resolved_name:
+            raise ValueError("database_name must match the injected database.")
         return _Client(database.client, database, owned=False)
     if client is not None:
-        if any(value is not None for value in (connection_string, client_options, env_file_path, env_file_encoding)):
-            raise ValueError("client cannot be combined with connection settings or client_options.")
         if not isinstance(client, AsyncMongoClient):
             raise TypeError("client must be a PyMongo AsyncMongoClient.")
-        if database_name is None:
-            raise ValueError("database_name is required with an injected client.")
-        resolved_database_name = _validate_database_name(database_name)
+        resolved_database_name = _resolve_resource_name(database_name, "database")
         return _Client(client, client[resolved_database_name], owned=False)
 
     settings = load_settings(
@@ -429,19 +452,16 @@ class _FilterCompiler:
                 raise NotImplementedError(
                     "Use contains, contains_any, or contains_all for Azure DocumentDB list fields."
                 )
-            operands = [_prepare_filter_operand(field, item) for item in value]
+            # Portable membership, unlike eq/ne, never matches a null field, even when None is an operand.
+            operands = [_prepare_filter_operand(field, item) for item in value if item is not None]
             operands = [item for item in operands if item is not _TYPE_MISMATCH]
             if not operands:
                 if operator == "in":
                     return self._false_filter()
                 return {"$and": [{name: {"$exists": True}}, {name: {"$ne": None}}]}
             condition = {name: {"$in" if operator == "in" else "$nin": operands}}
-            if operator == "not_in" or None in operands:
-                guards: list[_Document] = [{name: {"$exists": True}}]
-                if operator == "not_in":
-                    guards.append({name: {"$ne": None}})
-                guards.append(condition)
-                return {"$and": guards}
+            if operator == "not_in":
+                return {"$and": [{name: {"$exists": True}}, {name: {"$ne": None}}, condition]}
             return condition
         if operator in {"contains", "contains_any", "contains_all"}:
             if field.type_ != "list":
@@ -613,38 +633,41 @@ class AzureDocumentDBCollection(
         Args:
             record_type: Registered model type, or ``dict`` with an explicit definition.
             connection_string: MongoDB connection string for a connector-owned client.
-            database_name: Database selected for a created or injected client.
-            client: Caller-owned PyMongo async client. Requires ``database_name``.
-            database: Caller-owned resolved PyMongo async database.
-            collection: Caller-owned resolved PyMongo async collection.
+                Ignored when a client, database, or collection is injected.
+            database_name: Database selected for a created or injected client. An injected account
+                client falls back to ``AZURE_DOCUMENTDB_DATABASE_NAME`` when this is omitted.
+            client: Caller-owned PyMongo async client taking precedence over connection settings.
+            database: Caller-owned resolved PyMongo async database taking precedence over connection settings.
+            collection: Caller-owned resolved PyMongo async collection taking precedence over connection settings.
             client_options: Created-client options limited to ``tls``, ``retryWrites``, and ``appname``.
+                Ignored when a client, database, or collection is injected.
             definition: Explicit dictionary schema.
-            collection_name: Collection name overriding the model definition.
+            collection_name: Collection name overriding the model definition. With an injected client
+                or database, ``AZURE_DOCUMENTDB_COLLECTION_NAME`` is the fallback when neither an
+                explicit value nor the model definition supplies a name.
             embedding_generator: Default local embedding generator.
-            env_file_path: Optional selected settings file.
-            env_file_encoding: Encoding of the selected settings file.
+            env_file_path: Optional selected settings file, ignored for injected objects.
+            env_file_encoding: Encoding of the selected settings file, ignored for injected objects.
         """
         if collection is not None:
             if not isinstance(collection, AsyncCollection):
                 raise TypeError("collection must be a PyMongo AsyncCollection.")
+            if client is not None or database is not None:
+                raise ValueError("Provide at most one of client, database, or collection.")
             if collection_name is not None and collection_name != collection.name:
                 raise ValueError("collection_name must match the injected collection.")
-            if any(
-                value is not None
-                for value in (
-                    connection_string,
-                    database_name,
-                    client,
-                    database,
-                    client_options,
-                    env_file_path,
-                    env_file_encoding,
-                )
-            ):
-                raise ValueError("collection cannot be combined with a client, database, or connection settings.")
             resolved_collection_name = collection.name
         else:
             resolved_collection_name = collection_name
+        if collection is not None or client is not None or database is not None:
+            registration = _VECTOR_MODEL_REGISTRY.get(record_type)
+            registered_definition = definition or (registration.definition if registration is not None else None)
+            configured_name = (
+                resolved_collection_name
+                if resolved_collection_name is not None
+                else getattr(registered_definition, "collection_name", None)
+            )
+            resolved_collection_name = _resolve_resource_name(configured_name, "collection")
         super().__init__(
             record_type,
             definition=definition,
@@ -1119,13 +1142,16 @@ class AzureDocumentDBStore(BaseVectorStore):
 
         Args:
             connection_string: MongoDB connection string for a connector-owned client.
-            database_name: Database selected for a created or injected client.
-            client: Caller-owned PyMongo async client. Requires ``database_name``.
-            database: Caller-owned resolved PyMongo async database.
+                Ignored when a client or database is injected.
+            database_name: Database selected for a created or injected client. An injected account
+                client falls back to ``AZURE_DOCUMENTDB_DATABASE_NAME`` when this is omitted.
+            client: Caller-owned PyMongo async client taking precedence over connection settings.
+            database: Caller-owned resolved PyMongo async database taking precedence over connection settings.
             client_options: Created-client options limited to ``tls``, ``retryWrites``, and ``appname``.
+                Ignored when a client or database is injected.
             embedding_generator: Default embedding generator for child collections.
-            env_file_path: Optional selected settings file.
-            env_file_encoding: Encoding of the selected settings file.
+            env_file_path: Optional selected settings file, ignored for injected objects.
+            env_file_encoding: Encoding of the selected settings file, ignored for injected objects.
         """
         super().__init__(
             embedding_generator=embedding_generator,

@@ -375,14 +375,64 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that message mode rejects task operations before accessing the agent or session store.
+    /// </summary>
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task MessageMode_WithTaskOperation_ThrowsUnsupportedOperationAsync(bool streaming, bool cancel)
+    {
+        // Arrange
+        var agentMock = new Mock<AIAgent>(MockBehavior.Strict);
+        var sessionStore = new Mock<AgentSessionStore>(MockBehavior.Strict);
+        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: sessionStore.Object);
+        var context = new RequestContext
+        {
+            StreamingResponse = streaming,
+            Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [] },
+            TaskId = "task-1",
+            ContextId = "ctx-1",
+            Task = new AgentTask { Id = "task-1", ContextId = "ctx-1" }
+        };
+        var eventQueue = new AgentEventQueue();
+
+        // Act
+        var exception = await Assert.ThrowsAsync<A2AException>(() => cancel
+            ? handler.CancelAsync(context, eventQueue, CancellationToken.None)
+            : handler.ExecuteAsync(context, eventQueue, CancellationToken.None));
+        eventQueue.Complete(null);
+        var events = new EventCollector();
+        await ReadEventsAsync(eventQueue, events);
+
+        // Assert
+        Assert.Equal(A2AErrorCode.UnsupportedOperation, exception.ErrorCode);
+        Assert.Equal(
+            cancel
+                ? "Task cancellation is not supported by the message-only handler."
+                : "Task resumption is not supported by the message-only handler.",
+            exception.Message);
+        Assert.Empty(events.Tasks);
+        Assert.Empty(events.Messages);
+        Assert.Empty(events.StatusUpdates);
+        Assert.Empty(events.ArtifactUpdates);
+        agentMock.VerifyNoOtherCalls();
+        sessionStore.VerifyNoOtherCalls();
+    }
+
+    /// <summary>
     /// Verifies that on continuation when the agent completes (no ContinuationToken), task is completed with artifact.
     /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_OnContinuation_WhenComplete_EmitsArtifactAndCompletedAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExecuteAsync_OnContinuation_WhenComplete_EmitsArtifactAndCompletedAsync(bool dynamicMode)
     {
         // Arrange
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
-        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response));
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMockWithResponse(response),
+            runMode: dynamicMode ? AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(false)) : AgentRunMode.ReturnTask);
 
         // Act
         var events = await CollectEventsAsync(handler, new RequestContext
@@ -412,7 +462,7 @@ public sealed class A2AAgentHandlerTests
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new InvalidOperationException("Agent failed"));
-        A2AAgentHandler handler = CreateHandler(agentMock);
+        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.ReturnTask);
 
         // Act & Assert
         var events = new EventCollector();
@@ -450,7 +500,7 @@ public sealed class A2AAgentHandlerTests
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new InvalidOperationException("Agent failed"));
-        A2AAgentHandler handler = CreateHandler(agentMock);
+        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.ReturnTask);
 
         using var cts = new CancellationTokenSource();
         cts.Cancel(); // Pre-cancel the token
@@ -487,16 +537,31 @@ public sealed class A2AAgentHandlerTests
     public async Task ExecuteAsync_OnContinuation_WhenOperationCancelled_DoesNotEmitFailedAsync()
     {
         // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
+
         int callCount = 0;
         Mock<AIAgent> agentMock = CreateAgentMockWithCallCount(ref callCount, _ =>
             throw new OperationCanceledException("Cancelled"));
-        A2AAgentHandler handler = CreateHandler(agentMock);
+        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.ReturnTask, agentSessionStore: mockSessionStore.Object);
 
         // Act & Assert
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
-        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -509,11 +574,19 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 CancellationToken.None));
+        Assert.Equal("Cancelled", exception.Message);
         eventQueue.Complete(null);
         await readerTask;
 
         // Assert - should NOT have emitted any status (OperationCanceledException is re-thrown without marking Failed)
         Assert.Empty(events.StatusUpdates);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-1"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
     }
 
     /// <summary>
@@ -626,11 +699,15 @@ public sealed class A2AAgentHandlerTests
     /// <summary>
     /// Verifies that CancelAsync emits a Canceled status event.
     /// </summary>
-    [Fact]
-    public async Task CancelAsync_EmitsCanceledStatusAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelAsync_EmitsCanceledStatusAsync(bool dynamicMode)
     {
         // Arrange
-        A2AAgentHandler handler = CreateHandler(CreateAgentMock(_ => { }));
+        A2AAgentHandler handler = CreateHandler(
+            CreateAgentMock(_ => { }),
+            runMode: dynamicMode ? AgentRunMode.ReturnTaskWhen((_, _) => ValueTask.FromResult(false)) : AgentRunMode.ReturnTask);
         var events = new EventCollector();
         var eventQueue = new AgentEventQueue();
         var readerTask = ReadEventsAsync(eventQueue, events);
@@ -2162,6 +2239,54 @@ public sealed class A2AAgentHandlerTests
     }
 
     /// <summary>
+    /// Verifies that a session save failure still propagates when agent execution succeeds.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_NonStreaming_WhenRunSucceedsAndSaveFails_PropagatesSaveFailureAsync()
+    {
+        // Arrange
+        var mockSessionStore = new Mock<AgentSessionStore> { CallBase = true };
+        mockSessionStore
+            .Setup(x => x.GetSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TestAgentSession());
+        mockSessionStore
+            .Setup(x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.IsAny<AgentSessionStoreKey>(),
+                It.IsAny<AgentSession>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
+
+        AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Reply")]);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+
+        // Act
+        var eventQueue = new AgentEventQueue();
+        var exception = await Assert.ThrowsAsync<TimeoutException>(() =>
+            handler.ExecuteAsync(
+                new RequestContext
+                {
+                    TaskId = "", ContextId = "ctx-save-fail", StreamingResponse = false,
+                    Message = new Message { MessageId = "test-id", Role = Role.User, Parts = [new Part { Text = "Hello" }] }
+                },
+                eventQueue,
+                CancellationToken.None));
+
+        // Assert
+        Assert.Equal("Session save failed", exception.Message);
+        mockSessionStore.Verify(
+            x => x.SaveSessionAsync(
+                It.IsAny<AIAgent>(),
+                It.Is<AgentSessionStoreKey>(key => key.SessionId == "ctx-save-fail"),
+                It.IsAny<AgentSession>(),
+                It.Is<CancellationToken>(ct => ct == CancellationToken.None)),
+            Times.Once);
+    }
+
+    /// <summary>
     /// Verifies that in the non-streaming endpoint path, SaveSessionAsync is called with
     /// CancellationToken.None even when RunStreamingAsync throws an exception.
     /// </summary>
@@ -2182,7 +2307,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2202,7 +2327,7 @@ public sealed class A2AAgentHandlerTests
 
         // Act
         var eventQueue = new AgentEventQueue();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2211,6 +2336,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Agent failed", exception.Message);
 
         // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
         mockSessionStore.Verify(
@@ -2243,7 +2369,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2263,7 +2389,7 @@ public sealed class A2AAgentHandlerTests
 
         // Act
         var eventQueue = new AgentEventQueue();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2272,6 +2398,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Stream failed", exception.Message);
 
         // Assert - SaveSessionAsync was called with CancellationToken.None despite the exception
         mockSessionStore.Verify(
@@ -2304,7 +2431,7 @@ public sealed class A2AAgentHandlerTests
                 It.IsAny<AgentSessionStoreKey>(),
                 It.IsAny<AgentSession>(),
                 It.IsAny<CancellationToken>()))
-            .Returns(ValueTask.CompletedTask);
+            .Returns(() => new ValueTask(Task.FromException(new TimeoutException("Session save failed"))));
 
         Mock<AIAgent> agentMock = new() { CallBase = true };
         agentMock.SetupGet(x => x.Name).Returns("TestAgent");
@@ -2320,13 +2447,13 @@ public sealed class A2AAgentHandlerTests
             .ThrowsAsync(new InvalidOperationException("Agent failed"));
 
         using var cts = new CancellationTokenSource();
-        A2AAgentHandler handler = CreateHandler(agentMock, agentSessionStore: mockSessionStore.Object);
+        A2AAgentHandler handler = CreateHandler(agentMock, runMode: AgentRunMode.ReturnTask, agentSessionStore: mockSessionStore.Object);
 
         // Act
         var eventQueue = new AgentEventQueue();
         var events = new EventCollector();
         var readerTask = ReadEventsAsync(eventQueue, events);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             handler.ExecuteAsync(
                 new RequestContext
                 {
@@ -2337,6 +2464,7 @@ public sealed class A2AAgentHandlerTests
                 },
                 eventQueue,
                 cts.Token));
+        Assert.Equal("Agent failed", exception.Message);
         eventQueue.Complete(null);
         await readerTask;
 
@@ -2474,7 +2602,7 @@ public sealed class A2AAgentHandlerTests
             .Returns(ValueTask.CompletedTask);
 
         AgentResponse response = new([new ChatMessage(ChatRole.Assistant, "Done!")]);
-        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), agentSessionStore: mockSessionStore.Object);
+        A2AAgentHandler handler = CreateHandler(CreateAgentMockWithResponse(response), runMode: AgentRunMode.ReturnTask, agentSessionStore: mockSessionStore.Object);
 
         using var cts = new CancellationTokenSource();
 

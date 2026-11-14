@@ -1,5 +1,7 @@
 # Copyright (c) Microsoft. All rights reserved.
 
+from __future__ import annotations
+
 import sys
 import typing
 from collections.abc import Callable, Mapping, Sequence
@@ -71,13 +73,13 @@ def _resolve_function_annotations(  # pyright: ignore[reportUnusedFunction]
 
 
 def is_chat_agent(agent: Any) -> TypeGuard[Agent]:
-    """Check if the given agent is a Agent.
+    """Check if the given agent is an Agent.
 
     Args:
         agent (Any): The agent to check.
 
     Returns:
-        TypeGuard[Agent]: True if the agent is a Agent, False otherwise.
+        TypeGuard[Agent]: True if the agent is an Agent, False otherwise.
     """
     return isinstance(agent, Agent)
 
@@ -399,6 +401,13 @@ def _coerce_dict_to_dataclass(data: dict[str, Any], target_cls: type[Any]) -> An
         return data
 
 
+# ``type(None)`` reports ``builtins`` as its module and ``NoneType`` as its qualified name, but
+# ``builtins`` never binds that name: the class is only reachable as ``types.NoneType`` (3.10+)
+# or ``type(None)``. The name that ``serialize_type`` produces therefore has to come from this
+# table instead of from the module namespace.
+_SERIALIZED_TYPE_ALIASES: Mapping[str, type[Any]] = {"builtins.NoneType": type(None)}
+
+
 def serialize_type(t: type) -> str:
     """Serialize a type to a string.
 
@@ -416,7 +425,8 @@ def deserialize_type(
 ) -> type:
     """Deserialize a serialized type string.
 
-    Resolution is limited to exact caller-supplied types or types already present
+    Resolution is limited to exact caller-supplied types, a fixed alias table for builtin
+    names that their module never binds (``builtins.NoneType``), or types already present
     in loaded module namespaces. This function never imports a module selected by
     the serialized value.
 
@@ -427,6 +437,7 @@ def deserialize_type(
     For example,
 
     deserialize_type("builtins.int") => int
+    deserialize_type("builtins.NoneType") => type(None)
     """
     if allowed_types is not None and serialized_type_string in allowed_types:
         resolved = allowed_types[serialized_type_string]
@@ -435,6 +446,11 @@ def deserialize_type(
         if serialize_type(resolved) != serialized_type_string:
             raise ValueError(f"allowed_types entry {serialized_type_string!r} does not match the supplied type.")
         return resolved
+
+    # Types whose serialized name is not an attribute of their module.
+    alias = _SERIALIZED_TYPE_ALIASES.get(serialized_type_string)
+    if alias is not None:
+        return alias
 
     module_name, _, type_name = serialized_type_string.rpartition(".")
     module = sys.modules.get(module_name)
@@ -471,6 +487,11 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     if target_type is Any:
         return True
 
+    # Case 0b: source_type is Any - the value can be of any type, so it is compatible with every
+    # target, the same way static type checkers treat Any.
+    if source_type is Any:
+        return True
+
     # Case 1: exact type match
     if source_type == target_type:
         return True
@@ -479,6 +500,28 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
     source_args = get_args(source_type)
     target_origin = get_origin(target_type)
     target_args = get_args(target_type)
+
+    # A bare alias from `typing` (typing.Sequence, typing.List) has an origin but no type
+    # arguments; treat it as the bare container class it stands for.
+    if source_origin is not None and not source_args and isinstance(source_origin, type):
+        source_type, source_origin = source_origin, None
+    if target_origin is not None and not target_args and isinstance(target_origin, type):
+        target_type, target_origin = target_origin, None
+
+    # Case 1b: source is Literal[...] - it only holds its listed values, so it is compatible when every value fits
+    # the target or one of its union members: a Literal member by value (is_instance_of), any other member through
+    # the value's own type.
+    if source_origin is Literal:
+        targets = target_args if target_origin is Union or target_origin is UnionType else (target_type,)
+        return all(
+            any(
+                is_instance_of(value, target)
+                if get_origin(target) is Literal
+                else is_type_compatible(type(value), target)
+                for target in targets
+            )
+            for value in cast(tuple[object, ...], source_args)
+        )
 
     # Case 2: target is Union/Optional - source is compatible if it matches any target member
     if target_origin is Union or target_origin is UnionType:
@@ -506,6 +549,20 @@ def is_type_compatible(source_type: type | UnionType | Any, target_type: type | 
                 # Handle cases where issubclass doesn't work (e.g., with special forms)
                 return False
         return source_type == target_type
+
+    # A bare container class on one side (list[str] -> list, or list -> list[str]):
+    # the unparameterized side accepts any element type, so compare the containers.
+    # issubclass raises TypeError for a Protocol that is not runtime_checkable.
+    if target_origin is None and isinstance(target_type, type) and isinstance(source_origin, type):
+        try:
+            return issubclass(source_origin, target_type)
+        except TypeError:
+            return False
+    if source_origin is None and isinstance(source_type, type) and isinstance(target_origin, type):
+        try:
+            return issubclass(source_type, target_origin)
+        except TypeError:
+            return False
 
     # Case 5: different container types are not compatible
     if source_origin != target_origin:

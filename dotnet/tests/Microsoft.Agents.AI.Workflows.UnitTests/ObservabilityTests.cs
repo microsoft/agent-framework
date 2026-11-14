@@ -4,12 +4,12 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI.Workflows.InProc;
 using Microsoft.Agents.AI.Workflows.Observability;
 using Microsoft.Extensions.AI;
+using OpenTelemetry;
 
 namespace Microsoft.Agents.AI.Workflows.UnitTests;
 
@@ -56,7 +56,7 @@ public sealed class ObservabilityTests : IDisposable
     /// ---- ActivityNames.MessageSend
     /// </remarks>
     /// <returns>The created workflow.</returns>
-    private static Workflow CreateWorkflow()
+    private static Workflow CreateWorkflow(string? name = null)
     {
         // Create the executors
         Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
@@ -68,6 +68,10 @@ public sealed class ObservabilityTests : IDisposable
         // Build the workflow by connecting executors sequentially
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
+        if (name is not null)
+        {
+            builder.WithName(name);
+        }
 
         return builder.WithOpenTelemetry().Build();
     }
@@ -156,6 +160,195 @@ public sealed class ObservabilityTests : IDisposable
     public async Task CreatesWorkflowEndToEndActivities_WithCorrectName_LockstepAsync()
     {
         await this.TestWorkflowEndToEndActivitiesAsync("Lockstep");
+    }
+
+    [Theory]
+    [InlineData("Lockstep", false, null)]
+    [InlineData("Lockstep", true, null)]
+    [InlineData("OffThread", false, null)]
+    [InlineData("OffThread", true, null)]
+    [InlineData("Concurrent", false, null)]
+    [InlineData("Concurrent", true, null)]
+    [InlineData("Lockstep", false, "customer_support_pipeline")]
+    [InlineData("Lockstep", true, "customer_support_pipeline")]
+    [InlineData("OffThread", false, "customer_support_pipeline")]
+    [InlineData("OffThread", true, "customer_support_pipeline")]
+    [InlineData("Concurrent", false, "customer_support_pipeline")]
+    [InlineData("Concurrent", true, "customer_support_pipeline")]
+    public async Task WorkflowRunActivity_UsesSemanticConventionNameAsync(string executionEnvironmentName, bool streaming, string? workflowName)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowRunSpanNameTest").Start();
+        testActivity.AddBaggage("gen_ai.conversation.id", "application-thread");
+        var workflow = CreateWorkflow(workflowName);
+        var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
+
+        // Act
+        if (streaming)
+        {
+            await using StreamingRun run = await executionEnvironment.RunStreamingAsync(workflow, "Hello, World!");
+            await foreach (WorkflowEvent evt in run.WatchStreamAsync())
+            {
+                // Drain the stream to complete the workflow invocation.
+            }
+        }
+        else
+        {
+            await using Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!");
+        }
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        var workflowRunActivity = Assert.Single(capturedActivities, a =>
+            a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
+        string expectedSpanName = workflowName is null ? "invoke_workflow" : $"invoke_workflow {workflowName}";
+        Assert.Equal(expectedSpanName, workflowRunActivity.OperationName);
+        Assert.Equal(expectedSpanName, workflowRunActivity.DisplayName);
+        Assert.Equal(workflowName, workflowRunActivity.GetTagItem("gen_ai.workflow.name"));
+        Assert.Equal("invoke_workflow", workflowRunActivity.GetTagItem("gen_ai.operation.name"));
+        Assert.Equal("application-thread", workflowRunActivity.GetTagItem("gen_ai.conversation.id"));
+        Assert.IsType<string>(workflowRunActivity.GetTagItem("session.id"));
+        Assert.All(capturedActivities.Where(a => a != workflowRunActivity), a =>
+            Assert.DoesNotContain(a.TagObjects, tag => tag.Key is "gen_ai.operation.name" or "gen_ai.conversation.id"));
+
+        var workflowBuildActivity = Assert.Single(capturedActivities, a => a.OperationName == ActivityNames.WorkflowBuild);
+        Assert.Equal(workflowName, workflowBuildActivity.GetTagItem("gen_ai.workflow.name"));
+        Assert.All(capturedActivities, a => Assert.DoesNotContain(a.TagObjects, tag => tag.Key == "workflow.name"));
+    }
+
+    [Theory]
+    [InlineData(null, "invoke_workflow")]
+    [InlineData("", "invoke_workflow")]
+    [InlineData(" ", "invoke_workflow")]
+    [InlineData("customer_support_pipeline", "invoke_workflow customer_support_pipeline")]
+    public void WorkflowRunActivity_ProvidesSemanticConventionsAtCreation(string? workflowName, string expectedSpanName)
+    {
+        // Arrange
+        using var activitySource = new ActivitySource("WorkflowOperationNameSamplingTest");
+        string? spanNameAtCreation = null;
+        object? operationNameAtCreation = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == activitySource,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                spanNameAtCreation = options.Name;
+                operationNameAtCreation = options.Tags?.FirstOrDefault(tag => tag.Key == "gen_ai.operation.name").Value;
+                return ActivitySamplingResult.AllData;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var telemetryContext = new WorkflowTelemetryContext(new WorkflowTelemetryOptions(), activitySource);
+
+        // Act
+        using Activity? activity = telemetryContext.StartWorkflowRunActivity(workflowName);
+
+        // Assert
+        Assert.NotNull(activity);
+        Assert.Equal(expectedSpanName, spanNameAtCreation);
+        Assert.Equal("invoke_workflow", operationNameAtCreation);
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("", null, null)]
+    [InlineData(" ", null, null)]
+    [InlineData("otel-thread", null, "otel-thread")]
+    [InlineData("otel-thread", "activity-thread", "otel-thread")]
+    [InlineData(null, "activity-thread", "activity-thread")]
+    [InlineData("", "activity-thread", "activity-thread")]
+    [InlineData(" ", "activity-thread", "activity-thread")]
+    public void WorkflowRunActivity_UsesConversationContextAtCreation(
+        string? otelConversationId, string? activityConversationId, string? expectedConversationId)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowConversationContextTest").Start();
+        testActivity.AddBaggage("gen_ai.conversation.id", activityConversationId);
+        using var activitySource = new ActivitySource("WorkflowConversationSamplingTest");
+        object? conversationIdAtCreation = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source == activitySource,
+            Sample = (ref ActivityCreationOptions<ActivityContext> options) =>
+            {
+                conversationIdAtCreation = options.Tags?.FirstOrDefault(tag => tag.Key == "gen_ai.conversation.id").Value;
+                return ActivitySamplingResult.AllData;
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        var telemetryContext = new WorkflowTelemetryContext(new WorkflowTelemetryOptions(), activitySource);
+        Baggage previousBaggage = Baggage.Current;
+
+        try
+        {
+            Baggage.SetBaggage("gen_ai.conversation.id", otelConversationId);
+
+            // Act
+            using Activity? activity = telemetryContext.StartWorkflowRunActivity("customer_support_pipeline");
+
+            // Assert
+            Assert.NotNull(activity);
+            Assert.Equal(expectedConversationId, conversationIdAtCreation);
+            Assert.Equal(expectedConversationId, activity.GetTagItem("gen_ai.conversation.id"));
+            if (expectedConversationId is null)
+            {
+                Assert.DoesNotContain(activity.TagObjects, tag => tag.Key == "gen_ai.conversation.id");
+            }
+        }
+        finally
+        {
+            Baggage.Current = previousBaggage;
+        }
+    }
+
+    [Theory]
+    [InlineData("Lockstep", null)]
+    [InlineData("OffThread", null)]
+    [InlineData("Concurrent", null)]
+    [InlineData("Lockstep", "execution-only-session")]
+    [InlineData("OffThread", "execution-only-session")]
+    [InlineData("Concurrent", "execution-only-session")]
+    public async Task WorkflowRunActivity_WithoutConversationContext_DoesNotUseSessionIdAsync(string executionEnvironmentName, string? sessionId)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowConversationOmissionTest").Start();
+        var workflow = CreateWorkflow("customer_support_pipeline");
+        var executionEnvironment = GetExecutionEnvironment(executionEnvironmentName);
+
+        // Act
+        Run run = await executionEnvironment.RunAsync(workflow, "Hello, World!", sessionId);
+        await run.DisposeAsync();
+
+        // Assert
+        var workflowRunActivity = Assert.Single(this._capturedActivities, a =>
+            a.RootId == testActivity.RootId &&
+            a.Events.Any(e => e.Name == EventNames.WorkflowStarted));
+        Assert.DoesNotContain(workflowRunActivity.TagObjects, tag => tag.Key == "gen_ai.conversation.id");
+        Assert.IsType<string>(workflowRunActivity.GetTagItem("session.id"));
+        if (sessionId is not null)
+        {
+            Assert.Equal(sessionId, workflowRunActivity.GetTagItem("session.id"));
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public async Task WorkflowActivities_WithoutMeaningfulName_OmitWorkflowNameAsync(string workflowName)
+    {
+        // Arrange
+        using var testActivity = new Activity("WorkflowNameOmissionTest").Start();
+        var workflow = CreateWorkflow(workflowName);
+
+        // Act
+        Run run = await InProcessExecution.Default.RunAsync(workflow, "Hello, World!");
+        await run.DisposeAsync();
+
+        // Assert
+        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
+        Assert.Contains(capturedActivities, a => a.OperationName == ActivityNames.WorkflowInvoke);
+        Assert.All(capturedActivities, a => Assert.DoesNotContain(a.TagObjects,
+            tag => tag.Key is "gen_ai.workflow.name" or "workflow.name"));
     }
 
     [Fact]
@@ -360,8 +553,10 @@ public sealed class ObservabilityTests : IDisposable
         return builder.WithOpenTelemetry(configure: opts => opts.DisableMessageSend = true).Build();
     }
 
-    [Fact]
-    public async Task EnableSensitiveData_LogsExecutorInputAndOutputAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnableSensitiveData_DoesNotLogExecutorInputAndOutputAsync(bool enableSensitiveData)
     {
         // Arrange
         using var testActivity = new Activity("ObservabilityTest").Start();
@@ -372,7 +567,9 @@ public sealed class ObservabilityTests : IDisposable
         // Act
         WorkflowBuilder builder = new(uppercase);
         builder.WithOutputFrom(uppercase);
-        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+#pragma warning disable CS0618 // Verify compatibility with the deprecated option.
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = enableSensitiveData).Build();
+#pragma warning restore CS0618
 
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
@@ -384,44 +581,18 @@ public sealed class ObservabilityTests : IDisposable
 
         Assert.NotNull(executorActivity);
 
-        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        Assert.Contains(Tags.ExecutorInput, tags);
-        Assert.Contains(Tags.ExecutorOutput, tags);
-        Assert.Contains("hello", tags[Tags.ExecutorInput]);
-        Assert.Contains("HELLO", tags[Tags.ExecutorOutput]);
+        Assert.Equal("UppercaseExecutor", executorActivity.GetTagItem(Tags.ExecutorId));
+        Assert.NotNull(executorActivity.GetTagItem(Tags.ExecutorType));
+        Assert.NotNull(executorActivity.GetTagItem(Tags.MessageType));
+        Assert.All(capturedActivities, activity =>
+            Assert.DoesNotContain(activity.TagObjects, tag => tag.Key is "executor.input" or "executor.output"));
+        Assert.Equal("HELLO", Assert.Single(run.OutgoingEvents.OfType<WorkflowOutputEvent>()).Data);
     }
 
-    [Fact]
-    public async Task EnableSensitiveData_Disabled_DoesNotLogInputOutputAsync()
-    {
-        // Arrange
-        using var testActivity = new Activity("ObservabilityTest").Start();
-
-        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
-        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
-
-        // Act - EnableSensitiveData is false by default
-        WorkflowBuilder builder = new(uppercase);
-        builder.WithOutputFrom(uppercase);
-        var workflow = builder.WithOpenTelemetry().Build();
-
-        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
-        await run.DisposeAsync();
-
-        // Assert
-        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        var executorActivity = capturedActivities.FirstOrDefault(
-            a => a.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
-
-        Assert.NotNull(executorActivity);
-
-        var tags = executorActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        Assert.DoesNotContain(Tags.ExecutorInput, tags);
-        Assert.DoesNotContain(Tags.ExecutorOutput, tags);
-    }
-
-    [Fact]
-    public async Task EnableSensitiveData_LogsMessageSendContentAsync()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EnableSensitiveData_DoesNotLogMessageContentAsync(bool enableSensitiveData)
     {
         // Arrange
         using var testActivity = new Activity("ObservabilityTest").Start();
@@ -435,53 +606,22 @@ public sealed class ObservabilityTests : IDisposable
         // Act
         WorkflowBuilder builder = new(uppercase);
         builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
-        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+#pragma warning disable CS0618 // Verify compatibility with the deprecated option.
+        var workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = enableSensitiveData).Build();
+#pragma warning restore CS0618
 
         Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
         await run.DisposeAsync();
 
         // Assert
         var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        var messageSendActivity = capturedActivities.FirstOrDefault(
-            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
-
-        Assert.NotNull(messageSendActivity);
-
-        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        Assert.Contains(Tags.MessageContent, tags);
-        Assert.Contains(Tags.MessageSourceId, tags);
-    }
-
-    [Fact]
-    public async Task EnableSensitiveData_Disabled_DoesNotLogMessageContentAsync()
-    {
-        // Arrange
-        using var testActivity = new Activity("ObservabilityTest").Start();
-
-        Func<string, string> uppercaseFunc = s => s.ToUpperInvariant();
-        var uppercase = uppercaseFunc.BindAsExecutor("UppercaseExecutor");
-
-        Func<string, string> reverseFunc = s => new string(s.Reverse().ToArray());
-        var reverse = reverseFunc.BindAsExecutor("ReverseTextExecutor");
-
-        // Act - EnableSensitiveData is false by default
-        WorkflowBuilder builder = new(uppercase);
-        builder.AddEdge(uppercase, reverse).WithOutputFrom(reverse);
-        var workflow = builder.WithOpenTelemetry().Build();
-
-        Run run = await InProcessExecution.Default.RunAsync(workflow, "hello");
-        await run.DisposeAsync();
-
-        // Assert
-        var capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        var messageSendActivity = capturedActivities.FirstOrDefault(
-            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
-
-        Assert.NotNull(messageSendActivity);
-
-        var tags = messageSendActivity!.Tags.ToDictionary(t => t.Key, t => t.Value);
-        Assert.DoesNotContain(Tags.MessageContent, tags);
-        Assert.Contains(Tags.MessageSourceId, tags);
+        var messageSendActivities = capturedActivities.Where(
+            a => a.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal)).ToList();
+        Assert.NotEmpty(messageSendActivities);
+        Assert.All(messageSendActivities, activity => Assert.NotNull(activity.GetTagItem(Tags.MessageSourceId)));
+        Assert.All(capturedActivities, activity =>
+            Assert.DoesNotContain(activity.TagObjects, tag => tag.Key == "message.content"));
+        Assert.Equal("OLLEH", Assert.Single(run.OutgoingEvents.OfType<WorkflowOutputEvent>()).Data);
     }
 
     [Fact]
@@ -491,8 +631,6 @@ public sealed class ObservabilityTests : IDisposable
         const string SenderId = "UnserializableMessageSender";
         const string ReceiverId = "UnserializableMessageReceiver";
         const string ExpectedOutput = "done";
-        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
-
         using var testActivity = new Activity("ObservabilityTest").Start();
 
         var sender = new UnserializableMessageSender(SenderId, ReceiverId);
@@ -506,7 +644,9 @@ public sealed class ObservabilityTests : IDisposable
 
         WorkflowBuilder builder = new(sender);
         builder.AddEdge(sender, receiver).WithOutputFrom(receiver);
+#pragma warning disable CS0618 // Verify compatibility with the deprecated option.
         Workflow workflow = builder.WithOpenTelemetry(configure: opts => opts.EnableSensitiveData = true).Build();
+#pragma warning restore CS0618
 
         // Act
         Run run = await InProcessExecution.Default.RunAsync(workflow, "start");
@@ -521,75 +661,10 @@ public sealed class ObservabilityTests : IDisposable
         Assert.IsType<UnregisteredAIContent>(Assert.Single(delivered.Contents));
 
         List<Activity> capturedActivities = this._capturedActivities.Where(a => a.RootId == testActivity.RootId).ToList();
-        Assert.Contains(
-            capturedActivities,
-            activity => activity.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal)
-                && Equals(expectedFallback, activity.GetTagItem(Tags.MessageContent)));
-
-        Assert.Contains(
-            capturedActivities,
-            activity => activity.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal)
-                && Equals(expectedFallback, activity.GetTagItem(Tags.ExecutorInput)));
-    }
-
-    [Fact]
-    public void EnableSensitiveData_UnserializableExecutorInputAndOutput_UsesFallback()
-    {
-        // Arrange
-        string expectedFallback = $"[Unserializable: {typeof(ChatMessage).FullName}]";
-        ChatMessage message = CreateUnserializableMessage();
-        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
-
-        // Act
-        using Activity? activity = context.StartExecutorProcessActivity(
-            "TestExecutor",
-            typeof(ObservabilityTests).FullName,
-            typeof(ChatMessage).FullName!,
-            message);
-        context.SetExecutorOutput(activity, message);
-
-        // Assert
-        Assert.NotNull(activity);
-        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.ExecutorInput));
-        Assert.Equal(expectedFallback, activity.GetTagItem(Tags.ExecutorOutput));
-    }
-
-    [Fact]
-    public void EnableSensitiveData_SerializationThrowsInvalidOperation_UsesFallback()
-    {
-        // Arrange
-        // Reflection-disabled (Native AOT) apps surface serialization failures as InvalidOperationException,
-        // which System.Text.Json does not wrap. A throwing property getter reproduces that escape path.
-        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
-        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
-
-        // Act
-        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage());
-
-        // Assert
-        Assert.NotNull(activity);
-        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.MessageContent));
-    }
-
-    [Theory]
-    [InlineData(typeof(ArgumentException))]
-    [InlineData(typeof(IOException))]
-    [InlineData(typeof(OperationCanceledException))]
-    [InlineData(typeof(TimeoutException))]
-    public void EnableSensitiveData_SerializationThrowsAnyException_UsesFallback(Type exceptionType)
-    {
-        // Arrange
-        // System.Text.Json does not wrap property-getter exceptions, so serialization can surface any
-        // exception type. Telemetry must fall back rather than fail the workflow for all of them.
-        string expectedFallback = $"[Unserializable: {typeof(ThrowingMessage).FullName}]";
-        WorkflowTelemetryContext context = new(new WorkflowTelemetryOptions { EnableSensitiveData = true });
-
-        // Act
-        using Activity? activity = context.StartMessageSendActivity("source", "target", new ThrowingMessage(exceptionType));
-
-        // Assert
-        Assert.NotNull(activity);
-        Assert.Equal(expectedFallback, activity!.GetTagItem(Tags.MessageContent));
+        Assert.Contains(capturedActivities, activity => activity.OperationName.StartsWith(ActivityNames.MessageSend, StringComparison.Ordinal));
+        Assert.Contains(capturedActivities, activity => activity.OperationName.StartsWith(ActivityNames.ExecutorProcess, StringComparison.Ordinal));
+        Assert.All(capturedActivities, activity =>
+            Assert.DoesNotContain(activity.TagObjects, tag => tag.Key is "executor.input" or "executor.output" or "message.content"));
     }
 
     private static ChatMessage CreateUnserializableMessage() =>
@@ -608,12 +683,4 @@ public sealed class ObservabilityTests : IDisposable
 
     private sealed class UnregisteredAIContent : AIContent;
 
-    private sealed class ThrowingMessage(Type exceptionType)
-    {
-        public ThrowingMessage() : this(typeof(InvalidOperationException))
-        {
-        }
-
-        public string Value => throw (Exception)Activator.CreateInstance(exceptionType, "serialization failed")!;
-    }
 }

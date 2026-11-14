@@ -12,7 +12,8 @@ security model, middleware behavior, and API reference.
 | `email_security_example.py` | Prompt injection defense | `SecureAgentConfig`, Foundry-backed email handling, `quarantined_llm`, and approval on policy violations |
 | `repo_confidentiality_example.py` | Data exfiltration prevention | Confidentiality labels, Foundry-backed repository access, `max_allowed_confidentiality`, and approval before leaking private data |
 | `user_identity_security_example.py` | Principal-bound identity data | Canonical tenant/user principals, identity-scoped sources and destinations, and allowed versus blocked flows |
-| `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, direct GitHub MCP access, tool auto-labeling, and post-tool-call policy enforcement |
+| `github_mcp_example.py` | Remote MCP URL with local FIDES enforcement | `SecureMCPToolProxy(url=...)`, IFC policy selection, secured MCP tools and Skills, and post-result policy enforcement |
+| `provider_message_labeling_example.py` | Central provider-message labeling | `SecureAgentConfig.message_labeler` classifies messages from existing history, memory, and context providers |
 
 ## Prerequisites
 
@@ -113,7 +114,10 @@ This sample connects directly to `https://api.githubcopilot.com/mcp/` through
 `MCPStreamableHTTPTool`, then wraps the MCP client in `SecureMCPToolProxy` so
 FIDES middleware can inspect tool results and enforce policy locally. The
 `X-MCP-Features: ifc_labels` header is passed to opt in to server-side IFC label
-emission in tool result `_meta`.
+emission in result `_meta`. The same proxy supplies
+`SkillsProvider(secure_github.skills_source())`, so MCP Skills resource reads
+use the same IFC policy. Servers without `skill://index.json` contribute no
+skills.
 
 Run it with:
 
@@ -127,8 +131,39 @@ uv run samples/02-agents/security/github_mcp_example.py --devui --debug
 What to look for:
 
 - MCP tools are auto-labeled from remote annotations
+- MCP Skills retain per-read IFC labels through `secure_github.skills_source()`
+- `server_ifc_policy="restrict"` lets server IFC add restrictions without relaxing local policy
 - Untrusted tool output is tracked by FIDES label middleware
 - Attack-mode write attempts can trigger policy enforcement or approval
+
+### `provider_message_labeling_example.py`
+
+This sample configures one `SecureAgentConfig.message_labeler` for three existing
+framework providers:
+
+- `InMemoryHistoryProvider`
+- `FileMemoryProvider`
+- `TodoProvider`
+
+`SecureAgentConfig` is the final context provider, so its labeler sees messages
+from every provider it classifies.
+
+The callback receives each provider's authoritative `source_id`. It applies
+a trusted private label to application-owned history, an untrusted private
+label to file memory, and an untrusted public label to todo content.
+
+Run it with:
+
+```bash
+uv run samples/02-agents/security/provider_message_labeling_example.py
+```
+
+What to look for:
+
+- The sample defines no custom provider class
+- `SecureAgentConfig` is registered after the providers whose messages it classifies
+- The callback prints classifications for history, memory, and todo messages
+- FIDES does not mutate or stamp provider messages
 
 ## Where to find the details
 
@@ -140,3 +175,4 @@ For the full FIDES design and API details, see
 - policy enforcement middleware
 - security tools such as `quarantined_llm` and `inspect_variable`
 - `SecureAgentConfig` and manual integration patterns
+- history and context provider trust boundaries

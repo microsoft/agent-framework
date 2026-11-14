@@ -56,8 +56,8 @@ public static class WorkflowProvider
         // <inheritdoc />
         protected override async ValueTask<object?> ExecuteAsync(IWorkflowContext context, CancellationToken cancellationToken)
         {
-            object? evaluatedValue = await context.EvaluateValueAsync<object>("[{id: 3}]").ConfigureAwait(false);
-            await context.QueueStateUpdateAsync(key: "MyTable", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
+            var evaluatedValue = await context.EvaluateValueWithSensitivityAsync<object>("[{id: 3}]").ConfigureAwait(false);
+            await context.QueueStateUpdateWithSensitivityAsync(key: "MyTable", value: evaluatedValue, scopeName: "Local").ConfigureAwait(false);
     
             return default;
         }

@@ -4,26 +4,42 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import io
 import json
+import warnings
 import zipfile
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from datetime import timedelta
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, call, patch
+from urllib.parse import unquote
 
 import pytest
-from mcp.shared.exceptions import McpError
+from mcp import MCPError
 from mcp.types import (
+    INVALID_PARAMS,
     BlobResourceContents,
-    ErrorData,
     ReadResourceResult,
     TextResourceContents,
 )
-from pydantic import AnyUrl
 
-from agent_framework import CachingSkillsSource, MCPSkill, MCPSkillResource, MCPSkillsSource, SkillsSourceContext
-from agent_framework._skills import _parse_mcp_skill_index
+from agent_framework import (
+    CachingSkillsSource,
+    FileSkill,
+    InlineSkill,
+    MCPSkill,
+    MCPSkillResource,
+    MCPSkillsSource,
+    SkillFrontmatter,
+    SkillsProvider,
+    SkillsSourceContext,
+)
+from agent_framework._middleware import FunctionInvocationContext
+from agent_framework._skills import InlineSkillResource, _fully_unquote, _parse_mcp_skill_index
+from agent_framework._tools import _finalize_function_result  # pyright: ignore[reportPrivateUsage]
 
 from .conftest import MockAgent
 
@@ -33,7 +49,7 @@ from .conftest import MockAgent
 
 
 # Shared context for exercising skill sources where the agent/session are irrelevant.
-_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]
+_SOURCE_CTX = SkillsSourceContext(agent=MockAgent())  # type: ignore[abstract]  # pyrefly: ignore[bad-instantiation]  # ty: ignore[call-non-callable]
 
 SAMPLE_SKILL_MD = """\
 ---
@@ -57,20 +73,45 @@ SAMPLE_SKILL_INDEX = json.dumps({
     ],
 })
 
+_PRIVATE_IFC_META = {"ifc": {"integrity": "trusted", "confidentiality": "private"}}
+_IGNORED_IFC_LABEL = {"integrity": "untrusted", "confidentiality": "public"}
+_RESTRICTED_IFC_LABEL = {"integrity": "untrusted", "confidentiality": "private"}
+_AUTHORITATIVE_IFC_LABEL = {"integrity": "trusted", "confidentiality": "private"}
+_SERVER_IFC_POLICY_CASES = [
+    pytest.param("ignore", _IGNORED_IFC_LABEL, id="ignore"),
+    pytest.param("restrict", _RESTRICTED_IFC_LABEL, id="restrict"),
+    pytest.param("authoritative", _AUTHORITATIVE_IFC_LABEL, id="authoritative"),
+]
+_SERVER_IFC_POLICY_CASES_WITH_DEFAULT = [
+    pytest.param(None, _RESTRICTED_IFC_LABEL, id="restrict-default"),
+    *_SERVER_IFC_POLICY_CASES,
+]
 
-def _make_text_result(text: str, uri: str = "skill://test") -> ReadResourceResult:
+
+def _make_text_result(
+    text: str,
+    uri: str = "skill://test",
+    *,
+    meta: Mapping[str, Any] | None = None,
+) -> ReadResourceResult:
     """Create a ReadResourceResult with a single TextResourceContents."""
-    return ReadResourceResult(contents=[TextResourceContents(uri=AnyUrl(uri), text=text, mimeType="text/markdown")])
+    return ReadResourceResult(
+        contents=[TextResourceContents(uri=uri, text=text, mime_type="text/markdown")],
+        _meta=dict(meta) if meta is not None else None,
+    )
 
 
 def _make_blob_result(
     data: bytes,
     uri: str = "skill://test",
     mime_type: str = "application/octet-stream",
+    *,
+    meta: Mapping[str, Any] | None = None,
 ) -> ReadResourceResult:
     """Create a ReadResourceResult with a single BlobResourceContents."""
     return ReadResourceResult(
-        contents=[BlobResourceContents(uri=AnyUrl(uri), blob=base64.b64encode(data).decode(), mimeType=mime_type)]
+        contents=[BlobResourceContents(uri=uri, blob=base64.b64encode(data).decode(), mime_type=mime_type)],
+        _meta=dict(meta) if meta is not None else None,
     )
 
 
@@ -79,24 +120,120 @@ def _make_empty_result() -> ReadResourceResult:
     return ReadResourceResult(contents=[])
 
 
-def _make_client(**read_resource_responses: ReadResourceResult) -> AsyncMock:
+def _legacy_resource_not_found(uri: str) -> MCPError:
+    return MCPError(-32002, f"Resource not found: {uri}")
+
+
+def _modern_resource_not_found(uri: str) -> MCPError:
+    return MCPError(INVALID_PARAMS, "Resource not found", {"uri": uri})
+
+
+_RESOURCE_NOT_FOUND_ERRORS = [_legacy_resource_not_found, _modern_resource_not_found]
+
+
+def _make_client(
+    resource_not_found_error: Callable[[str], MCPError] = _legacy_resource_not_found,
+    /,
+    **read_resource_responses: ReadResourceResult,
+) -> AsyncMock:
     """Create a mock ClientSession whose read_resource returns different results per URI.
 
     Args:
+        resource_not_found_error: Creates the missing-resource error for an unknown URI.
         **read_resource_responses: Mapping of URI string to ReadResourceResult.
-            Any URI not in this mapping raises McpError with the MCP-spec
-            "Resource not found" code (-32002).
+            Any URI not in this mapping raises the configured missing-resource error.
     """
     client = AsyncMock()
 
-    async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+    async def _read_resource(uri: str) -> ReadResourceResult:
         uri_str = str(uri)
         if uri_str in read_resource_responses:
             return read_resource_responses[uri_str]
-        raise McpError(error=ErrorData(code=-32002, message=f"Resource not found: {uri_str}"))
+        raise resource_not_found_error(uri_str)
 
     client.read_resource = AsyncMock(side_effect=_read_resource)
     return client
+
+
+async def _create_skill_tools(source: Any) -> dict[str, Any]:
+    """Create the built-in skill tools for a source."""
+    provider = SkillsProvider(source)
+    _, _, tools = await provider._create_context(_SOURCE_CTX)  # pyright: ignore[reportPrivateUsage]
+    return {tool.name: tool for tool in tools}
+
+
+async def _invoke_skill_tool(tool: Any, **arguments: Any) -> list[Any]:
+    """Invoke one built-in skill tool through its FunctionTool boundary."""
+    context = FunctionInvocationContext(function=tool, arguments={})
+    result = await tool.invoke(arguments=arguments, context=context)
+    assert isinstance(result, list)
+    return result
+
+
+def _secure_skills_source(
+    client: Any,
+    *,
+    server_ifc_policy: Any | None = None,
+) -> MCPSkillsSource:
+    """Create an MCP Skills source through SecureMCPToolProxy."""
+    from agent_framework._mcp import MCPTool
+    from agent_framework.security import SecureMCPToolProxy
+
+    mcp_tool = MCPTool(name="skills", session=client)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    proxy = (
+        SecureMCPToolProxy(mcp_tool)
+        if server_ifc_policy is None
+        else SecureMCPToolProxy(mcp_tool, server_ifc_policy=server_ifc_policy)
+    )
+    source = proxy.skills_source()
+    assert isinstance(source, MCPSkillsSource)
+    return source
+
+
+def _assert_ifc_label(result: list[Any], expected_label: Mapping[str, Any]) -> None:
+    """Assert the expected IFC label was applied without leaking private markers."""
+    properties = result[0].additional_properties
+    assert properties["security_label"] == expected_label
+    assert "_mcp_tool_result_security_meta" not in properties
+    assert "_security_label_authoritative" not in properties
+    assert "_security_label_validated_principals" not in properties
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_name_decode_cache() -> Iterator[None]:
+    _fully_unquote.cache_clear()
+    yield
+    _fully_unquote.cache_clear()
+
+
+def _encode(depth: int) -> str:
+    """Return ``"A"`` percent-encoded *depth* times, e.g. ``%2541`` for depth 2."""
+    return "%" + "25" * (depth - 1) + "41"
+
+
+# ---------------------------------------------------------------------------
+# _fully_unquote tests
+# ---------------------------------------------------------------------------
+
+
+class TestFullyUnquote:
+    """Tests for recursive, cached resource-name decoding."""
+
+    def test_reuses_cached_layers(self) -> None:
+        assert _fully_unquote("guide%2520one.md") == "guide one.md"
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            # A repeated name is served entirely from the cache.
+            assert _fully_unquote("guide%2520one.md") == "guide one.md"
+            decode.assert_not_called()
+            # A different name reaching a cached layer ("guide%20one.md") decodes only its first layer.
+            assert _fully_unquote("guide%25%32%30one.md") == "guide one.md"
+            decode.assert_called_once_with("guide%25%32%30one.md")
+
+    @pytest.mark.parametrize("depths", [(32, 33), (33, 32)])
+    def test_cached_layers_preserve_depth_limit(self, depths: tuple[int, int]) -> None:
+        for depth in depths:
+            assert _fully_unquote(_encode(depth)) == ("A" if depth <= 32 else None)
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +322,8 @@ class TestMCPSkillResource:
     async def test_read_multiple_text_contents_joined(self) -> None:
         result = ReadResourceResult(
             contents=[
-                TextResourceContents(uri=AnyUrl("skill://a"), text="line1", mimeType="text/plain"),
-                TextResourceContents(uri=AnyUrl("skill://b"), text="line2", mimeType="text/plain"),
+                TextResourceContents(uri="skill://a", text="line1", mime_type="text/plain"),
+                TextResourceContents(uri="skill://b", text="line2", mime_type="text/plain"),
             ]
         )
         resource = MCPSkillResource(name="multi", result=result)
@@ -197,11 +334,11 @@ class TestMCPSkillResource:
         data = b"\xff\xfe"
         result = ReadResourceResult(
             contents=[
-                TextResourceContents(uri=AnyUrl("skill://a"), text="text", mimeType="text/plain"),
+                TextResourceContents(uri="skill://a", text="text", mime_type="text/plain"),
                 BlobResourceContents(
-                    uri=AnyUrl("skill://b"),
+                    uri="skill://b",
                     blob=base64.b64encode(data).decode(),
-                    mimeType="application/octet-stream",
+                    mime_type="application/octet-stream",
                 ),
             ]
         )
@@ -295,9 +432,60 @@ class TestMCPSkill:
             "..\\escape.md",
             "/etc/passwd",
             "http://attacker.example.com/payload",
+            "%2e%2e/escape.md",
+            "%2E./escape.md",
+            ".%2e/escape.md",
+            "references/%2e%2e/escape.md",
+            "references%2f..%2f..%2fescape.md",
+            "%2e%2e%5cescape.md",
+            "%252e%252e%252fescape.md",
+            "%25252e%25252e/escape.md",
+            "%2fescape.md",
+            "%5cescape.md",
+            "%68ttp%3a%2f%2fexample.com/other",
+            "..?download=1",
+            "..#fragment",
+            "%2e%2e%3fdownload=1",
+            "references%3f/../../escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md",
+            "references%23/%2e%2e/%2e%2e/escape.md",
+            "references%3f%2f%2e%2e%2f%2e%2e%2fescape.md",
+            "references%23%5c%2e%2e%5c%2e%2e%5cescape.md",
+            "references%253f%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%2523%252f%252e%252e%252f%252e%252e%252fescape.md",
+            "references%3f/%252e%252e/%252e%252e/escape.md",
+            "references%3f/%2e%2e/%2e%2e/escape.md?version=1",
+            "references%23/%2e%2e/%2e%2e/escape.md#section",
+            "references%3f%2f%2e%2e%20",
+            ".\t./escape.md",
+            ".%09./escape.md",
+            "references/\x00/guide.md",
+            ".. ",
+            ".%2e ",
+            "%2e%2e ",
+            "..%20",
+            "%252e%252e%2520",
+            "references/.. ",
+            "references/.. ?version=1",
+            "references/guide.md?value=%00",
+            "references/guide.md#value=%2509",
+            "references/guide.md?value=%C2%85",
+            "references/%2500guide.md?version=1",
+            "references/guide.md?version=1#value=%2509",
+            "references/guide.md#section?value=%2509",
         ],
     )
-    async def test_get_resource_path_traversal_returns_none(self, name: str) -> None:
+    @pytest.mark.parametrize(
+        "skill_md_uri",
+        [
+            "skill://unit-converter/SKILL.md",
+            "skill://unit-converter/private/SKILL.md",
+            "https://example.com/skills/private/SKILL.md",
+            "file:///skills/private/SKILL.md",
+            "custom:skills/private/SKILL.md",
+        ],
+    )
+    async def test_get_resource_path_traversal_returns_none(self, name: str, skill_md_uri: str) -> None:
         # Register a permissive mock that would happily return content for any URI,
         # so the test fails unless the client-side validation rejects the name
         # before issuing the read.
@@ -307,11 +495,88 @@ class TestMCPSkill:
         from agent_framework import SkillFrontmatter
 
         fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
-        skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://unit-converter/SKILL.md", client=client)
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=skill_md_uri, client=client)
 
         resource = await skill.get_resource(name)
         assert resource is None
         client.read_resource.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "references/guide.md",
+            "references\\guide.md",
+            "references/guide%20one.md",
+            "references/v1.2/guide.md",
+            "references/%2520.md",
+            "references/100%.md",
+            "references/guide.md?version=1#section",
+            "references/guide%3fname.md",
+            "references/guide%23name.md",
+            "references/guide%253fname.md",
+            "references/guide.md?example=/../../other.md",
+            "references/guide.md#example=/../../other.md",
+            "references/guide.md?example=%2e%2e%2f%2e%2e%2fother.md",
+            "references/guide.md?src=https://example.com/other",
+            "references/guide%2520one.md?value=%2520#section%2520",
+            "references/guide%253fname.md#section?value=%2520",
+            "references/guide.md?",
+            "references/guide.md#",
+            "references/guide.md ",
+        ],
+    )
+    @pytest.mark.parametrize(
+        "root",
+        [
+            "skill://unit-converter/",
+            "skill://unit-converter/private/",
+            "https://example.com/skills/private/",
+            "file:///skills/private/",
+            "custom:skills/private/",
+        ],
+    )
+    async def test_get_resource_preserves_safe_names_and_schemes(self, name: str, root: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+
+        resource = await skill.get_resource(name)
+
+        assert resource is not None
+        assert resource.name == name
+        assert await resource.read() == "safe content"
+        client.read_resource.assert_awaited_once_with(root + name.replace("\\", "/"))
+
+    @pytest.mark.parametrize("depth", [1, 31, 32, 33, 4096])
+    @pytest.mark.parametrize(
+        "template",
+        ["references/{}.md", "references/guide.md?value={}", "references/guide.md#value={}", "../{}.md"],
+    )
+    async def test_get_resource_decoding_depth_is_bounded(self, depth: int, template: str) -> None:
+        from agent_framework import SkillFrontmatter
+
+        root = "skill://unit-converter/private/"
+        client = AsyncMock()
+        client.read_resource.return_value = _make_text_result("safe content")
+        fm = SkillFrontmatter(name="unit-converter", description="Convert between common units.")
+        skill = MCPSkill(frontmatter=fm, skill_md_uri=root + "SKILL.md", client=client)
+        name = template.format(_encode(depth))
+
+        with patch("agent_framework._skills.unquote", wraps=unquote) as decode:
+            resource = await skill.get_resource(name)
+
+        # One pass decodes the unencoded part; the encoded part takes depth + 1 passes, capped at 33.
+        assert decode.call_count == min(depth + 1, 33) + 1
+        if depth <= 32 and not name.startswith("../"):
+            assert resource is not None
+            assert resource.name == name
+            client.read_resource.assert_awaited_once_with(root + name)
+        else:
+            assert resource is None
+            client.read_resource.assert_not_called()
 
     async def test_get_resource_empty_name_returns_none(self) -> None:
         client = _make_client()
@@ -390,6 +655,162 @@ class TestMCPSkill:
 class TestMCPSkillsSource:
     """Tests for MCPSkillsSource."""
 
+    async def test_high_level_client_reads_resources_with_cache(self) -> None:
+        from mcp import Client
+        from mcp.server import Server, ServerRequestContext
+        from mcp.types import ReadResourceRequestParams
+
+        responses = {
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+        }
+
+        async def read_resource(
+            _ctx: ServerRequestContext[Any],
+            params: ReadResourceRequestParams,
+        ) -> ReadResourceResult:
+            return responses[str(params.uri)]
+
+        server = Server("skills-server", on_read_resource=read_resource)
+
+        async with Client(server) as client:
+            read_resource_mock = AsyncMock(wraps=client.read_resource)
+            with patch.object(client, "read_resource", read_resource_mock):
+                source = MCPSkillsSource(client=client)
+                skill = (await source.get_skills(_SOURCE_CTX))[0]
+                content = await skill.get_content()
+
+        assert content == SAMPLE_SKILL_MD
+        assert read_resource_mock.await_args_list == [
+            call("skill://index.json", cache_mode="use"),
+            call("skill://unit-converter/SKILL.md", cache_mode="use"),
+        ]
+
+    async def test_high_level_client_honors_positive_resource_ttl(self) -> None:
+        from mcp import Client
+        from mcp.server import Server, ServerRequestContext
+        from mcp.types import ReadResourceRequestParams
+
+        read_counts: dict[str, int] = {}
+
+        async def read_resource(
+            _ctx: ServerRequestContext[Any],
+            params: ReadResourceRequestParams,
+        ) -> ReadResourceResult:
+            uri = str(params.uri)
+            read_counts[uri] = read_counts.get(uri, 0) + 1
+            if uri == "skill://index.json":
+                return ReadResourceResult(
+                    contents=[TextResourceContents(uri=uri, text=SAMPLE_SKILL_INDEX, mime_type="application/json")],
+                    ttl_ms=60_000,
+                )
+            return ReadResourceResult(
+                contents=[TextResourceContents(uri=uri, text=SAMPLE_SKILL_MD, mime_type="text/markdown")],
+                ttl_ms=60_000,
+            )
+
+        server = Server("cached-skills-server", on_read_resource=read_resource)
+
+        async with Client(server) as client:
+            for _ in range(2):
+                source = MCPSkillsSource(client=client)
+                skill = (await source.get_skills(_SOURCE_CTX))[0]
+                assert await skill.get_content() == SAMPLE_SKILL_MD
+
+        assert read_counts == {
+            "skill://index.json": 1,
+            "skill://unit-converter/SKILL.md": 1,
+        }
+
+    async def test_high_level_client_drives_state_only_mrtr_for_skill_resource(self) -> None:
+        from mcp import Client
+        from mcp.server import Server, ServerRequestContext
+        from mcp.types import InputRequiredResult, ReadResourceRequestParams
+
+        calls: list[tuple[int | str | None, str, str | None]] = []
+
+        async def read_resource(
+            ctx: ServerRequestContext[Any],
+            params: ReadResourceRequestParams,
+        ) -> ReadResourceResult | InputRequiredResult:
+            uri = str(params.uri)
+            if uri == "skill://index.json":
+                return _make_text_result(SAMPLE_SKILL_INDEX, uri=uri)
+            calls.append((ctx.request_id, uri, params.request_state))
+            if params.request_state is None:
+                return InputRequiredResult(request_state="opaque-resource-state")
+            return _make_text_result(SAMPLE_SKILL_MD, uri=uri)
+
+        server = Server("mrtr-skills-server", on_read_resource=read_resource)
+
+        async with Client(server) as client:
+            source = MCPSkillsSource(client=client)
+            skill = (await source.get_skills(_SOURCE_CTX))[0]
+            content = await skill.get_content()
+
+        assert content == SAMPLE_SKILL_MD
+        assert [(uri, state) for _, uri, state in calls] == [
+            ("skill://unit-converter/SKILL.md", None),
+            ("skill://unit-converter/SKILL.md", "opaque-resource-state"),
+        ]
+        assert calls[0][0] is not None
+        assert calls[1][0] is not None
+        assert calls[0][0] != calls[1][0]
+
+    async def test_connection_provider_follows_replacement_high_level_client(self) -> None:
+        from mcp import Client
+        from mcp.server import Server, ServerRequestContext
+        from mcp.types import ReadResourceRequestParams
+
+        def server_with_body(name: str, body: str) -> Server:
+            async def read_resource(
+                _ctx: ServerRequestContext[Any],
+                params: ReadResourceRequestParams,
+            ) -> ReadResourceResult:
+                uri = str(params.uri)
+                if uri == "skill://index.json":
+                    return _make_text_result(SAMPLE_SKILL_INDEX, uri=uri)
+                return _make_text_result(f"# {name}\n{body}", uri=uri)
+
+            return Server(name, on_read_resource=read_resource)
+
+        async with (
+            Client(server_with_body("old-skills", "old body")) as old_client,
+            Client(server_with_body("new-skills", "new body")) as new_client,
+        ):
+            current = {"client": old_client}
+            source = MCPSkillsSource(session_provider=lambda: current["client"])
+            skill = (await source.get_skills(_SOURCE_CTX))[0]
+
+            current["client"] = new_client
+            content = await skill.get_content()
+
+        assert "new body" in content
+        assert "old body" not in content
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "https://example.com/skills/SKILL.md",
+            "file:///skills/SKILL.md",
+            "custom:skills/SKILL.md",
+        ],
+    )
+    async def test_index_preserves_mcp_resource_schemes(self, uri: str) -> None:
+        index = json.loads(SAMPLE_SKILL_INDEX)
+        index["skills"][0]["url"] = uri
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(json.dumps(index)),
+            uri: _make_text_result(SAMPLE_SKILL_MD),
+        })
+        source = MCPSkillsSource(client=client)
+
+        skills = await source.get_skills(_SOURCE_CTX)
+
+        assert len(skills) == 1
+        assert await skills[0].get_content() == SAMPLE_SKILL_MD
+        assert str(client.read_resource.call_args.args[0]) == uri
+
     async def test_index_based_discovery_returns_skill(self) -> None:
         client = _make_client(**{
             "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
@@ -455,7 +876,15 @@ class TestMCPSkillsSource:
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    async def test_archive_missing_resource_is_skipped(self) -> None:
+    @pytest.mark.parametrize(
+        "resource_not_found_error",
+        _RESOURCE_NOT_FOUND_ERRORS,
+        ids=["legacy-shape", "modern-shape"],
+    )
+    async def test_archive_missing_resource_is_skipped(
+        self,
+        resource_not_found_error: Callable[[str], MCPError],
+    ) -> None:
         # An archive entry whose archive resource is not available on the server
         # is skipped (the index is read, but the archive download fails).
         index_json = json.dumps({
@@ -469,7 +898,10 @@ class TestMCPSkillsSource:
                 }
             ],
         })
-        client = _make_client(**{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")})
+        client = _make_client(
+            resource_not_found_error,
+            **{"skill://index.json": _make_text_result(index_json, uri="skill://index.json")},
+        )
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
@@ -561,73 +993,86 @@ class TestMCPSkillsSource:
 
 
 # ---------------------------------------------------------------------------
-# McpError code branching tests
+# MCPError code branching tests
 # ---------------------------------------------------------------------------
 
 
 class TestMCPSkillsSourceErrorCodeBranching:
-    """Tests that MCPSkillsSource and MCPSkill branch on McpError.error.code.
+    """Tests that MCPSkillsSource and MCPSkill branch on MCPError.error.code.
 
-    Only "not found" codes (RESOURCE_NOT_FOUND -32002, METHOD_NOT_FOUND -32601)
-    should be silently swallowed as "no skills available." Other McpError codes
-    and non-McpError exceptions must propagate so that auth failures, server
-    crashes, and connection drops are visible.
+    The legacy -32002 code, METHOD_NOT_FOUND, and INVALID_PARAMS carrying the
+    exact requested URI mean the resource is absent. Other MCPError shapes and
+    non-MCPError exceptions must propagate so failures remain visible.
     """
 
     async def test_index_method_not_found_returns_empty(self) -> None:
         """METHOD_NOT_FOUND (-32601) -> server doesn't support resources/read."""
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32601, message="Method not found")))
+        client.read_resource = AsyncMock(side_effect=MCPError(-32601, "Method not found"))
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    async def test_index_resource_not_found_returns_empty(self) -> None:
-        """MCP-spec "Resource not found" (-32002) -> server has no index."""
-        client = AsyncMock()
-        client.read_resource = AsyncMock(
-            side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
-        )
+    @pytest.mark.parametrize(
+        "resource_not_found_error",
+        _RESOURCE_NOT_FOUND_ERRORS,
+        ids=["legacy-shape", "modern-shape"],
+    )
+    async def test_index_resource_not_found_returns_empty(
+        self,
+        resource_not_found_error: Callable[[str], MCPError],
+    ) -> None:
+        """Either valid missing-resource error shape means the server has no skill index."""
+        client = _make_client(resource_not_found_error)
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
 
-    async def test_index_invalid_params_propagates(self) -> None:
-        """INVALID_PARAMS (-32602) is a real bug, must propagate (not "not found")."""
+    @pytest.mark.parametrize(
+        "data",
+        [
+            None,
+            {"uri": "skill://index.json", "reason": "malformed request"},
+        ],
+        ids=["no-uri", "extra-error-data"],
+    )
+    async def test_index_invalid_params_propagates(
+        self,
+        data: dict[str, str] | None,
+    ) -> None:
+        """INVALID_PARAMS propagates unless its data identifies the requested URI."""
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32602, message="Invalid params")))
+        client.read_resource = AsyncMock(side_effect=MCPError(INVALID_PARAMS, "Invalid params", data))
         source = MCPSkillsSource(client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await source.get_skills(_SOURCE_CTX)
 
     async def test_index_internal_error_propagates(self) -> None:
         """INTERNAL_ERROR (-32603) must propagate, not silently return empty."""
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Internal error")))
+        client.read_resource = AsyncMock(side_effect=MCPError(-32603, "Internal error"))
         source = MCPSkillsSource(client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await source.get_skills(_SOURCE_CTX)
 
     async def test_index_connection_closed_propagates(self) -> None:
         """CONNECTION_CLOSED (-32000) must propagate."""
         client = AsyncMock()
-        client.read_resource = AsyncMock(
-            side_effect=McpError(error=ErrorData(code=-32000, message="Connection closed"))
-        )
+        client.read_resource = AsyncMock(side_effect=MCPError(-32000, "Connection closed"))
         source = MCPSkillsSource(client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await source.get_skills(_SOURCE_CTX)
 
     async def test_index_generic_error_code_propagates(self) -> None:
         """Generic handler error (code 0) must propagate."""
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Some handler error")))
+        client.read_resource = AsyncMock(side_effect=MCPError(0, "Some handler error"))
         source = MCPSkillsSource(client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await source.get_skills(_SOURCE_CTX)
 
     async def test_index_non_mcp_error_propagates(self) -> None:
-        """Non-McpError exceptions (connection drop, timeout) must propagate."""
+        """Non-MCPError exceptions (connection drop, timeout) must propagate."""
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=ConnectionError("connection lost"))
         source = MCPSkillsSource(client=client)
@@ -635,24 +1080,29 @@ class TestMCPSkillsSourceErrorCodeBranching:
             await source.get_skills(_SOURCE_CTX)
 
     async def test_get_resource_internal_error_propagates(self) -> None:
-        """McpError with INTERNAL_ERROR on get_resource must propagate."""
+        """MCPError with INTERNAL_ERROR on get_resource must propagate."""
         from agent_framework import SkillFrontmatter
 
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=-32603, message="Server crashed")))
+        client.read_resource = AsyncMock(side_effect=MCPError(-32603, "Server crashed"))
         fm = SkillFrontmatter(name="test-skill", description="Test.")
         skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await skill.get_resource("references/file.md")
 
-    async def test_get_resource_not_found_returns_none(self) -> None:
-        """McpError with RESOURCE_NOT_FOUND (-32002) on get_resource returns None."""
+    @pytest.mark.parametrize(
+        "resource_not_found_error",
+        _RESOURCE_NOT_FOUND_ERRORS,
+        ids=["legacy-shape", "modern-shape"],
+    )
+    async def test_get_resource_not_found_returns_none(
+        self,
+        resource_not_found_error: Callable[[str], MCPError],
+    ) -> None:
+        """Either valid missing-resource error shape on get_resource returns None."""
         from agent_framework import SkillFrontmatter
 
-        client = AsyncMock()
-        client.read_resource = AsyncMock(
-            side_effect=McpError(error=ErrorData(code=-32002, message="Resource not found"))
-        )
+        client = _make_client(resource_not_found_error)
         fm = SkillFrontmatter(name="test-skill", description="Test.")
         skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
         result = await skill.get_resource("references/file.md")
@@ -681,14 +1131,14 @@ class TestMCPSkillsSourceErrorCodeBranching:
             await skill.get_resource("references/file.md")
 
     async def test_get_resource_generic_mcp_error_propagates(self) -> None:
-        """McpError with a generic code (0) on get_resource must propagate."""
+        """MCPError with a generic code (0) on get_resource must propagate."""
         from agent_framework import SkillFrontmatter
 
         client = AsyncMock()
-        client.read_resource = AsyncMock(side_effect=McpError(error=ErrorData(code=0, message="Handler error")))
+        client.read_resource = AsyncMock(side_effect=MCPError(0, "Handler error"))
         fm = SkillFrontmatter(name="test-skill", description="Test.")
         skill = MCPSkill(frontmatter=fm, skill_md_uri="skill://test/SKILL.md", client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await skill.get_resource("references/file.md")
 
     async def test_index_timeout_error_propagates(self) -> None:
@@ -705,12 +1155,15 @@ class TestMCPSkillsSourceErrorCodeBranching:
 # ---------------------------------------------------------------------------
 
 
-def _make_zip(files: dict[str, bytes]) -> bytes:
-    """Build an in-memory ZIP archive from a ``{path: content}`` mapping."""
+def _make_zip(files: Mapping[str, bytes] | Sequence[tuple[str, bytes]]) -> bytes:
+    """Build an in-memory ZIP from a mapping or ordered entries, including duplicate names."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for name, data in files.items():
-            archive.writestr(name, data)
+    entries = files.items() if isinstance(files, Mapping) else files
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Duplicate name:", category=UserWarning, module="zipfile")
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, data in entries:
+                archive.writestr(name, data)
     return buffer.getvalue()
 
 
@@ -745,8 +1198,384 @@ def _archive_client(index_json: str, archive_url: str, archive_bytes: bytes, mim
     """Build a mock client that serves the index and a single archive blob resource."""
     return _make_client(**{
         "skill://index.json": _make_text_result(index_json, uri="skill://index.json"),
-        str(AnyUrl(archive_url)): _make_blob_result(archive_bytes, uri=archive_url, mime_type=mime_type),
+        archive_url: _make_blob_result(archive_bytes, uri=archive_url, mime_type=mime_type),
     })
+
+
+# ---------------------------------------------------------------------------
+# MCP skill IFC tests
+# ---------------------------------------------------------------------------
+
+
+class TestMCPSkillsIFC:
+    """Tests for SecureMCPToolProxy's operation-scoped skill result adapters."""
+
+    async def test_proxy_source_requires_an_active_connection(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        proxy = SecureMCPToolProxy(MCPTool(name="skills"))  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+        with pytest.raises(RuntimeError, match="must be connected"):
+            await proxy.skills_source().get_skills(_SOURCE_CTX)
+
+    def test_proxy_source_rejects_connection_overrides(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        client = _make_client()
+        proxy = SecureMCPToolProxy(
+            MCPTool(name="skills", session=client)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        )
+
+        with pytest.raises(TypeError, match="skills_source.*owns"):
+            proxy.skills_source(client=client)
+
+    async def test_proxy_source_follows_replaced_connection(self) -> None:
+        from agent_framework._mcp import MCPTool
+        from agent_framework.security import SecureMCPToolProxy
+
+        old_client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+        })
+        new_client = _make_client(**{
+            "skill://unit-converter/SKILL.md": _make_text_result(
+                "# New\nnew body",
+                uri="skill://unit-converter/SKILL.md",
+                meta=_PRIVATE_IFC_META,
+            ),
+        })
+        mcp_tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="skills",
+            session=old_client,
+        )
+        proxy = SecureMCPToolProxy(mcp_tool)
+        skills = await proxy.skills_source().get_skills(_SOURCE_CTX)
+
+        with pytest.warns(DeprecationWarning, match="MCPTool.session"):
+            mcp_tool.session = new_client
+        tools = await _create_skill_tools(skills)
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == "# New\nnew body"
+        _assert_ifc_label(result, _RESTRICTED_IFC_LABEL)
+
+    def test_invalid_server_ifc_policy_is_rejected(self) -> None:
+        invalid_policy: Any = "invalid"
+        with pytest.raises(ValueError, match="server_ifc_policy"):
+            _secure_skills_source(_make_client(), server_ifc_policy=invalid_policy)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES_WITH_DEFAULT)
+    async def test_skill_md_ifc_applies_to_load_and_cached_load(
+        self,
+        server_ifc_policy: Any | None,
+        expected_label: dict[str, str],
+    ) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        source = (
+            _secure_skills_source(client)
+            if server_ifc_policy is None
+            else _secure_skills_source(client, server_ifc_policy=server_ifc_policy)
+        )
+        tools = await _create_skill_tools(source)
+
+        first = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+        second = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert first[0].text == SAMPLE_SKILL_MD
+        assert second[0].text == SAMPLE_SKILL_MD
+        _assert_ifc_label(first, expected_label)
+        _assert_ifc_label(second, expected_label)
+        assert client.read_resource.await_args_list == [
+            call("skill://index.json"),
+            call(skill_uri),
+        ]
+
+    async def test_skill_adapter_runs_after_custom_result_parser(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client))
+        tools["load_skill"].result_parser = lambda _: "projected instructions"
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == "projected instructions"
+        _assert_ifc_label(result, _RESTRICTED_IFC_LABEL)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES)
+    async def test_sibling_resource_ifc_applies_to_read_resource(
+        self,
+        server_ifc_policy: Any,
+        expected_label: dict[str, str],
+    ) -> None:
+        resource_uri = "skill://unit-converter/references/checklist.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            resource_uri: _make_text_result("private checklist", uri=resource_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy=server_ifc_policy))
+
+        result = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="unit-converter",
+            resource_name="references/checklist.md",
+        )
+
+        assert result[0].text == "private checklist"
+        _assert_ifc_label(result, expected_label)
+
+    async def test_sibling_resource_does_not_inherit_cached_skill_adapter(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        resource_uri = "skill://unit-converter/references/public.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+            resource_uri: _make_text_result("public resource", uri=resource_uri),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        manifest = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+        resource = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="unit-converter",
+            resource_name="references/public.md",
+        )
+
+        _assert_ifc_label(manifest, _AUTHORITATIVE_IFC_LABEL)
+        _assert_ifc_label(resource, _IGNORED_IFC_LABEL)
+
+    @pytest.mark.parametrize(("server_ifc_policy", "expected_label"), _SERVER_IFC_POLICY_CASES)
+    async def test_archive_ifc_applies_to_manifest_and_extracted_resource(
+        self,
+        server_ifc_policy: Any,
+        expected_label: dict[str, str],
+    ) -> None:
+        archive_uri = "skill://archives/packaged-skill.zip"
+        archive = _make_zip({
+            "SKILL.md": ARCHIVE_SKILL_MD.encode(),
+            "references/private.md": b"private archive resource",
+        })
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(
+                _make_archive_index("packaged-skill", archive_uri),
+                uri="skill://index.json",
+            ),
+            archive_uri: _make_blob_result(
+                archive,
+                uri=archive_uri,
+                mime_type="application/zip",
+                meta=_PRIVATE_IFC_META,
+            ),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy=server_ifc_policy))
+
+        manifest = await _invoke_skill_tool(tools["load_skill"], skill_name="packaged-skill")
+        resource = await _invoke_skill_tool(
+            tools["read_skill_resource"],
+            skill_name="packaged-skill",
+            resource_name="references/private.md",
+        )
+
+        assert "Instructions from an archive." in manifest[0].text
+        assert resource[0].text == "private archive resource"
+        _assert_ifc_label(manifest, expected_label)
+        _assert_ifc_label(resource, expected_label)
+
+    async def test_index_ifc_is_not_inherited_by_skill_md(self) -> None:
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(
+                SAMPLE_SKILL_INDEX,
+                uri="skill://index.json",
+                meta=_PRIVATE_IFC_META,
+            ),
+            "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == SAMPLE_SKILL_MD
+        _assert_ifc_label(result, _IGNORED_IFC_LABEL)
+
+    @pytest.mark.parametrize(
+        "meta",
+        [
+            {"ifc": {"integrity": "trusted"}},
+            {
+                "ifc": {
+                    "integrity": "trusted",
+                    "confidentiality": "private",
+                    "padding": "x" * 5000,
+                }
+            },
+        ],
+        ids=["malformed", "oversized"],
+    )
+    async def test_invalid_ifc_fails_closed(self, meta: dict[str, Any]) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=meta),
+        })
+        tools = await _create_skill_tools(_secure_skills_source(client))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].additional_properties["security_label"] == {
+            "integrity": "untrusted",
+            "confidentiality": "user_identity",
+            "metadata": {"source": "invalid_mcp_ifc"},
+        }
+        assert "_mcp_tool_result_security_meta" not in result[0].additional_properties
+        assert "_security_label_authoritative" not in result[0].additional_properties
+
+    async def test_plain_mcp_source_remains_unlabeled(self) -> None:
+        skill_uri = "skill://unit-converter/SKILL.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            skill_uri: _make_text_result(SAMPLE_SKILL_MD, uri=skill_uri, meta=_PRIVATE_IFC_META),
+        })
+        tools = await _create_skill_tools(MCPSkillsSource(client=client))
+
+        result = await _invoke_skill_tool(tools["load_skill"], skill_name="unit-converter")
+
+        assert result[0].text == SAMPLE_SKILL_MD
+        assert result[0].additional_properties == {}
+
+    @pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+    @pytest.mark.usefixtures("span_exporter")
+    async def test_adapter_does_not_leak_after_result_parser_error(self) -> None:
+        resource_uri = "skill://unit-converter/references/private.md"
+        client = _make_client(**{
+            "skill://index.json": _make_text_result(SAMPLE_SKILL_INDEX, uri="skill://index.json"),
+            resource_uri: _make_text_result("private resource", uri=resource_uri, meta=_PRIVATE_IFC_META),
+        })
+        mcp_skill = (await _secure_skills_source(client).get_skills(_SOURCE_CTX))[0]
+        inline = InlineSkill(
+            frontmatter=SkillFrontmatter(name="inline-skill", description="Inline test skill."),
+            instructions="Inline instructions.",
+            resources=[InlineSkillResource(name="reference.md", content="inline resource")],
+        )
+        tools = await _create_skill_tools([mcp_skill, inline])
+        read_tool = tools["read_skill_resource"]
+        context = FunctionInvocationContext(function=read_tool, arguments={})
+
+        def fail_parser(value: Any) -> str:
+            raise ValueError(f"parser failed: {value}")
+
+        read_tool.result_parser = fail_parser
+        with pytest.raises(ValueError, match="parser failed") as exc_info:
+            await read_tool.invoke(
+                arguments={
+                    "skill_name": "unit-converter",
+                    "resource_name": "references/private.md",
+                },
+                context=context,
+            )
+        error_result = _finalize_function_result(
+            call_id="call-1",
+            result=f"Error: {exc_info.value}",
+            exception=str(exc_info.value),
+            context=context,
+        )
+
+        assert error_result.items is not None
+        assert "private resource" in error_result.result
+        assert error_result.items[0].additional_properties["security_label"] == _RESTRICTED_IFC_LABEL
+        json.dumps(error_result.to_dict())
+
+        read_tool.result_parser = None
+        result = await read_tool.invoke(
+            arguments={
+                "skill_name": "inline-skill",
+                "resource_name": "reference.md",
+            },
+            context=context,
+        )
+
+        assert isinstance(result, list)
+        assert result[0].text == "inline resource"
+        assert result[0].additional_properties == {}
+
+    async def test_concurrent_resource_reads_keep_adapters_isolated(self) -> None:
+        first_uri = "skill://unit-converter/references/first.md"
+        second_uri = "skill://unit-converter/references/second.md"
+        responses = {
+            first_uri: _make_text_result("first", uri=first_uri, meta=_PRIVATE_IFC_META),
+            second_uri: _make_text_result(
+                "second",
+                uri=second_uri,
+                meta={"ifc": {"integrity": "untrusted", "confidentiality": "public"}},
+            ),
+        }
+        client = AsyncMock()
+        started: set[str] = set()
+        both_started = asyncio.Event()
+
+        async def read_resource(uri: str) -> ReadResourceResult:
+            uri_str = str(uri)
+            if uri_str == "skill://index.json":
+                return _make_text_result(SAMPLE_SKILL_INDEX, uri=uri_str)
+            started.add(uri_str)
+            if len(started) == 2:
+                both_started.set()
+            await asyncio.wait_for(both_started.wait(), timeout=1)
+            return responses[uri_str]
+
+        client.read_resource = AsyncMock(side_effect=read_resource)
+        tools = await _create_skill_tools(_secure_skills_source(client, server_ifc_policy="authoritative"))
+
+        first, second = await asyncio.gather(
+            _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name="unit-converter",
+                resource_name="references/first.md",
+            ),
+            _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name="unit-converter",
+                resource_name="references/second.md",
+            ),
+        )
+
+        assert first[0].text == "first"
+        assert second[0].text == "second"
+        _assert_ifc_label(first, _AUTHORITATIVE_IFC_LABEL)
+        _assert_ifc_label(second, _IGNORED_IFC_LABEL)
+
+    async def test_local_inline_and_file_skill_outputs_remain_unchanged(self) -> None:
+        inline = InlineSkill(
+            frontmatter=SkillFrontmatter(name="inline-skill", description="Inline test skill."),
+            instructions="Inline instructions.",
+            resources=[InlineSkillResource(name="reference.md", content="inline resource")],
+        )
+        file_skill = FileSkill(
+            frontmatter=SkillFrontmatter(name="file-skill", description="File test skill."),
+            content="# File instructions",
+            path="file-skill",
+            resources=[InlineSkillResource(name="reference.md", content="file resource")],
+        )
+        tools = await _create_skill_tools([inline, file_skill])
+
+        for skill, expected_resource in ((inline, "inline resource"), (file_skill, "file resource")):
+            manifest = await _invoke_skill_tool(tools["load_skill"], skill_name=skill.frontmatter.name)
+            resource = await _invoke_skill_tool(
+                tools["read_skill_resource"],
+                skill_name=skill.frontmatter.name,
+                resource_name="reference.md",
+            )
+
+            assert manifest[0].text == await skill.get_content()
+            assert manifest[0].additional_properties == {}
+            assert resource[0].text == expected_resource
+            assert resource[0].additional_properties == {}
 
 
 # ---------------------------------------------------------------------------
@@ -1085,17 +1914,17 @@ class TestMCPSkillsSourceArchive:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
 
-        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+        async def _read_resource(uri: str) -> ReadResourceResult:
             uri_str = str(uri)
             if uri_str == "skill://index.json":
                 return _make_text_result(index, uri="skill://index.json")
-            raise McpError(error=ErrorData(code=-32603, message="Internal error"))
+            raise MCPError(-32603, "Internal error")
 
         client = AsyncMock()
         client.read_resource = AsyncMock(side_effect=_read_resource)
 
         source = MCPSkillsSource(client=client)
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await source.get_skills(_SOURCE_CTX)
 
     async def test_archive_download_connection_error_propagates(self) -> None:
@@ -1103,7 +1932,7 @@ class TestMCPSkillsSourceArchive:
         url = "skill://archives/packaged-skill.zip"
         index = _make_archive_index("packaged-skill", url)
 
-        async def _read_resource(uri: AnyUrl) -> ReadResourceResult:
+        async def _read_resource(uri: str) -> ReadResourceResult:
             uri_str = str(uri)
             if uri_str == "skill://index.json":
                 return _make_text_result(index, uri="skill://index.json")
@@ -1139,7 +1968,7 @@ class TestMCPSkillsSourceArchive:
         client = _make_client(**{
             "skill://index.json": _make_text_result(index, uri="skill://index.json"),
             "skill://unit-converter/SKILL.md": _make_text_result(SAMPLE_SKILL_MD),
-            str(AnyUrl(archive_url)): _make_blob_result(archive, uri=archive_url, mime_type="application/zip"),
+            archive_url: _make_blob_result(archive, uri=archive_url, mime_type="application/zip"),
         })
 
         source = MCPSkillsSource(client=client)
@@ -1162,6 +1991,166 @@ class TestMCPSkillsSourceArchive:
         source = MCPSkillsSource(client=client)
         skills = await source.get_skills(_SOURCE_CTX)
         assert skills == []
+
+
+class TestMCPSkillsSourceArchiveCollisions:
+    """Colliding archive members reject only the affected skill."""
+
+    @pytest.mark.parametrize(
+        "alias",
+        [
+            "refs/policy.md",
+            ".//refs//policy.md",
+            "refs\\policy.md",
+            "refs/./policy.md",
+            "/refs/policy.md",
+            "refs/POLICY.md",
+            "REFS\\POLICY.MD",
+        ],
+    )
+    @pytest.mark.parametrize("alias_first", [False, True])
+    @pytest.mark.parametrize("identical", [False, True])
+    @pytest.mark.parametrize("with_digest", [False, True])
+    async def test_colliding_resources_reject_skill_and_warn(
+        self, alias: str, alias_first: bool, identical: bool, with_digest: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "refs/policy.md") if alias_first else ("refs/policy.md", alias)
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("refs/", b""),
+            (first_name, b"First resource."),
+            (second_name, b"First resource." if identical else b"Substituted resource."),
+            (".//refs//other.md", b"Unaffected resource."),
+        ])
+        digest = f"sha256:{hashlib.sha256(archive).hexdigest()}" if with_digest else None
+        index = _make_archive_index("packaged-skill", url, digest=digest)
+        source = MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip"))
+
+        for _ in range(2):
+            skills = await source.get_skills(_SOURCE_CTX)
+
+            assert skills == []
+
+        warnings = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 2
+        assert all("'packaged-skill'" in record.getMessage() for record in warnings)
+
+    @pytest.mark.parametrize("alias", [".//SKILL.md", "/SKILL.md"])
+    @pytest.mark.parametrize("alias_first", [False, True])
+    async def test_duplicate_skill_md_rejects_skill_and_warns(
+        self, alias: str, alias_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        first_name, second_name = (alias, "SKILL.md") if alias_first else ("SKILL.md", alias)
+        archive = _make_zip([
+            (first_name, ARCHIVE_SKILL_MD.encode()),
+            (second_name, ARCHIVE_SKILL_MD.replace("name: packaged-skill", "name: other-skill").encode()),
+            ("reference.md", b"Unaffected resource."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert skills == []
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "Failed to extract archive" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("manifest", "variant"),
+        [
+            ("SKILL.md", "skill.md"),
+            ("SKILL.md", "Skill.MD"),
+            ("nested/SKILL.md", "nested/skill.md"),
+            ("nested/SKILL.md", "NESTED/SKILL.md"),
+        ],
+    )
+    @pytest.mark.parametrize("variant_first", [False, True])
+    async def test_case_variant_manifests_skip_only_affected_skill(
+        self, manifest: str, variant: str, variant_first: bool, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        manifests = [
+            (manifest, ARCHIVE_SKILL_MD.encode()),
+            (variant, ARCHIVE_SKILL_MD.replace("Instructions from an archive.", "Other instructions.").encode()),
+        ]
+        if variant_first:
+            manifests.reverse()
+        archive = _make_zip(manifests)
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["unit-converter"]
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelname == "WARNING"
+        assert "'packaged-skill'" in caplog.text
+        assert "SKILL.md paths that differ only by case" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("manifest", "other"),
+        [("SKILL.md", "nested/skill.md"), ("a/SKILL.md", "b/skill.md")],
+    )
+    async def test_manifests_in_distinct_directories_are_not_case_variants(self, manifest: str, other: str) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip([
+            (manifest, ARCHIVE_SKILL_MD.encode()),
+            (other, ARCHIVE_SKILL_MD.encode()),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert [skill.frontmatter.name for skill in skills] == ["packaged-skill"]
+
+    @pytest.mark.parametrize("duplicate", ["./reference.md", "REFERENCE.md"])
+    async def test_collision_does_not_skip_other_skills(self, duplicate: str, caplog: pytest.LogCaptureFixture) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        index_data = json.loads(SAMPLE_SKILL_INDEX)
+        index_data["skills"].extend(json.loads(_make_archive_index("packaged-skill", url))["skills"])
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"First."),
+            (duplicate, b"Second."),
+        ])
+        client = _archive_client(json.dumps(index_data), url, archive, "application/zip")
+
+        skills = await MCPSkillsSource(client=client).get_skills(_SOURCE_CTX)
+
+        assert [skill.frontmatter.name for skill in skills] == ["unit-converter"]
+        assert "'packaged-skill'" in caplog.text
+
+    async def test_distinct_resource_paths_load_with_case_insensitive_lookup(self) -> None:
+        url = "skill://archives/packaged-skill.zip"
+        archive = _make_zip([
+            ("SKILL.md", ARCHIVE_SKILL_MD.encode()),
+            ("reference.md", b"Root resource."),
+            ("REFERENCE.MD/nested.md", b"Nested resource."),
+            ("refs/one.md", b"One."),
+            ("REFS/two.md", b"Two."),
+        ])
+        index = _make_archive_index("packaged-skill", url)
+        skills = await MCPSkillsSource(client=_archive_client(index, url, archive, "application/zip")).get_skills(
+            _SOURCE_CTX
+        )
+
+        assert len(skills) == 1
+        for name, content in (
+            ("REFERENCE.MD", "Root resource."),
+            ("reference.md/NESTED.MD", "Nested resource."),
+            ("REFS/ONE.MD", "One."),
+            ("refs/two.md", "Two."),
+        ):
+            resource = await skills[0].get_resource(name)
+            assert resource is not None
+            assert await resource.read() == content
 
 
 class TestMCPSkillsSourceArchiveDigest:
@@ -1347,7 +2336,7 @@ class TestMCPSkillsSourceArchiveDigest:
 
         assert len(skills) == 1
         assert isinstance(skills[0], MCPSkill)
-        client.read_resource.assert_awaited_once_with(AnyUrl("skill://index.json"))
+        client.read_resource.assert_awaited_once_with("skill://index.json")
 
     @pytest.mark.parametrize("refresh_failure", ["digest", "transport"])
     async def test_cache_refresh_handles_verification_and_transport_failures(
@@ -1364,7 +2353,7 @@ class TestMCPSkillsSourceArchiveDigest:
         first = await source.get_skills(_SOURCE_CTX)
         assert len(first) == 1
         assert await source.get_skills(_SOURCE_CTX) is first
-        client.read_resource.assert_any_await(AnyUrl(url))
+        client.read_resource.assert_any_await(url)
         assert client.read_resource.await_count == 2
 
         tampered = _make_zip({
@@ -1467,6 +2456,50 @@ class TestArchiveExtractor:
         archive = _make_zip({"a.md": b"a", "b.md": b"b", "c.md": b"c"})
         with pytest.raises(ValueError, match="file count"):
             _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 2, 1024 * 1024)
+
+    def test_duplicate_members_count_toward_file_limit(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip([("reference.md", b"First."), ("reference.md", b"Second.")])
+
+        with pytest.raises(ValueError, match="file count"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 1, 1024 * 1024)
+
+    def test_duplicate_normalized_path_rejects_archive(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip([("reference.md", b"First."), ("./reference.md", b"Second.")])
+        with pytest.raises(ValueError, match="Duplicate archive member"):
+            _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+    def test_case_variants_are_extracted_as_is(self) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        entries = {"reference.md": b"First.", "REFERENCE.md": b"Second."}
+        files = _extract_archive_to_memory(_make_zip(entries), _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == entries
+
+    def test_distinct_lowercase_resource_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        # Resource lookup uses lower(), not Unicode casefold().
+        archive = _make_zip({"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"stra\u00dfe.md": b"First.", "STRASSE.md": b"Second."}
+        assert not caplog.records
+
+    def test_distinct_trailing_dot_names_are_preserved(self, caplog: pytest.LogCaptureFixture) -> None:
+        from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory
+
+        archive = _make_zip({"reference.md": b"First.", "reference.md.": b"Second."})
+
+        files = _extract_archive_to_memory(archive, _ArchiveFormat.ZIP, 20, 1024 * 1024)
+
+        assert files == {"reference.md": b"First.", "reference.md.": b"Second."}
+        assert not caplog.records
 
     def test_uncompressed_size_limit_is_enforced(self) -> None:
         from agent_framework._skills import _ArchiveFormat, _extract_archive_to_memory

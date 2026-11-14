@@ -79,6 +79,8 @@ internal sealed class MessageAIContextProviderAgent : DelegatingAIAgent
             throw;
         }
 
+        await using var _ = enumerator.ConfigureAwait(false);
+
         bool hasUpdates;
         try
         {
