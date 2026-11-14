@@ -982,6 +982,42 @@ def test_meta_endpoint_requires_auth(monkeypatch):
         assert ok.status_code == 200
 
 
+def test_non_ascii_presented_token_returns_401():
+    """Non-ASCII presented token with ASCII configured token returns 401, not 500."""
+    server = DevServer(auth_token="secret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities", headers={"Authorization": b"Bearer s\xe9cret"})
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "invalid_token"
+
+
+def test_non_latin1_configured_token_does_not_crash():
+    """A configured token that cannot be represented in Latin-1 returns 401."""
+    server = DevServer(auth_token="secret\u20ac")  # € is outside Latin-1
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities", headers={"Authorization": b"Bearer secret"})
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "invalid_token"
+
+
+def test_ascii_tokens_still_work():
+    """ASCII tokens continue to work correctly after the non-ASCII fix."""
+    server = DevServer(auth_token="secret")
+    app = server.get_app()
+
+    with TestClient(app, base_url="http://127.0.0.1") as client:
+        response = client.get("/v1/entities", headers={"Authorization": "Bearer secret"})
+        assert response.status_code == 200
+
+        response = client.get("/v1/entities", headers={"Authorization": "Bearer wrong"})
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "invalid_token"
+
+
 def test_loopback_bind_rejects_non_allowlisted_host_header(monkeypatch):
     """A loopback-bound server must reject requests with a non-loopback Host header.
 

@@ -472,7 +472,25 @@ class DevServer:
                     )
 
                 token = auth_header.replace("Bearer ", "", 1).strip()
-                if not secrets.compare_digest(token, expected_token):
+                # Starlette decodes header bytes as Latin-1. Encode the presented token
+                # back to bytes so compare_digest() can compare the original header byte
+                # values without the non-ASCII string restriction.
+                try:
+                    token_bytes = token.encode("latin-1")
+                    expected_token_bytes = expected_token.encode("latin-1")
+                except UnicodeEncodeError:
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error": {
+                                "message": "Invalid authentication token",
+                                "type": "authentication_error",
+                                "code": "invalid_token",
+                            }
+                        },
+                    )
+
+                if not secrets.compare_digest(token_bytes, expected_token_bytes):
                     return JSONResponse(
                         status_code=401,
                         content={
