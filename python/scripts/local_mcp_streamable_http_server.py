@@ -8,7 +8,8 @@ import argparse
 import asyncio
 from collections.abc import Sequence
 
-from mcp.server.fastmcp import FastMCP
+from mcp import types
+from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -29,14 +30,11 @@ def _normalize_mount_path(path: str) -> str:
     return normalized.rstrip("/") or "/"
 
 
-def create_server(*, host: str, port: int, mount_path: str) -> FastMCP:
+def create_server(*, mount_path: str) -> MCPServer:
     """Create the local MCP integration test server."""
-    server = FastMCP(
+    server = MCPServer(
         name=SERVER_NAME,
         instructions="Deterministic local MCP server used by Agent Framework integration tests.",
-        host=host,
-        port=port,
-        streamable_http_path=mount_path,
         log_level="INFO",
     )
 
@@ -44,17 +42,16 @@ def create_server(*, host: str, port: int, mount_path: str) -> FastMCP:
     async def healthz(_request: Request) -> Response:
         """Return a simple readiness response for CI health checks."""
         await asyncio.sleep(0)
-        return JSONResponse(
-            {
-                "status": "ok",
-                "name": SERVER_NAME,
-                "mcp_path": mount_path,
-            }
-        )
+        return JSONResponse({
+            "status": "ok",
+            "name": SERVER_NAME,
+            "mcp_path": mount_path,
+        })
 
     @server.tool(
         name="search_agent_framework_docs",
         description="Return deterministic Agent Framework documentation text for MCP integration tests.",
+        annotations=types.ToolAnnotations(read_only_hint=True),
     )
     def search_agent_framework_docs(query: str) -> str:
         """Return a deterministic response for the MCP integration tests."""
@@ -83,12 +80,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> None:
     """Start the local MCP streamable HTTP server."""
     args = parse_args(argv)
-    server = create_server(
+    mount_path = _normalize_mount_path(args.mount_path)
+    server = create_server(mount_path=mount_path)
+    server.run(
+        transport="streamable-http",
         host=args.host,
         port=args.port,
-        mount_path=_normalize_mount_path(args.mount_path),
+        streamable_http_path=mount_path,
     )
-    server.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
