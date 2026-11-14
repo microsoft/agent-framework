@@ -455,7 +455,13 @@ class FunctionInvocationContext:
                 Middleware that short-circuits without calling ``call_next()`` skips
                 final validation and function execution.
         session: The agent session for this invocation, if any.
-        metadata: Metadata dictionary for sharing data between function middleware.
+        metadata: Metadata dictionary shared by function middleware and context-aware tools.
+                Automatic invocation supplies ``"call_id"`` for provider correlation and
+                ``"function_call_occurrence_id"`` for the canonical ``Content.id``, when present,
+                before middleware and tool execution, including approval resume. Standalone
+                ``FunctionTool.invoke`` calls set or clear ``"call_id"`` from ``tool_call_id``
+                before validation. A supplied occurrence ID is retained only when the context's
+                provider call ID matches the supplied ``tool_call_id``; otherwise it is cleared.
         result: Function execution result. This attribute carries no guaranteed type.
                 The pipeline assigns :meth:`FunctionTool.invoke`'s output — a
                 ``list[Content]``, or the wrapped function's raw return value when the

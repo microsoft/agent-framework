@@ -195,6 +195,11 @@ The vector store API is experimental under the shared `VECTOR_STORES` feature ID
 - **`AgentMiddleware`** - Intercepts agent `run()` calls
 - **`ChatMiddleware`** - Intercepts chat client `get_response()` calls
 - **`FunctionMiddleware`** - Intercepts function/tool invocations
+- **Function invocation identity metadata** - `FunctionInvocationContext.metadata["call_id"]` holds the provider
+  correlation ID, and `metadata["function_call_occurrence_id"]` holds the canonical `Content.id` when present.
+  The automatic loop supplies both before function middleware and tool execution, including approval resume.
+  Standalone `FunctionTool.invoke` sets or clears the provider ID from `tool_call_id` before validation and
+  retains an occurrence ID only when it was supplied with a matching provider call ID.
 - **`AgentContext`** / **`ChatContext`** / **`FunctionInvocationContext`** - Context objects passed through middleware. A tool can declare a `FunctionInvocationContext` parameter to receive it; `context.tools` is the live, mutable tools list for the run, and `context.add_tools(...)` / `context.remove_tools(...)` enable progressive tool exposure (changes apply on the next function-calling iteration). Chat middleware that constructs provider-local replacement messages must call `context.record_message_replacement(...)` for every replacement before downstream compaction so complete summaries can reconcile to caller-owned messages without persisting the replacements themselves.
 - **`MessageInjectionMiddleware`** - Session-scoped chat middleware that lets tools or other code enqueue messages for the next model call in the current `AgentSession`; it drains queued messages into the next call and loops only when no function calls need to be handled by the function invocation layer.
 
