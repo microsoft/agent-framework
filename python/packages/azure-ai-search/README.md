@@ -44,9 +44,11 @@ In agentic mode, pass `knowledge_source_params` to set per-source retrieval opti
 such as `SearchIndexKnowledgeSourceParams(knowledge_source_name=..., filter_add_on=...)`.
 Each entry replaces the provider's defaults for the source with the same name.
 
-Injected SDK clients bypass connection settings and remain caller-owned unless
-`managed_client=True`. Use async context managers to close owned store/collection
-clients; credentials and embedding clients remain caller-owned.
+Injected SDK clients take precedence over connection settings and remain caller-owned,
+including when `managed_client=True` is passed for compatibility. That combination
+emits a `DeprecationWarning`: close injected clients yourself, for example with
+`async with client:`. Use async context managers to close clients created by the
+store or collection; credentials and embedding clients remain caller-owned.
 
 ## Vector collections and stores (experimental)
 

@@ -6,6 +6,7 @@ import asyncio
 import gc
 import inspect
 import json
+import warnings
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from dataclasses import dataclass
@@ -888,7 +889,7 @@ async def test_owned_and_borrowed_clients(client: Mock) -> None:
     client.close.assert_awaited_once()
     async with AzureAISearchCollection(dict, definition=definition(), search_client=client, managed_client=True):
         pass
-    assert client.close.await_count == 2
+    client.close.assert_awaited_once()
 
 
 @pytest.mark.parametrize("managed", [False, True])
@@ -926,7 +927,7 @@ async def test_store_releases_closed_collections_but_retains_open_clients(manage
     await store.close()
     await store.close()
     active_client.close.assert_awaited_once()
-    assert index_client.close.await_count == int(managed)
+    index_client.close.assert_not_awaited()
     assert not store._collections
     gc.collect()
     assert active_ref() is None
@@ -945,7 +946,7 @@ async def test_store_releases_collection_after_close_error(client: Mock, error: 
     await collection.close()
     await store.close()
     client.close.assert_awaited_once()
-    index_client.close.assert_awaited_once()
+    index_client.close.assert_not_awaited()
 
 
 async def test_close_remaining_clients_if_one_close_fails(client: Mock) -> None:
@@ -960,7 +961,7 @@ async def test_close_remaining_clients_if_one_close_fails(client: Mock) -> None:
         await store.close()
     client.close.assert_awaited_once()
     other_client.close.assert_awaited_once()
-    index_client.close.assert_awaited_once()
+    index_client.close.assert_not_awaited()
     assert not store._collections
 
 
@@ -1218,18 +1219,71 @@ async def test_injected_clients_bypass_settings_and_preserve_ownership(
         await connector.close()
         await connector.close()
     settings_loader.assert_not_called()
-    assert index_client.close.await_count == int(managed and kind != "collection-search")
-    assert client.close.await_count == int(kind == "collection-index" or (managed and kind != "store"))
+    index_client.close.assert_not_awaited()
+    assert client.close.await_count == int(kind == "collection-index")
+
+
+@pytest.mark.parametrize("kind", ["store", "collection-index", "collection-search", "collection-both"])
+def test_managed_injected_clients_warn(kind: str, client: Mock) -> None:
+    index_client = Mock(spec=SearchIndexClient)
+    index_client.get_search_client.return_value = client
+    with pytest.warns(DeprecationWarning, match="no longer transfers ownership") as caught:
+        if kind == "store":
+            AzureAISearchStore(index_client=index_client, managed_client=True)
+        else:
+            options: dict[str, Any] = {"managed_client": True}
+            if kind != "collection-search":
+                options["index_client"] = index_client
+            if kind != "collection-index":
+                options["search_client"] = client
+            AzureAISearchCollection(dict, definition=definition(), **options)
+    assert len(caught) == 1
+
+
+@pytest.mark.parametrize("managed", [None, False])
+@pytest.mark.parametrize("kind", ["store", "collection-index", "collection-search", "collection-both"])
+def test_borrowed_clients_without_managed_true_do_not_warn(kind: str, managed: bool | None, client: Mock) -> None:
+    index_client = Mock(spec=SearchIndexClient)
+    index_client.get_search_client.return_value = client
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        if kind == "store":
+            AzureAISearchStore(index_client=index_client, managed_client=managed)
+        else:
+            options: dict[str, Any] = {"managed_client": managed}
+            if kind != "collection-search":
+                options["index_client"] = index_client
+            if kind != "collection-index":
+                options["search_client"] = client
+            AzureAISearchCollection(dict, definition=definition(), **options)
+    assert not any("managed_client=True" in str(warning.message) for warning in caught)
+
+
+@pytest.mark.parametrize("kind", ["store", "collection"])
+def test_managed_created_clients_do_not_warn(kind: str, client: Mock) -> None:
+    index_client = Mock(spec=SearchIndexClient)
+    index_client.get_search_client.return_value = client
+    with (
+        patch("agent_framework_azure_ai_search._vector_store._create_index_client", return_value=index_client),
+        warnings.catch_warnings(record=True) as caught,
+    ):
+        warnings.simplefilter("always", DeprecationWarning)
+        if kind == "store":
+            AzureAISearchStore(managed_client=True)
+        else:
+            AzureAISearchCollection(dict, definition=definition(), managed_client=True)
+    assert not any("managed_client=True" in str(warning.message) for warning in caught)
 
 
 @pytest.mark.parametrize("kind", ["store", "collection-index", "collection-search", "collection-both"])
 @pytest.mark.parametrize("override", ["endpoint", "credential", "api_key", "env_file_path", "env_file_encoding"])
-def test_injected_clients_reject_explicit_settings_before_resolution(
+async def test_injected_clients_ignore_explicit_settings_before_resolution(
     client: Mock,
     kind: str,
     override: str,
 ) -> None:
     index_client = Mock(spec=SearchIndexClient)
+    index_client.get_search_client.return_value = client
     connection_options = {
         "endpoint": "https://explicit.search.windows.net",
         "credential": AzureKeyCredential("credential-key"),
@@ -1244,16 +1298,24 @@ def test_injected_clients_reject_explicit_settings_before_resolution(
         options["search_client"] = client
     with (
         patch("agent_framework_azure_ai_search._vector_store.load_settings") as settings_loader,
-        pytest.raises(ValueError, match="Injected clients cannot be combined"),
+        patch("agent_framework_azure_ai_search._vector_store.SearchIndexClient") as factory,
     ):
         if kind == "store":
-            AzureAISearchStore(**options)
+            store = AzureAISearchStore(**options, managed_client=True)
+            assert store.index_client is index_client
+            await store.close()
         else:
-            AzureAISearchCollection(dict, definition=definition(), **options)
+            collection = AzureAISearchCollection(dict, definition=definition(), **options, managed_client=True)
+            assert collection.index_client is (None if kind == "collection-search" else index_client)
+            if kind == "collection-search":
+                assert collection.search_client is client
+            await collection.close()
     settings_loader.assert_not_called()
-    index_client.get_search_client.assert_not_called()
-    index_client.close.assert_not_called()
-    client.close.assert_not_called()
+    factory.assert_not_called()
+    assert index_client.get_search_client.call_count == int(kind == "collection-index")
+    index_client.close.assert_not_awaited()
+    if kind != "collection-index":
+        client.close.assert_not_awaited()
 
 
 async def test_store_collections_reuse_resolved_clients_without_settings(
