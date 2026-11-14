@@ -52,7 +52,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Count to 3");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Count to 3");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -120,7 +120,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -196,7 +196,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponseResult nonStreamingResponse = await responseClient.CreateResponseAsync("test-model", "Test");
 
         // Act - Streaming
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
         StringBuilder streamingContent = new();
         await foreach (StreamingResponseUpdate update in streamingResult)
         {
@@ -250,7 +250,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -289,7 +289,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -343,7 +343,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Generate long text");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Generate long text");
 
         // Assert
         StringBuilder contentBuilder = new();
@@ -374,7 +374,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<int> outputIndices = [];
@@ -410,7 +410,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         StringBuilder contentBuilder = new();
@@ -440,7 +440,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         StringBuilder contentBuilder = new();
@@ -492,7 +492,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<string> itemIds = [];
@@ -554,7 +554,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         // Act & Assert - Make 3 sequential streaming requests
         for (int i = 0; i < 3; i++)
         {
-            AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", $"Request {i}");
+            AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", $"Request {i}");
             StringBuilder contentBuilder = new();
 
             await foreach (StreamingResponseUpdate update in streamingResult)
@@ -611,7 +611,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<int> sequenceNumbers = [];
@@ -666,7 +666,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         StringBuilder contentBuilder = new();
@@ -719,7 +719,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<int> contentIndices = [];
@@ -774,7 +774,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         StringBuilder contentBuilder = new();
@@ -837,7 +837,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Show me an image");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Show me an image");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -899,7 +899,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Generate audio");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Generate audio");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -1199,7 +1199,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Calculate 2+2");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Calculate 2+2");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -1256,7 +1256,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Show me various content");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Show me various content");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -1289,7 +1289,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];
@@ -1317,7 +1317,7 @@ public sealed class OpenAIResponsesIntegrationTests : IAsyncDisposable
         ResponsesClient responseClient = this.CreateResponseClient(AgentName);
 
         // Act
-        AsyncCollectionResult<StreamingResponseUpdate> streamingResult = responseClient.CreateResponseStreamingAsync("test-model", "Test");
+        AsyncStreamingResult<StreamingResponseUpdate> streamingResult = await responseClient.CreateResponseStreamingAsync("test-model", "Test");
 
         // Assert
         List<StreamingResponseUpdate> updates = [];

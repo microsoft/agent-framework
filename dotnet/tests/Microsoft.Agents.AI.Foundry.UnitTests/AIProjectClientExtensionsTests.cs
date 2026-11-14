@@ -686,7 +686,7 @@ public sealed class AIProjectClientExtensionsTests
         // Add tools to the definition
         definition.Tools.Add(ResponseTool.CreateFunctionTool("create_tool", BinaryData.FromString("{}"), strictModeEnabled: false));
         definition.Tools.Add(new BingCustomSearchPreviewTool(new BingCustomSearchToolOptions([new BingCustomSearchOptions("connection-id", "instance-name")])));
-        definition.Tools.Add(new BrowserAutomationPreviewTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionOptions("id"))));
+        definition.Tools.Add(new BrowserAutomationTool(new BrowserAutomationToolOptions(new BrowserAutomationToolConnectionOptions("id"))));
         definition.Tools.Add(new A2APreviewTool { BaseUri = new Uri("https://test-uri.microsoft.com") });
         definition.Tools.Add(new BingGroundingTool(new BingGroundingSearchToolOptions([new BingGroundingSearchOptions("connection-id")])));
         definition.Tools.Add(new MicrosoftFabricPreviewTool(fabricToolOptions));

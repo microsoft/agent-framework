@@ -96,7 +96,7 @@ try
 
         ComputerCallOutputResponseItem callOutput = new(
             computerCall.CallId,
-            ComputerCallOutput.CreateScreenshotOutput(
+            ComputerCallOutput.CreateComputerScreenshotOutput(
                 screenshotImageFileId: screenshots[ComputerUseUtil.GetScreenshotKey(currentState)]));
 
         // The model can flag an action as risky with pending safety checks. A real application must show them to the

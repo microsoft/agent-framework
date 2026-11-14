@@ -24,7 +24,7 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// <remarks>
 /// <para>
 /// Both SDKs generate their models from the same OpenAI wire schema, but neither can build the other's item, and
-/// OpenAI .NET (2.13.0 and 2.14.0) has no typed GA <c>actions</c> batch. The item is therefore converted through its
+/// OpenAI .NET (2.13.0 through 2.15.0) has no typed GA <c>actions</c> batch. The item is therefore converted through its
 /// JSON: fields one SDK does not type (such as <c>actions</c> or the screenshot <c>detail</c>) travel as additional
 /// data. Replace this with typed conversions once OpenAI .NET models the GA computer items.
 /// </para>
@@ -129,7 +129,7 @@ internal static class ComputerToolItemConverter
 
     private static ChatMessage ToToolCallMessage(BinaryData agentServerJson, string callId)
     {
-        // OpenAI .NET (2.13.0 and 2.14.0) models only the preview item: ComputerCallResponseItem always writes "action",
+        // OpenAI .NET (2.13.0 through 2.15.0) models only the preview item: ComputerCallResponseItem always writes "action",
         // so a GA call sent back as that type would carry "action": null next to "actions", which the Responses API
         // rejects. Its Patch API cannot remove "action" (NullReferenceException), so the item is wrapped in a subclass
         // that writes this JSON as is. The JSON also drops a null "action" in case a caller sent one.

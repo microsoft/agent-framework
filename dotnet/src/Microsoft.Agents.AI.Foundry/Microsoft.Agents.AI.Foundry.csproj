@@ -27,9 +27,7 @@
 
   <ItemGroup>
     <PackageReference Include="Azure.AI.Projects" />
-    <!-- Direct reference so consumers resolve 3.0.0-beta.5 instead of the NU1603 fallback to 3.0.0-beta.1
-         caused by Azure.AI.Projects 3.0.0-beta.5 depending on an unpublished alpha. The Foundry tool types
-         (OpenApiTool, BingGroundingTool, ...) also live in this package now. -->
+    <!-- Direct reference because the Foundry tool types (OpenApiTool, BingGroundingTool, ...) live in this package. -->
     <PackageReference Include="Azure.AI.Extensions.OpenAI" />
     <PackageReference Include="Azure.Core" />
     <PackageReference Include="Microsoft.Extensions.AI" />

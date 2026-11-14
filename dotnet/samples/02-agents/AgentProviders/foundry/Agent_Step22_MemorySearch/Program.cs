@@ -65,7 +65,7 @@ try
                 Console.WriteLine($"  - Memory ID: {memoryItem.MemoryId}");
                 Console.WriteLine($"    Scope: {memoryItem.Scope}");
                 Console.WriteLine($"    Content: {memoryItem.Content}");
-                Console.WriteLine($"    Updated: {memoryItem.UpdatedOn}");
+                Console.WriteLine($"    Updated: {memoryItem.UpdatedAt}");
             }
         }
     }
