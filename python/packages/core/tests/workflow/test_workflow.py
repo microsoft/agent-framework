@@ -1681,6 +1681,83 @@ async def test_workflow_partial_stream_cancellation_write_not_committed_by_succe
     assert "a_cleanup" not in committed
 
 
+@pytest.mark.parametrize("operation", ["discard", "commit", "import_state", "begin_epoch"])
+async def test_workflow_partial_stream_cancellation_state_operation_ignored_for_successor(operation: str) -> None:
+    """A dropped run's cancellation cleanup must not discard, commit, import into or take over a successor's state.
+
+    Stream A is dropped while its executor is blocked. Stream B stages its own write, then A is
+    finalized and its executor's ``finally`` calls the operation on ``ctx.state``. B's writes, staged
+    before and after that call, must stay pending until B's superstep boundary and then be committed,
+    and A's import must not land.
+    """
+    a_blocked = asyncio.Event()
+    b_staged = asyncio.Event()
+    release_b = asyncio.Event()
+
+    class _Router(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str]) -> None:
+            await ctx.send_message(message, target_id=f"worker_{message.lower()}")
+
+    class _WorkerA(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext) -> None:
+            try:
+                a_blocked.set()
+                await asyncio.Event().wait()
+            finally:
+                if operation == "import_state":
+                    ctx.state.import_state({"a_import": "from-run-A"})
+                else:
+                    getattr(ctx.state, operation)()
+
+    class _WorkerB(Executor):
+        @handler
+        async def handle(self, message: str, ctx: WorkflowContext[str, str]) -> None:
+            ctx.set_state("b_key", "from-run-B")
+            b_staged.set()
+            await release_b.wait()
+            ctx.set_state("b_late", "from-run-B")
+            await ctx.yield_output("b-done")
+
+    router = _Router(id="router")
+    workflow = (
+        WorkflowBuilder(start_executor=router)
+        .add_edge(router, _WorkerA(id="worker_a"))
+        .add_edge(router, _WorkerB(id="worker_b"))
+        .build()
+    )
+
+    stream_a = workflow.run("A", stream=True)
+    aiter_a = stream_a.__aiter__()
+    while (event := await aiter_a.__anext__()).type != "executor_invoked" or event.executor_id != "worker_a":
+        pass
+    await a_blocked.wait()
+    generator_a = cast(Any, stream_a)._iterator
+    del stream_a
+    del aiter_a
+    gc.collect()
+
+    task_b = asyncio.create_task(workflow.run("B", stream=True).get_final_response())
+    await asyncio.wait_for(b_staged.wait(), 5)
+
+    await generator_a.aclose()
+    state = workflow._runner.state  # pyright: ignore[reportPrivateUsage]
+    before_boundary = state.export_state()
+    assert "b_key" not in before_boundary
+    assert "a_import" not in before_boundary
+    assert state.get("b_key") == "from-run-B"
+
+    release_b.set()
+    result_b = await asyncio.wait_for(task_b, 5)
+
+    assert result_b.get_outputs() == ["b-done"]
+    committed = state.export_state()
+    assert committed["b_key"] == "from-run-B"
+    assert committed["b_late"] == "from-run-B"
+    assert "a_import" not in committed
+
+
 async def test_workflow_stale_runtime_checkpoint_storage_not_inherited() -> None:
     """A new run must not inherit a prior run's leftover runtime checkpoint storage.
 

@@ -26,8 +26,9 @@ class State:
         - `get()` checks pending buffer first, then committed state
         - `commit()` moves all pending changes to committed state (called by Runner at superstep boundary)
         - `discard()` clears pending changes without committing
-        - `begin_epoch()` starts a new owner of pending writes; writes, deletes and clears from tasks
-          bound to an earlier epoch (for example a dropped run's cancelled executor) are ignored
+        - `begin_epoch()` starts a new owner of the state; `set()`, `delete()`, `clear()`, `commit()`,
+          `discard()`, `import_state()` and `begin_epoch()` from tasks bound to an earlier epoch (for
+          example a dropped run's cancelled executor) are ignored
 
     Reserved Keys:
         Keys starting with underscore (_) are reserved for internal framework use.
@@ -47,6 +48,8 @@ class State:
 
     def begin_epoch(self) -> object:
         """Start a new write epoch and return it."""
+        if self._is_stale_write():
+            return self._epoch
         self._epoch = object()
         return self._epoch
 
@@ -148,6 +151,8 @@ class State:
 
         Called by the Runner at superstep boundaries after successful execution.
         """
+        if self._is_stale_write():
+            return
         for key, value in self._pending.items():
             if value is _DeleteSentinel:
                 self._committed.pop(key, None)
@@ -157,6 +162,8 @@ class State:
 
     def discard(self) -> None:
         """Discard all pending changes without committing."""
+        if self._is_stale_write():
+            return
         self._pending.clear()
 
     def export_state(self) -> dict[str, Any]:
@@ -173,6 +180,8 @@ class State:
         Merges a deepcopy into committed state. Does not affect pending changes.
         Values must support :func:`copy.deepcopy`.
         """
+        if self._is_stale_write():
+            return
         self._committed.update(copy.deepcopy(state))
 
 
