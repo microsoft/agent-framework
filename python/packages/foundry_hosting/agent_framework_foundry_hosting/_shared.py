@@ -12,7 +12,7 @@ import secrets
 import weakref
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
@@ -73,7 +73,12 @@ from typing_extensions import TypeVar
 
 from ._scope import FoundryRequestScope
 
-UnsupportedOptions: TypeAlias = Literal["ignore", "warn", "error"]
+logger = logging.getLogger(__name__)
+
+RequestT = TypeVar("RequestT")
+AgentRequestT = TypeVar("AgentRequestT", contravariant=True)
+
+ExtraFieldsPolicy: TypeAlias = Literal["ignore", "warn", "error"]
 
 
 def validate_sse_keep_alive_interval(value: int | None) -> None:
@@ -160,21 +165,30 @@ class WorkflowTurn(Generic[InputT]):
 
 
 @dataclass(frozen=True)
-class InvocationRun:
-    """Messages, per-turn options, and streaming intent parsed from an Invocations request.
+class AgentTurn:
+    """One hosted agent turn parsed from a Responses or Invocations request.
+
+    Both agent hosts accept a sync or async ``parse_input(request)`` returning this type.
+    ``messages`` and ``options`` map to ``agent.run(messages, options=...)``; ``stream`` and
+    ``background`` are host transport controls and are never passed as run options.
 
     Args:
-        messages: MAF message input for this turn, including typed `Message` or `Content` values.
-        options: Caller generation options for this turn, separate from agent defaults.
-        stream: Whether to stream framed SSE events rather than return a JSON response.
+        messages: MAF message input for this turn, as accepted by ``agent.run``.
+        options: Run options for this turn, separate from the agent's defaults. The default parsers
+            never populate them; a custom parser owns which request values become run options.
+        stream: Whether the caller receives a streamed response. ``None`` uses the protocol default:
+            the native request's flag for Responses and ``False`` for Invocations.
+        background: Whether the caller requested background execution. ``None`` uses the protocol default:
+            the native request's flag for Responses and ``False`` for Invocations.
 
     Raises:
-        TypeError: If the messages, options, or streaming intent have invalid types.
+        TypeError: If the messages, options, or transport controls have invalid types.
     """
 
     messages: AgentRunInputs
     options: Mapping[str, Any] = field(default_factory=lambda: dict[str, Any]())
-    stream: bool = False
+    stream: bool | None = None
+    background: bool | None = None
 
     def __post_init__(self) -> None:
         if not (
@@ -184,11 +198,35 @@ class InvocationRun:
                 and all(isinstance(message, (str, Content, Message)) for message in self.messages)
             )
         ):
-            raise TypeError("InvocationRun.messages must be a string, Content, Message, or a sequence of them.")
+            raise TypeError("AgentTurn.messages must be a string, Content, Message, or a sequence of them.")
         if not isinstance(self.options, Mapping) or any(not isinstance(key, str) for key in self.options):
-            raise TypeError("InvocationRun.options must be a mapping with string keys.")
-        if not isinstance(self.stream, bool):
-            raise TypeError("InvocationRun.stream must be a boolean.")
+            raise TypeError("AgentTurn.options must be a mapping with string keys.")
+        if self.stream is not None and not isinstance(self.stream, bool):
+            raise TypeError("AgentTurn.stream must be a boolean or None.")
+        if self.background is not None and not isinstance(self.background, bool):
+            raise TypeError("AgentTurn.background must be a boolean or None.")
+
+
+async def parse_agent_turn(
+    parser: Callable[[RequestT], AgentTurn | Awaitable[AgentTurn]], request: RequestT
+) -> AgentTurn:
+    """Run a sync or async developer parser and validate its result type."""
+    result = parser(request)
+    parsed = await result if inspect.isawaitable(result) else result
+    if not isinstance(parsed, AgentTurn):
+        raise TypeError("parse_input must return AgentTurn.")
+    return parsed
+
+
+def apply_extra_fields_policy(policy: ExtraFieldsPolicy, fields: Iterable[str], *, protocol: str) -> None:
+    """Warn about, silently ignore, or reject request fields that the default parser does not consume."""
+    names = sorted(set(fields))
+    if not names or policy == "ignore":
+        return
+    message = f"{protocol} request fields are not used by the default input parser: {', '.join(names)}."
+    if policy == "error":
+        raise ValueError(f"{message} Supply parse_input to consume them.")
+    logger.warning("%s They will be ignored. Supply parse_input to consume them.", message)
 
 
 _HOST_CONTROLLED_FIELDS = frozenset({
@@ -213,67 +251,53 @@ _HOST_CONTROLLED_FIELDS = frozenset({
 })
 
 
-_OPTION_NAMES = {"max_output_tokens": "max_tokens", "parallel_tool_calls": "allow_multiple_tool_calls"}
+_AGENT_CONTROLLED_FIELDS = frozenset({
+    "additional_function_arguments",
+    "client_kwargs",
+    "compaction_strategy",
+    "function_invocation_kwargs",
+    "instructions",
+    "middleware",
+    "session",
+    "tokenizer",
+    "tools",
+})
 
 
-_NATIVE_FIELDS = frozenset(CreateResponse.__annotations__)
+# Protocol fields that the Responses host or SDK consumes; they are not extra model settings.
+_RESPONSES_PROTOCOL_FIELDS = _HOST_CONTROLLED_FIELDS | {"metadata", "model", "stream_options"}
 
 
-def response_run_options(request: CreateResponse) -> dict[str, Any]:
-    """Translate native generation fields, with flattened extra-body values winning collisions."""
-    native: dict[str, Any] = {}
-    extra: dict[str, Any] = {}
-    nested_extra: dict[str, Any] = {}
+def response_extra_fields(request: CreateResponse) -> list[str]:
+    """Name caller-supplied Responses fields that the default agent parser does not consume."""
+    names: set[str] = set()
     for name, value in request.items():
-        if value is None or (name == "model" and value == ""):
+        if value is None or name in _RESPONSES_PROTOCOL_FIELDS:
             continue
-        if name == "extra_body":
-            if not isinstance(value, Mapping) or any(
-                not isinstance(key, str) for key in cast(Mapping[object, object], value)
-            ):
-                raise TypeError("extra_body must be a mapping of model options.")
-            if "extra_body" in value:
-                raise ValueError("Nested extra_body is not supported; flatten provider options instead.")
-            nested_extra.update(cast(Mapping[str, Any], value))
-        elif name in _HOST_CONTROLLED_FIELDS:
-            continue
-        elif name in _NATIVE_FIELDS:
-            native[_OPTION_NAMES.get(name, name)] = value
-        else:
-            extra[name] = value
-    return {
-        **native,
-        **{name: value for name, value in extra.items() if name not in _HOST_CONTROLLED_FIELDS},
-        **{name: value for name, value in nested_extra.items() if name not in _HOST_CONTROLLED_FIELDS},
-    }
+        names.add(name)
+    extra_body = request.get("extra_body")
+    if isinstance(extra_body, Mapping):
+        names.update(
+            str(key) for key in cast(Mapping[object, object], extra_body) if key not in _RESPONSES_PROTOCOL_FIELDS
+        )
+    return sorted(names)
 
 
 class ResponsesRequest:
-    """Expose a copied request, trusted scope, and this turn's input to factories, parsers, and option hooks."""
+    """Expose a copied request, trusted scope, and this turn's input to factories and parsers."""
 
     def __init__(
         self,
         request: CreateResponse,
         context: ResponseContext,
         scope: FoundryRequestScope,
-        options: Mapping[str, Any],
     ) -> None:
         self.request: Mapping[str, Any] = MappingProxyType(deepcopy(dict(request)))
         self.scope = scope
         self.response_id = context.response_id
         self.conversation_id = context.conversation_id
         self._context = context
-        self._options: Mapping[str, Any] = MappingProxyType(dict(options))
         self._workflow_responses: Callable[[], Awaitable[dict[str, Any]]] | None = None
-
-    @property
-    def options(self) -> Mapping[str, Any]:
-        """Return this turn's effective caller options after the hook."""
-        return self._options
-
-    def set_options(self, options: Mapping[str, Any]) -> None:
-        """Replace the caller options without changing the agent's defaults."""
-        self._options = MappingProxyType(dict(options))
 
     async def get_input_items(self) -> list[Item]:
         """Read only this turn's input items, not earlier conversation history."""
@@ -298,28 +322,11 @@ class ResponsesRequest:
         self._workflow_responses = loader
 
 
-OptionsHook: TypeAlias = Callable[
-    [ResponsesRequest, dict[str, Any]],
-    Mapping[str, Any] | Awaitable[Mapping[str, Any]],
-]
-
-
-async def prepare_response_options(request: ResponsesRequest, hook: OptionsHook | None) -> None:
-    """Apply a synchronous or asynchronous developer hook to a copy of caller options."""
-    if hook is None:
-        return
-    result = hook(request, dict(request.options))
-    if inspect.isawaitable(result):
-        result = await result
-    if not isinstance(result, Mapping):
-        raise TypeError("prepare_options must return a mapping of MAF run options.")
-    request.set_options(result)
-
-
 async def response_input_messages(request: ResponsesRequest) -> list[Message]:
-    """Convert only this Responses turn's input items to the legacy workflow message contract.
+    """Convert only this Responses turn's input items to MAF messages.
 
-    This explicit migration helper does not load outer history, restore checkpoints,
+    Use this in a custom ``parse_input`` for agents or legacy message-input workflows.
+    It does not load outer history, restore checkpoints, resolve native approval replies,
     or decode pending native workflow replies. Native workflows should prefer typed
     application inputs and use ``request.get_workflow_responses()`` for resumable pauses.
     """
@@ -328,11 +335,13 @@ async def response_input_messages(request: ResponsesRequest) -> list[Message]:
     return await _items_to_messages(await request.get_input_items())
 
 
-def validate_request_options(options: Mapping[str, Any]) -> None:
-    """Keep hosting identity, storage decisions, and private continuation out of model options."""
-    reserved = _HOST_CONTROLLED_FIELDS.intersection(options)
+def validate_run_options(options: Mapping[str, Any]) -> None:
+    """Keep hosting identity, storage, continuation, and agent-controlled fields out of parser run options."""
+    reserved = (_HOST_CONTROLLED_FIELDS | _AGENT_CONTROLLED_FIELDS).intersection(options)
     if reserved:
-        raise ValueError(f"prepare_options cannot set host-controlled fields: {', '.join(sorted(reserved))}.")
+        raise ValueError(
+            f"AgentTurn.options cannot set host- or agent-controlled fields: {', '.join(sorted(reserved))}."
+        )
 
 
 def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_agent_store: bool) -> None:
@@ -354,15 +363,21 @@ def validate_default_transport_options(defaults: Mapping[str, Any], *, allow_age
         )
 
 
-def validate_unsupported_options(mode: str) -> UnsupportedOptions:
-    """Reject misspelled unsupported-options policies at host construction."""
-    if mode not in ("ignore", "warn", "error"):
-        raise ValueError("unsupported_options must be 'ignore', 'warn', or 'error'.")
-    return mode
+def validate_extra_fields_policy(policy: str) -> ExtraFieldsPolicy:
+    """Reject misspelled extra-field policies at host construction."""
+    policies: dict[str, ExtraFieldsPolicy] = {"ignore": "ignore", "warn": "warn", "error": "error"}
+    if policy not in policies:
+        raise ValueError("extra_fields must be 'ignore', 'warn', or 'error'.")
+    return policies[policy]
 
 
-RequestT = TypeVar("RequestT")
-AgentRequestT = TypeVar("AgentRequestT", contravariant=True)
+def accepts_run_options(agent: SupportsAgentRun) -> bool:
+    """Return whether an agent's ``run`` signature accepts an ``options`` keyword."""
+    try:
+        inspect.signature(agent.run).bind_partial(options={})
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 class AgentFactory(Protocol[AgentRequestT]):
@@ -521,7 +536,6 @@ def prepare_workflow_kwargs(
     turn: WorkflowTurn[Any],
     scope: FoundryRequestScope,
     *,
-    options: Mapping[str, Any] | None = None,
     stored: bool = True,
     fresh_factory: bool = False,
 ) -> tuple[WorkflowInvocationKwargs, WorkflowInvocationKwargs]:
@@ -558,9 +572,6 @@ def prepare_workflow_kwargs(
             values["options"] = validate_values(values["options"])
             if _CLIENT_CONTROLS.intersection(values["options"]):
                 raise ValueError("Workflow model options cannot override hosting, agent, or transport controls.")
-    model_options = validate_values(options or {})
-    if _CLIENT_CONTROLS.intersection(model_options):
-        raise ValueError("Workflow model options cannot override hosting, agent, or transport controls.")
 
     identity = {"session_id": scope.session_id, "user_id": scope.user_id, "call_id": scope.call_id}
     global_client["additional_function_arguments"] = identity
@@ -592,7 +603,7 @@ def prepare_workflow_kwargs(
         ):
             raise ValueError("store=false cannot disable an external workflow HistoryProvider.")
         values = specific_client.setdefault(executor_id, {})
-        effective = {**global_model_options, **values.get("options", {}), **model_options}
+        effective = {**global_model_options, **values.get("options", {})}
         values["additional_function_arguments"] = identity
         if isinstance(agent_value, Agent):
             if stores:
@@ -1212,7 +1223,6 @@ class AgentSessionStoreProvider(StoreProvider[SessionStore]):
 
 _CONFLICT = "Another request advanced this workflow. Reload its current response or start a fresh lineage."
 _BLOCKED = "This workflow turn was interrupted or failed; start a fresh workflow lineage to avoid replaying effects."
-logger = logging.getLogger(__name__)
 
 
 class WorkflowConflictError(RuntimeError):

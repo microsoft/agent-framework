@@ -77,13 +77,13 @@ the existing thread may have changed even if its outer response did not complete
 
 ## Options and compatibility
 
-Native CreateResponse generation fields become MAF run options (`max_output_tokens` becomes `max_tokens` and
-`parallel_tool_calls` becomes `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` values overlay translated
-keys **last**. The developer's `prepare_options(request, options)` hook can then remove or replace *caller* options;
-removing one exposes the agent's own unchanged `default_options`. In [options.py](options.py),
-`max_output_tokens=300` plus `extra_body={"max_tokens": 150}` becomes `max_tokens=150` before the hook removes it;
-the model receives the agent's `max_tokens=256` default instead. Platform IDs, storage flags, and private
-continuation tokens are never caller model options; the hook cannot add them back.
+By default, the host does not forward CreateResponse generation fields such as `temperature`,
+`max_output_tokens`, or `extra_body` values to the agent; the agent's own `default_options` apply. Unconsumed fields
+are logged and ignored (`extra_fields="warn"`, the default); use `extra_fields="ignore"` to silence the warning or
+`"error"` to fail the response. To accept caller settings, supply `parse_input(request)` returning an
+`AgentTurn(messages, options)`. In [options.py](options.py), the parser forwards only `temperature`, so a caller's
+`max_output_tokens=300` is ignored and the model receives the agent's `max_tokens=256` default. Platform IDs,
+storage flags, and private continuation tokens are never caller model options; `AgentTurn.options` cannot add them.
 
 `history_source="host_managed"` and `history_source="agent_managed"` retain their existing meaning without a
 deprecation warning. For **stored** requests, `"agent_managed"` passes only new input to the agent, whose

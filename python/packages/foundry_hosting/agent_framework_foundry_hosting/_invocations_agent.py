@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 import sys
@@ -17,7 +16,7 @@ from contextvars import Token
 from copy import deepcopy
 from typing import Any, Literal, cast
 
-from agent_framework import AgentSession, ResponseStream, SessionStore, SupportsAgentRun
+from agent_framework import AgentSession, Content, Message, ResponseStream, SessionStore, SupportsAgentRun
 from agent_framework._telemetry import mark_feature_used
 from azure.ai.agentserver.core import (
     FoundryAgentRequestContext,
@@ -31,7 +30,6 @@ from starlette.responses import JSONResponse, Response
 
 from ._feature_usage import FeatureIndex
 from ._invocations_shared import (
-    InvocationOptionsHook,
     _invocation_failure,  # pyright: ignore[reportPrivateUsage]
     _InvocationStreamingResponse,  # pyright: ignore[reportPrivateUsage]
     _sse,  # pyright: ignore[reportPrivateUsage]
@@ -42,34 +40,50 @@ from ._scope import FoundryRequestScope
 from ._shared import (
     AgentSessionStoreProvider,
     AgentSource,
-    InvocationRun,
+    AgentTurn,
+    ExtraFieldsPolicy,
     StoreProvider,
-    UnsupportedOptions,
+    accepts_run_options,
+    apply_extra_fields_policy,
     is_agent,
+    parse_agent_turn,
     resolve_agent,
     validate_agent_source,
-    validate_request_options,
+    validate_extra_fields_policy,
+    validate_run_options,
     validate_sse_keep_alive_interval,
-    validate_unsupported_options,
 )
 
 logger = logging.getLogger(__name__)
 
-_AGENT_CONTROLLED_FIELDS = frozenset({
-    "additional_function_arguments",
-    "client_kwargs",
-    "compaction_strategy",
-    "function_invocation_kwargs",
-    "instructions",
-    "middleware",
-    "session",
-    "tokenizer",
-    "tools",
-})
+_DEFAULT_REQUEST_FIELDS = frozenset({"messages", "stream", "background"})
 
 
 class _UnsupportedAgentOptions(TypeError):
-    """The agent cannot accept the caller's run options under the selected policy."""
+    """The agent cannot accept the run options returned by ``parse_input``."""
+
+
+def _default_message(value: object) -> str | Message | Content:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        item = cast(Mapping[str, Any], value)
+        if "role" in item:
+            return Message.from_dict(dict(item))
+        if "type" in item:
+            return Content.from_dict(dict(item))
+    raise ValueError("messages must be a string, a message or content object, or a list of them.")
+
+
+def _default_messages(value: object) -> str | list[str | Message | Content]:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        items = cast(list[object], value)
+        if not items:
+            raise ValueError("messages must not be empty.")
+        return [_default_message(item) for item in items]
+    return [_default_message(value)]
 
 
 class InvocationsHostServer(InvocationAgentServerHost):
@@ -81,9 +95,8 @@ class InvocationsHostServer(InvocationAgentServerHost):
         *,
         openapi_spec: dict[str, Any] | None = None,
         agent_session_store_provider: StoreProvider[SessionStore] | None = None,
-        parse_input: Callable[[Request], InvocationRun | Awaitable[InvocationRun]] | None = None,
-        prepare_options: InvocationOptionsHook | None = None,
-        unsupported_options: UnsupportedOptions = "warn",
+        parse_input: Callable[[Request], AgentTurn | Awaitable[AgentTurn]] | None = None,
+        extra_fields: ExtraFieldsPolicy = "warn",
         legacy_wire_format: bool = False,
         sse_keep_alive_interval_seconds: int | None = None,
         log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = None,
@@ -95,7 +108,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
             agent: Agent instance or sync/async factory called once per request. Factories must declare a
                 required parameter named `request`, accepting the Starlette `Request` passed by keyword.
                 Extra parameters must have defaults. The factory may ignore the request.
-                Factories run after request parsing and option preparation. Use a factory when mutable state
+                Factories run after request parsing. Use a factory when mutable state
                 is not session-scoped. The host enters and closes factory-owned
                 context-managed agents; injected instances remain application-owned. `WorkflowAgent` is
                 rejected; use `InvocationsWorkflowHostServer` with a native workflow factory instead.
@@ -104,11 +117,14 @@ class InvocationsHostServer(InvocationAgentServerHost):
             openapi_spec: Application OpenAPI specification forwarded to AgentServer.
             agent_session_store_provider: Conversation session storage. Defaults to Foundry storage when
                 hosted and file-backed storage locally. Default stores expire 30 days after the last write.
-            parse_input: Sync or async parser returning `InvocationRun`. Without a parser, accept JSON
-                `message`, optional `options`, and `stream`.
-            prepare_options: Sync or async hook receiving the request and a copy of caller generation
-                options. Return the replacement mapping; hosting validates it before agent dispatch.
-            unsupported_options: Policy for agents without runtime options: `"warn"`, `"ignore"`, or `"error"`.
+            parse_input: Sync or async parser receiving the Starlette `Request` and returning `AgentTurn`.
+                Without a parser, accept a JSON object with required `messages` (a string, a serialized MAF
+                message or content object, or a list of them) and optional boolean `stream`. Run options
+                are never read from the request by default; return them in `AgentTurn.options` from a
+                custom parser. Background execution is not supported by the Invocations protocol.
+            extra_fields: Policy for request fields the default parser does not consume: `"warn"` logs and
+                ignores them, `"ignore"` drops them silently, and `"error"` rejects the request with 400.
+                It has no effect when `parse_input` is supplied.
             legacy_wire_format: Deprecated agent-only plain-text and raw-stream compatibility format.
                 Heartbeats are disabled in this format.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval in seconds.
@@ -120,21 +136,19 @@ class InvocationsHostServer(InvocationAgentServerHost):
                 Hosting does not validate their contents or mutate the mapping. SDK errors propagate.
 
         Raises:
-            TypeError: If the agent source, parser/hook, heartbeat type, or legacy-format flag is invalid.
+            TypeError: If the agent source, parser, heartbeat type, or legacy-format flag is invalid.
             ValueError: If the heartbeat interval is nonpositive, raw legacy output requests heartbeats,
-                or the unsupported-options policy is invalid.
+                or the extra-fields policy is invalid.
         """
         validate_agent_source(agent)
         if parse_input is not None and not callable(parse_input):
             raise TypeError("parse_input must be a callable.")
-        if prepare_options is not None and not callable(prepare_options):
-            raise TypeError("prepare_options must be a callable.")
         if not isinstance(legacy_wire_format, bool):
             raise TypeError("legacy_wire_format must be a boolean.")
         validate_sse_keep_alive_interval(sse_keep_alive_interval_seconds)
         if legacy_wire_format and sse_keep_alive_interval_seconds is not None:
             raise ValueError("SSE heartbeats require framed SSE; disable legacy_wire_format.")
-        unsupported_options = validate_unsupported_options(unsupported_options)
+        extra_fields = validate_extra_fields_policy(extra_fields)
         super().__init__(
             openapi_spec=openapi_spec,
             log_level=log_level,
@@ -147,8 +161,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
         self._agent = agent
         self._owns_request_agent = not is_agent(agent)
         self._parse_input = parse_input
-        self._prepare_options = prepare_options
-        self._unsupported_options = unsupported_options
+        self._extra_fields: ExtraFieldsPolicy = extra_fields
         self._legacy_wire_format = legacy_wire_format
         self._session_store_provider = (
             AgentSessionStoreProvider(store_name="invocation_sessions")
@@ -215,57 +228,37 @@ class InvocationsHostServer(InvocationAgentServerHost):
                         f"session persistence also failed: {str(exc) or type(exc).__name__}"
                     ) from exc
 
-    async def _parse(self, request: Request) -> InvocationRun:
+    async def _parse(self, request: Request) -> AgentTurn:
         if self._parse_input is not None:
-            result = self._parse_input(request)
-            parsed = await result if inspect.isawaitable(result) else result
-            if not isinstance(parsed, InvocationRun):
-                raise TypeError("parse_input must return InvocationRun.")
-            return parsed
+            parsed = await parse_agent_turn(self._parse_input, request)
+        else:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("The invocation must be a JSON object.")
+            body = cast(Mapping[str, Any], payload)
+            if "messages" not in body:
+                raise ValueError("messages is required.")
+            stream = body.get("stream", False)
+            background = body.get("background", False)
+            if not isinstance(stream, bool):
+                raise ValueError("stream must be a boolean.")
+            if not isinstance(background, bool):
+                raise ValueError("background must be a boolean.")
+            apply_extra_fields_policy(
+                self._extra_fields, (key for key in body if key not in _DEFAULT_REQUEST_FIELDS), protocol="Invocations"
+            )
+            parsed = AgentTurn(messages=_default_messages(body["messages"]), stream=stream, background=background)
+        if parsed.background:
+            raise ValueError("Invocations agent hosting does not support background execution.")
+        validate_run_options(parsed.options)
+        return parsed
 
-        payload = await request.json()
-        if not isinstance(payload, dict):
-            raise ValueError("The invocation must be a JSON object.")
-        body = cast(Mapping[str, Any], payload)
-        message = body.get("message")
-        stream = body.get("stream", False)
-        options = body.get("options", {})
-        if not isinstance(message, str):
-            raise ValueError("message must be a string.")
-        if not isinstance(stream, bool):
-            raise ValueError("stream must be a boolean.")
-        if not isinstance(options, dict):
-            raise ValueError("options must be an object.")
-        return InvocationRun(
-            messages=message if stream else [message], options=cast(Mapping[str, Any], options), stream=stream
-        )
-
-    async def _options(self, request: Request, parsed: InvocationRun) -> dict[str, Any]:
-        options = deepcopy(dict(parsed.options))
-        if self._prepare_options is not None:
-            result = self._prepare_options(request, options)
-            if inspect.isawaitable(result):
-                result = await result
-            if not isinstance(result, Mapping) or any(not isinstance(key, str) for key in result):
-                raise TypeError("prepare_options must return a mapping of MAF run options with string keys.")
-            options = deepcopy(dict(result))
-        validate_request_options(options)
-        reserved = _AGENT_CONTROLLED_FIELDS.intersection(options)
-        if reserved:
-            raise ValueError(f"Invocations options cannot set agent-controlled fields: {', '.join(sorted(reserved))}.")
-        return options
-
-    def _agent_kwargs(self, agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _agent_kwargs(agent: SupportsAgentRun, options: dict[str, Any]) -> dict[str, Any]:
         if not options:
             return {}
-        try:
-            inspect.signature(agent.run).bind_partial(options=options)
-        except (TypeError, ValueError):
-            if self._unsupported_options == "error":
-                raise _UnsupportedAgentOptions("The hosted agent does not accept caller runtime options.") from None
-            if self._unsupported_options == "warn":
-                logger.warning("Agent doesn't support runtime options. They will be ignored.")
-            return {}
+        if not accepts_run_options(agent):
+            raise _UnsupportedAgentOptions("The hosted agent does not accept run options returned by parse_input.")
         return {"options": options}
 
     @staticmethod
@@ -292,7 +285,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
 
         try:
             parsed = await self._parse(request)
-            options = await self._options(request, parsed)
+            options = deepcopy(dict(parsed.options))
         except (TypeError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         except Exception:
@@ -300,7 +293,7 @@ class InvocationsHostServer(InvocationAgentServerHost):
             return JSONResponse({"error": "Failed to prepare invocation request."}, status_code=500)
 
         if parsed.stream:
-            if options and self._unsupported_options == "error" and is_agent(self._agent):
+            if options and is_agent(self._agent):
                 try:
                     self._agent_kwargs(self._agent, options)
                 except _UnsupportedAgentOptions as exc:

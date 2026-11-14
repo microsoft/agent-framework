@@ -11,12 +11,13 @@ from collections.abc import (
     AsyncGenerator,
     AsyncIterable,
     Awaitable,
+    Callable,
     Generator,
     Mapping,
     Sequence,
 )
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, aclosing, suppress
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -34,6 +35,7 @@ from agent_framework import (
     ResponseStream,
     SessionStore,
     SupportsAgentRun,
+    normalize_messages,
 )
 from agent_framework._telemetry import mark_feature_used
 from agent_framework._tools import _load_pending_approval_requests  # pyright: ignore[reportPrivateUsage]
@@ -82,19 +84,20 @@ from ._scope import FoundryRequestScope
 from ._shared import (
     AgentSessionStoreProvider,
     AgentSource,
-    OptionsHook,
+    AgentTurn,
+    ExtraFieldsPolicy,
     ResponsesRequest,
     StoreProvider,
-    UnsupportedOptions,
     _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
+    apply_extra_fields_policy,
     is_agent,
-    prepare_response_options,
+    parse_agent_turn,
     resolve_agent,
-    response_run_options,
+    response_extra_fields,
     validate_agent_source,
     validate_default_transport_options,
-    validate_request_options,
-    validate_unsupported_options,
+    validate_extra_fields_policy,
+    validate_run_options,
 )
 from ._toolbox import (
     _is_allowed_oauth_consent_link,  # pyright: ignore[reportPrivateUsage]
@@ -237,8 +240,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         sse_keep_alive_interval_seconds: int | None = None,
         shutdown_grace_period_seconds: int = 10,
         resilient_background: bool = False,
-        prepare_options: OptionsHook | None = None,
-        unsupported_options: UnsupportedOptions = "warn",
+        parse_input: Callable[[ResponsesRequest], AgentTurn | Awaitable[AgentTurn]] | None = None,
+        extra_fields: ExtraFieldsPolicy = "warn",
         log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None = None,
         agent_server_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
@@ -248,9 +251,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             agent: The agent to handle responses for, or a sync/async callable that creates one for each request.
                 Factories must declare a required parameter named `request`, accepting a `ResponsesRequest`
                 passed by keyword. Extra parameters must have defaults. The factory may ignore the request.
-                Factories run before `prepare_options`; the request exposes trusted scope,
-                this turn's input, and translated caller options before that hook. Use a callable for agents
-                that keep mutable state outside `AgentSession`.
+                Factories run after request parsing; the request exposes trusted scope and this turn's input.
+                Use a callable for agents that keep mutable state outside `AgentSession`.
                 `WorkflowAgent` instances and factory results are rejected. Use `ResponsesWorkflowHostServer`
                 with a native workflow factory instead.
                 Approval-emitting runs must finalize matching native pending session state;
@@ -306,9 +308,17 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 This regular-agent adapter currently recovers only saved inference-service continuations,
                 so it requires inference-service history and background. This does not start background
                 execution or guarantee exactly-once effects.
-            prepare_options: Developer hook to remove or replace caller model options for an agent.
-            unsupported_options: `"warn"` (default), `"error"`, or `"ignore"` when a custom agent
-                cannot accept runtime model options.
+            parse_input: Sync or async parser receiving the `ResponsesRequest` and returning `AgentTurn`.
+                Without a parser, the host converts this turn's Responses `input` (including approval replies)
+                and passes no run options; request settings such as `temperature` or `tools` are not forwarded.
+                A parser's `AgentTurn.messages` replace this turn's converted input; host-managed history is
+                still prepended. Use `response_input_messages(request)` to reuse the standard conversion.
+                Approval continuations require the default parser. `AgentTurn.options` are passed to a
+                `RawAgent` as run options; other agents reject non-empty options. `AgentTurn.stream` and
+                `AgentTurn.background` must be `None` or match the request's flags, which the SDK owns.
+            extra_fields: Policy for request fields the default parser does not consume, such as `temperature`,
+                `tools`, or `extra_body` entries: `"warn"` (default) logs and ignores them, `"ignore"` drops
+                them silently, and `"error"` fails the response. It has no effect when `parse_input` is supplied.
             log_level: Logging level forwarded unchanged to AgentServer. `None` preserves the SDK default.
             agent_server_kwargs: Caller-owned settings expanded into the AgentServer SDK constructor.
                 Hosting does not validate their contents or mutate the mapping. SDK errors propagate.
@@ -361,9 +371,9 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "background_source='inference_service' for regular agents."
             )
         validate_agent_source(agent)
-        if prepare_options is not None and not callable(prepare_options):
-            raise TypeError("prepare_options must be a callable.")
-        unsupported_options = validate_unsupported_options(unsupported_options)
+        if parse_input is not None and not callable(parse_input):
+            raise TypeError("parse_input must be a callable.")
+        extra_fields = validate_extra_fields_policy(extra_fields)
         options = _build_response_server_options(
             max_history_items=max_history_items,
             sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
@@ -393,8 +403,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         self._configuration = configuration
         self._history_source: _HistorySource = history_source
         self._background_source: Literal["host_managed", "inference_service"] = background_source
-        self._prepare_options = prepare_options
-        self._unsupported_options = unsupported_options
+        self._parse_input = parse_input
+        self._extra_fields: ExtraFieldsPolicy = extra_fields
         self._host_options = options
         self._uses_agent_server_history = (
             configuration.agent_server_history if configuration is not None else history_source == "host_managed"
@@ -451,6 +461,25 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             self._agent_stack = None
             await stack.aclose()
 
+    async def _parse_turn(self, request: CreateResponse, hosted_request: ResponsesRequest) -> AgentTurn | None:
+        """Apply the custom parser contract, or the default parser's extra-field policy."""
+        try:
+            if self._parse_input is None:
+                apply_extra_fields_policy(self._extra_fields, response_extra_fields(request), protocol="Responses")
+                return None
+            turn = await parse_agent_turn(self._parse_input, hosted_request)
+            for name in ("stream", "background"):
+                requested = request.get(name) is True
+                parsed = getattr(turn, name)
+                if parsed is not None and parsed != requested:
+                    raise ValueError(
+                        f"AgentTurn.{name}={parsed} does not match the Responses request {name}={requested}."
+                    )
+            validate_run_options(turn.options)
+            return turn
+        except (TypeError, ValueError) as exc:
+            raise _PublicResponseFailure(exc) from None
+
     async def _handle_response(
         self,
         request: CreateResponse,
@@ -472,10 +501,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 )
             except (TypeError, ValueError, RuntimeError) as exc:
                 raise _PublicResponseFailure(exc) from None
-            try:
-                hosted_request = ResponsesRequest(request, context, scope, response_run_options(request))
-            except (TypeError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
+            hosted_request = ResponsesRequest(request, context, scope)
+            turn = await self._parse_turn(request, hosted_request)
             agent = await resolve_agent(self._agent_source, hosted_request)
             try:
                 configuration = self._configuration or _validate_agent_configuration(
@@ -485,11 +512,6 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 raise _PublicResponseFailure(exc) from None
             if self._configuration is None:
                 _initialize_agent_history(agent, configuration)
-            await prepare_response_options(hosted_request, self._prepare_options)
-            try:
-                validate_request_options(hosted_request.options)
-            except (TypeError, ValueError) as exc:
-                raise _PublicResponseFailure(exc) from None
         except Exception as exc:
             for event in self._emit_failure(
                 context.response_id,
@@ -510,7 +532,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 agent,
                 configuration,
                 resources,
-                hosted_request,
+                turn,
             )
             try:
                 async for event in inner:
@@ -536,7 +558,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
         resources: AsyncExitStack,
-        hosted_request: ResponsesRequest,
+        turn: AgentTurn | None,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         # Lazy-enter the agent (and any MCP tools it owns). The MCP client wraps gateway
         # consent failures (and other connection-time errors) in AgentFrameworkException; if
@@ -665,7 +687,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 cancellation_signal,
                 agent,
                 configuration,
-                hosted_request,
+                turn,
             )
 
             try:
@@ -724,8 +746,11 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         *,
         session: AgentSession | Awaitable[AgentSession] | None = None,
         configuration: _AgentConfiguration | None = None,
+        input_messages: list[Message] | None = None,
     ) -> list[Message]:
         """Load the request's input and prior history concurrently, assembled for the run.
+
+        ``input_messages`` replaces this turn's converted input items, for example from ``parse_input``.
 
         The caller's input items and the conversation history are independent
         storage round-trips with no data dependency, so they are fetched in
@@ -743,6 +768,8 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         )
 
         async def _load_input() -> list[Message]:
+            if input_messages is not None:
+                return input_messages
             input_items = await context.get_input_items()
             resolved_session = await session if inspect.isawaitable(session) else session
             wire_ids: list[str] = []
@@ -779,7 +806,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         input_task = asyncio.ensure_future(_load_input())
         history_task = asyncio.ensure_future(_load_history())
         try:
-            input_messages, history_messages = await asyncio.gather(input_task, history_task)
+            loaded_input, history_messages = await asyncio.gather(input_task, history_task)
         except BaseException:
             # gather surfaces the first failure without cancelling the sibling, and a
             # cancellation of this coroutine must not leave either read running. Cancel
@@ -788,7 +815,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             history_task.cancel()
             await asyncio.gather(input_task, history_task, return_exceptions=True)
             raise
-        return [*history_messages, *input_messages]
+        return [*history_messages, *loaded_input]
 
     async def _handle_inner_agent(
         self,
@@ -799,7 +826,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
         cancellation_signal: asyncio.Event,
         agent: SupportsAgentRun,
         configuration: _AgentConfiguration,
-        hosted_request: ResponsesRequest,
+        turn: AgentTurn | None,
     ) -> AsyncGenerator[ResponseStreamEvent | ResponseCheckpointEvent]:
         """Handle a regular (non-workflow) agent.
 
@@ -895,7 +922,12 @@ class ResponsesHostServer(ResponsesAgentServerHost):
 
             session_ready: asyncio.Future[AgentSession] = asyncio.get_running_loop().create_future()
             request_messages_task = asyncio.ensure_future(
-                self._load_request_messages(context, session=session_ready, configuration=configuration)
+                self._load_request_messages(
+                    context,
+                    session=session_ready,
+                    configuration=configuration,
+                    input_messages=None if turn is None else normalize_messages(turn.messages),
+                )
             )
             session = (
                 await session_storage.get(session_load_id)
@@ -998,7 +1030,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
                 "messages": messages,
                 "session": session,
             }
-            chat_options = cast(ChatOptions[Any], dict(hosted_request.options))
+            chat_options = cast(ChatOptions[Any], {} if turn is None else deepcopy(dict(turn.options)))
             are_options_set = bool(chat_options)
             if configuration.agent_server_history:
                 if configuration.client_stores_by_default:
@@ -1025,10 +1057,7 @@ class ResponsesHostServer(ResponsesAgentServerHost):
             if isinstance(agent, RawAgent):
                 run_kwargs["options"] = chat_options
             elif are_options_set:
-                if self._unsupported_options == "error":
-                    raise _PublicResponseFailure(TypeError("The hosted agent does not accept caller runtime options."))
-                if self._unsupported_options == "warn":
-                    logger.warning("Agent doesn't support runtime options. They will be ignored.")
+                raise _PublicResponseFailure(TypeError("Only a RawAgent accepts run options returned by parse_input."))
 
             if previous_response_id is not None and context.conversation_id is None and not context.is_recovery:
                 if (

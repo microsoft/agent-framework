@@ -67,6 +67,7 @@ def test_native_workflow_and_storage_exports_match_runtime_and_typing_namespace(
 
     for name in (
         "AgentSessionStoreProvider",
+        "AgentTurn",
         "CheckpointStoreProvider",
         "ContextScopedStoreProvider",
         "FoundryAgentSessionStore",
@@ -103,9 +104,13 @@ def test_host_signatures_expose_only_the_selected_execution_model(protocol: str)
         assert legacy not in workflow_parameters
     assert "checkpoint_store_provider" in workflow_parameters
     assert "checkpoint_store_provider" not in agent_parameters
-    for name in ("agent", "agent_session_store_provider", "history_source", "background_source", "unsupported_options"):
+    for name in ("agent", "agent_session_store_provider", "history_source", "background_source", "extra_fields"):
         assert name not in workflow_parameters
-    assert ("prepare_options" in workflow_parameters) is (protocol == "Responses")
+    assert agent_parameters[parser].default is None
+    assert agent_parameters["extra_fields"].default == "warn"
+    for removed in ("prepare_options", "unsupported_options"):
+        assert removed not in agent_parameters
+        assert removed not in workflow_parameters
     for parameters in (agent_parameters, workflow_parameters):
         for name in ("log_level", "agent_server_kwargs"):
             assert parameters[name].default is None
@@ -153,12 +158,13 @@ def test_agent_hosts_reject_ambiguous_factories_before_sdk_construction(protocol
         ("Responses", "function_approval_store_provider"),
         ("Responses", "history_source"),
         ("Responses", "background_source"),
-        ("Responses", "unsupported_options"),
+        ("Responses", "extra_fields"),
+        ("Responses", "prepare_options"),
         ("Responses", "store"),
         ("Invocations", "agent"),
         ("Invocations", "agent_session_store_provider"),
+        ("Invocations", "extra_fields"),
         ("Invocations", "prepare_options"),
-        ("Invocations", "unsupported_options"),
         ("Invocations", "legacy_wire_format"),
     ],
 )
@@ -215,6 +221,14 @@ def test_legacy_parser_names_are_not_silently_forwarded_to_sdk(name: str, legacy
         with pytest.raises(TypeError, match=legacy):
             host(**values)
         initialize.assert_not_called()
+
+
+@pytest.mark.parametrize("protocol", ["Responses", "Invocations"])
+@pytest.mark.parametrize("removed", ["prepare_options", "unsupported_options"])
+def test_agent_hosts_reject_removed_option_settings(protocol: str, removed: str) -> None:
+    host = getattr(hosting, f"{protocol}HostServer")
+    with pytest.raises(TypeError, match=removed):
+        host(agent=lambda request: None, **{removed: None})
 
 
 def test_responses_workflow_host_rejects_removed_options() -> None:

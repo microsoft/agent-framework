@@ -24,10 +24,23 @@ the split does not promote them.
 `InvocationsWorkflowHostServer(workflow=..., parse_input=...)`.
 There is no combined-host compatibility shim. Agent host construction still uses `agent=`.
 All custom parsers now use `parse_input`, including agent parsers on `InvocationsHostServer`.
-Rename `HostedResponseRequest` imports and annotations to `ResponsesRequest`, including factories and option hooks.
-`InvocationRun` and `WorkflowTurn` are unchanged. Workflow parsers still adapt either typed start input
+Rename `HostedResponseRequest` imports and annotations to `ResponsesRequest`, including factories.
+`WorkflowTurn` is unchanged. Workflow parsers still adapt either typed start input
 or a complete batch of pending replies; they are not limited to initial input or raw JSON deserialization.
 The old parser keywords and request-type name have no compatibility aliases.
+
+Agent input handling is unified across `ResponsesHostServer` and `InvocationsHostServer` (breaking, no aliases):
+
+- Agent parsers on both hosts return `AgentTurn(messages, options={}, stream=None, background=None)`.
+  Replace `InvocationRun` with `AgentTurn`.
+- The `prepare_options` hook is removed from agent hosts and `ResponsesWorkflowHostServer`. Build run options in
+  `parse_input` (agents) or `WorkflowTurn.client_kwargs` (workflows) instead.
+- Request fields are no longer forwarded as agent run options by default. Responses fields such as `temperature`,
+  `max_output_tokens` and `extra_body`, and unknown Invocations JSON keys, are reported by the new
+  `extra_fields` policy: `"warn"` (default) logs and ignores them, `"ignore"` drops them silently, and `"error"`
+  rejects the request. `extra_fields` replaces `unsupported_options`.
+- The default Invocations body is `{"messages": ..., "stream": false}`; `message` is renamed to `messages` and the
+  `options` key is no longer consumed.
 
 Agent history/background source literals also change without aliases:
 
@@ -50,8 +63,7 @@ including local one-shot use. Move graph and executor construction inside the fa
 returning a new wrapper around shared executors does not isolate execution state.
 
 Workflow hosts expose checkpoint storage, not agent-session storage or agent history/background
-policies. Responses workflows retain `prepare_options`; Invocations workflows use the parser's
-explicit workflow kwargs instead. Regular-agent approval state belongs to the native
+policies. Both workflow hosts take model options only from the parser's explicit workflow kwargs. Regular-agent approval state belongs to the native
 agent and its `AgentSession`; no separate approval-store API is exposed.
 Agent hosts reject `WorkflowAgent`, whether supplied directly or returned by a factory.
 `checkpoint_store_provider` is available only on workflow hosts.
@@ -151,9 +163,8 @@ Factories must declare a required parameter named `request`, either keyword-only
 Additional parameters may have defaults, and the factory may ignore the request.
 Zero-argument factories and factories with only optional configuration parameters are rejected at construction;
 add a required `request` parameter when migrating them. Responses factories receive a
-`ResponsesRequest`, with trusted scope, current-turn input helpers, and translated caller options.
-They run before `prepare_options`; the hook can subsequently replace those options.
-Invocations factories receive the Starlette `Request` after parsing and option preparation.
+`ResponsesRequest`, with trusted scope and current-turn input helpers.
+Invocations factories receive the Starlette `Request`. On both hosts, `parse_input` runs before the factory.
 Factory exceptions are not retried with another call shape.
 
 ```python
@@ -391,16 +402,19 @@ official `azure-ai-agentserver-core` wheel containing
 dependencies and `uv.lock`, and a concurrent queue-overflow regression proving rejected turns leave no pending futures. No future SDK
 version is assumed. Non-steerable agent background polling is unchanged.
 
-Native CreateResponse generation fields become MAF runtime options (notably `max_output_tokens` -> `max_tokens` and
-`parallel_tool_calls` -> `allow_multiple_tool_calls`). Flattened OpenAI `extra_body` fields overlay translated keys
-**last**. A sync or async `prepare_options(request: ResponsesRequest, options: dict)` hook can remove or replace
-*caller* options before `Agent.run`; removed values fall back to the developer's unchanged agent defaults. Hosting
-filters caller platform IDs and private continuation/storage controls from model options and rejects attempts to
-reintroduce them through the hook. Nested `extra_body` transport overrides are rejected for both caller
-input and developer hooks, because they could override the host's `store=False` after the OpenAI SDK merges
-the body. Developer defaults also cannot use this transport channel for host-controlled fields on
-explicit history modes or unstored requests. A custom agent cannot accept MAF runtime options: choose
-`unsupported_options` as `"ignore"`, `"warn"` (default), or `"error"` for that case. See the
+By default the Responses host consumes only the request input and host-owned protocol fields (`store`, `stream`,
+`background`, `conversation`, `previous_response_id`, `model`, `metadata`, ...). Generation fields such as
+`temperature`, `max_output_tokens` or flattened OpenAI `extra_body` values are **not** forwarded to the agent; its
+unchanged `default_options` apply. The `extra_fields` policy reports unconsumed fields: `"warn"` (default) logs and
+ignores them, `"ignore"` drops them silently and `"error"` fails the response.
+
+To accept caller settings, supply a sync or async `parse_input(request: ResponsesRequest)` that returns
+`AgentTurn(messages, options={}, stream=None, background=None)`. `messages` replace the current-turn input (stored
+history is still prepended), and a copy of `options` is passed as this turn's run options without changing the
+agent's `default_options`. `stream` and `background`, when set, must match the request flags. Options cannot contain
+platform IDs, storage flags, private continuation fields, `extra_body` or agent execution controls; only a `RawAgent`
+accepts run options, so other agents fail when the parser returns any. Developer defaults also cannot use the
+`extra_body` transport channel for host-controlled fields on explicit history modes or unstored requests. See the
 [agent history and options samples](../../samples/04-hosting/foundry-hosted-agents/responses/basic/).
 
 ### OAuth consent origin allowlist
@@ -556,20 +570,21 @@ Locally, the platform session ID is used unchanged.
 
 ### Invocations agent requests and wire compatibility
 
-By default, `POST /invocations` accepts `{"message": "Hi", "options": {}, "stream": false}`. Applications can supply
-a sync or async `parse_input(request)` returning a typed `InvocationRun(messages, options, stream)` to accept their
-own JSON shape and MAF `Message` inputs. A sync or async `prepare_options(request, options)` hook can filter or replace
-a **copy** of this turn's caller options without changing the agent's `default_options`. It must return a mapping
-with string keys. The host rejects reserved platform/session fields, `store`, `extra_body`, and private continuation
-fields after the hook; callers cannot select another sandbox or enable downstream service continuation through
-runtime options. It also rejects agent execution controls: `additional_function_arguments`, `function_invocation_kwargs`,
-`client_kwargs`, `middleware`, `session`, `tools`, `instructions`, `compaction_strategy`, and `tokenizer`. Trusted tool
-arguments belong in developer-configured agent defaults or middleware/factories, not in request options or hook output.
-A hook may strip denied caller fields before validation; allowed generation and provider-specific options remain
-available. These restrictions apply to both wire formats and every `unsupported_options` policy.
-When an agent cannot accept runtime options, `unsupported_options="warn"` (default) logs and ignores
-them; `"ignore"` silently drops them and `"error"` rejects them. For request-scoped factories, unsupported options
-discovered after streaming starts are reported as an SSE `error` event with `status: 400`.
+By default, `POST /invocations` accepts `{"messages": "Hi", "stream": false}`. `messages` is a string, a serialized
+MAF `Message` or `Content` object, or a non-empty list of them. Other keys are not used as run options; the
+`extra_fields` policy reports them (`"warn"` default, `"ignore"` or `"error"`). Invocations does not support
+background execution, so `background: true` is rejected.
+
+Applications can supply a sync or async `parse_input(request)` that returns the same `AgentTurn(messages, options,
+stream)` used by the Responses host, to accept their own JSON shape and explicit run options. A **copy** of the
+options is used for this turn without changing the agent's `default_options`. The host rejects reserved
+platform/session fields, `store`, `extra_body`, and private continuation fields; callers cannot select another
+sandbox or enable downstream service continuation through runtime options. It also rejects agent execution
+controls: `additional_function_arguments`, `function_invocation_kwargs`, `client_kwargs`, `middleware`, `session`,
+`tools`, `instructions`, `compaction_strategy`, and `tokenizer`. Trusted tool arguments belong in
+developer-configured agent defaults or middleware/factories, not in parsed options. These restrictions apply to both
+wire formats. Agents that cannot accept runtime options reject a turn that supplies them; for request-scoped
+factories this is reported after streaming starts as an SSE `error` event with `status: 400`.
 
 **New default:** non-streaming success is JSON `{"response": "..."}`. Streaming success is real SSE
 `event: delta` with `{"text": "..."}`, followed by `event: done` with the platform sandbox `session_id`.
@@ -732,7 +747,7 @@ including the verified `agent_session_id` query alternative when the platform
 does not configure `FOUNDRY_AGENT_SESSION_ID`. Body/header IDs cannot establish
 sandbox routing or select private checkpoints. The agent path still uses its
 separate `invocation_sessions` store, existing hooks/defaults and JSON/`delta` SSE
-contract. Agent-only `legacy_wire_format=True`, `prepare_options` and
+contract. Agent-only `legacy_wire_format=True`, `extra_fields` and
 `agent_session_store_provider` are rejected for native workflows rather than
 silently reinterpreted.
 

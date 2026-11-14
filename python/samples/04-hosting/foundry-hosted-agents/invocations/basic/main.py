@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_framework import Agent, InMemoryHistoryProvider
 from agent_framework.foundry import FoundryChatClient, FoundryChatOptions
-from agent_framework_foundry_hosting import InvocationRun, InvocationsHostServer
+from agent_framework_foundry_hosting import AgentTurn, InvocationsHostServer
 from azure.identity import DefaultAzureCredential
 from dotenv import load_dotenv
 from starlette.requests import Request
@@ -16,9 +16,11 @@ from starlette.requests import Request
 
 load_dotenv()
 
+ALLOWED_OPTIONS = {"temperature", "max_tokens"}
 
-# 1. Map the application's JSON payload to typed MAF inputs.
-async def parse_input(request: Request) -> InvocationRun:
+
+# 1. Map the application's JSON payload to typed MAF inputs and explicit run options.
+async def parse_input(request: Request) -> AgentTurn:
     """Map application-specific JSON to a validated agent turn."""
     payload: Any = await request.json()
     if not isinstance(payload, dict) or not isinstance(payload.get("prompt"), str):
@@ -26,16 +28,14 @@ async def parse_input(request: Request) -> InvocationRun:
     options = payload.get("options", {})
     if not isinstance(options, dict):
         raise ValueError("options must be an object.")
+    # 2. Allow only caller-controlled generation settings; keep storage developer-owned.
+    unknown = set(options) - ALLOWED_OPTIONS
+    if unknown:
+        raise ValueError(f"Unsupported options: {', '.join(sorted(unknown))}.")
     stream = payload.get("stream", False)
     if not isinstance(stream, bool):
         raise ValueError("stream must be a boolean.")
-    return InvocationRun(messages=payload["prompt"], options=options, stream=stream)
-
-
-# 2. Allow only caller-controlled generation settings.
-def prepare_options(_request: Request, options: dict[str, Any]) -> dict[str, Any]:
-    """Allow only the caller's generation controls; keep storage developer-owned."""
-    return {name: value for name, value in options.items() if name in {"temperature", "max_tokens"}}
+    return AgentTurn(messages=payload["prompt"], options=options, stream=stream)
 
 
 # 3. Persist the agent's own conversation history without provider-managed storage.
@@ -56,8 +56,6 @@ def main() -> None:
     server = InvocationsHostServer(
         agent,
         parse_input=parse_input,
-        prepare_options=prepare_options,
-        unsupported_options="error",
     )
     server.run()
 

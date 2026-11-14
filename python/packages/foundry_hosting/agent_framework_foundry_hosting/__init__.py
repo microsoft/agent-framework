@@ -15,11 +15,11 @@ if TYPE_CHECKING:
     from ._scope import FoundryRequestScope
     from ._shared import (
         AgentSessionStoreProvider,
+        AgentTurn,
         CheckpointStoreProvider,
         ContextScopedStoreProvider,
         FoundryAgentSessionStore,
         FoundryCheckpointStore,
-        InvocationRun,
         ResponsesRequest,
         StoreProvider,
         WorkflowSource,
@@ -35,13 +35,13 @@ except importlib.metadata.PackageNotFoundError:
 
 _LAZY_EXPORTS: Final[dict[str, str]] = {
     "AgentSessionStoreProvider": "._shared",
+    "AgentTurn": "._shared",
     "CheckpointStoreProvider": "._shared",
     "ContextScopedStoreProvider": "._shared",
     "FoundryAgentSessionStore": "._shared",
     "FoundryCheckpointStore": "._shared",
     "FoundryRequestScope": "._scope",
     "FoundryToolbox": "._toolbox",
-    "InvocationRun": "._shared",
     "InvocationsHostServer": "._invocations_agent",
     "InvocationsWorkflowHostServer": "._invocations_workflow",
     "ResponsesHostServer": "._responses_agent",
@@ -55,13 +55,13 @@ _LAZY_EXPORTS: Final[dict[str, str]] = {
 
 __all__ = [
     "AgentSessionStoreProvider",
+    "AgentTurn",
     "CheckpointStoreProvider",
     "ContextScopedStoreProvider",
     "FoundryAgentSessionStore",
     "FoundryCheckpointStore",
     "FoundryRequestScope",
     "FoundryToolbox",
-    "InvocationRun",
     "InvocationsHostServer",
     "InvocationsWorkflowHostServer",
     "ResponsesHostServer",

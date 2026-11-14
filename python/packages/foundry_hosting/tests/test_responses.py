@@ -84,7 +84,7 @@ from openai.types.responses.response_input_item_param import ResponseInputItemPa
 from openai.types.responses.response_usage import ResponseUsage as OpenAIResponseUsage
 from pydantic import TypeAdapter
 
-from agent_framework_foundry_hosting import ResponsesHostServer, ResponsesRequest
+from agent_framework_foundry_hosting import AgentTurn, ResponsesHostServer, ResponsesRequest
 from agent_framework_foundry_hosting._responses_shared import (
     _INCOMPLETE_REASON_KEY,  # pyright: ignore[reportPrivateUsage]
     _LATEST_CHECKPOINT_ID_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -808,6 +808,11 @@ class _ConflictingConversationStore(SessionStore):
 
 
 _SESSION_STORE_UNSET = object()
+
+
+def _temperature_turn(request: ResponsesRequest) -> AgentTurn:
+    """Parse the request input and forward its temperature as an explicit run option."""
+    return AgentTurn(messages=request.request["input"], options={"temperature": request.request["temperature"]})
 
 
 def _make_server(agent: Any, **kwargs: Any) -> ResponsesHostServer:
@@ -1806,8 +1811,8 @@ class TestResponsesHostServerInit:
             _make_server(agent, history_source="host")
         with pytest.raises(ValueError, match="background_source"):
             _make_server(agent, background_source="host")
-        with pytest.raises(ValueError, match="unsupported_options"):
-            _make_server(agent, unsupported_options="silent")
+        with pytest.raises(ValueError, match="extra_fields"):
+            _make_server(agent, extra_fields="silent")
 
     @pytest.mark.parametrize(
         ("setting", "value"),
@@ -2247,59 +2252,109 @@ class TestAgentSessionPersistence:
         assert "store=false cannot continue agent-managed downstream service history" in _failure_message(events)
         assert len(client.calls) == 1
 
-    async def test_extra_options_overlay_then_developer_hook_preserves_defaults(self) -> None:
+    async def test_default_parser_does_not_forward_request_fields_as_run_options(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         client = _RecordingHistoryClient()
         agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
         defaults = dict(agent.default_options)
+        server = _make_server(agent)
 
-        def prepare_options(_request: Any, options: dict[str, Any]) -> dict[str, Any]:
-            options.pop("temperature")
-            return options
-
-        server = _make_server(agent, prepare_options=prepare_options)
-        response = await _post_json(
-            server,
-            {
-                "input": "hello",
-                "model": "test-model",
-                "temperature": 0.8,
-                "max_output_tokens": 300,
-                "max_tokens": 150,
-                "session_id": "forged-sandbox",
-                "call_id": "forged-call",
-            },
-        )
+        with caplog.at_level(logging.WARNING):
+            response = await _post_json(
+                server,
+                {
+                    "input": "hello",
+                    "model": "test-model",
+                    "temperature": 0.8,
+                    "max_output_tokens": 300,
+                    "max_tokens": 150,
+                    "session_id": "forged-sandbox",
+                },
+            )
 
         assert response.json()["status"] == "completed"
         assert client.options[0]["temperature"] == 0.2
-        assert client.options[0]["max_tokens"] == 150
+        assert client.options[0]["max_tokens"] == 256
         assert "session_id" not in client.options[0]
-        assert "call_id" not in client.options[0]
         assert agent.default_options == defaults
+        assert "max_output_tokens, max_tokens, temperature" in caplog.text
+        assert "Supply parse_input to consume them." in caplog.text
 
-    async def test_hook_cannot_reintroduce_host_owned_storage_or_identity(self) -> None:
-        agent = _make_agent()
+    @pytest.mark.parametrize("is_async", [False, True])
+    async def test_parse_input_supplies_run_options_and_current_messages(self, is_async: bool) -> None:
+        client = _RecordingHistoryClient()
+        agent = Agent(client=client, default_options=OpenAIChatOptions(temperature=0.2, max_tokens=256))
+        defaults = dict(agent.default_options)
+        seen: list[ResponsesRequest] = []
+
+        def build_turn(request: ResponsesRequest) -> AgentTurn:
+            seen.append(request)
+            options = {"temperature": request.request["temperature"]}
+            return AgentTurn(messages=f"parsed: {request.request['input']}", options=options)
+
+        async def parse_async(request: ResponsesRequest) -> AgentTurn:
+            return build_turn(request)
+
+        server = _make_server(agent, parse_input=parse_async if is_async else build_turn)
+        response = await _post_json(server, {"input": "hello", "model": "test-model", "temperature": 0.8})
+
+        assert response.json()["status"] == "completed"
+        assert client.options[0]["temperature"] == 0.8
+        assert client.options[0]["max_tokens"] == 256
+        assert client.calls[0][-1].text == "parsed: hello"
+        assert agent.default_options == defaults
+        assert seen[0].response_id == response.json()["id"]
+
+    async def test_parse_input_messages_follow_stored_history(self) -> None:
+        client = _RecordingHistoryClient()
         server = _make_server(
-            agent,
-            prepare_options=lambda _request, options: {**options, "store": True, "agent_session_id": "forged"},
+            Agent(client=client),
+            parse_input=lambda request: AgentTurn(messages=f"parsed: {request.request['input']}"),
         )
-        response = await _post_json(server, {"input": "one shot", "store": False})
+        first = await _post_json(server, {"input": "first", "model": "test-model"})
+        second = await _post_json(
+            server, {"input": "second", "model": "test-model", "previous_response_id": first.json()["id"]}
+        )
+
+        assert second.json()["status"] == "completed"
+        texts = [message.text for message in client.calls[1]]
+        # AgentServer history stores the caller's request input, not the parsed turn messages.
+        assert texts[0] == "first"
+        assert texts[-1] == "parsed: second"
+
+    @pytest.mark.parametrize(
+        ("turn", "payload", "error"),
+        [
+            (AgentTurn(messages="x", stream=True), {"stream": False}, "AgentTurn.stream=True"),
+            (AgentTurn(messages="x", background=True), {}, "AgentTurn.background=True"),
+            (AgentTurn(messages="x", options={"store": True}), {}, "host- or agent-controlled"),
+            (AgentTurn(messages="x", options={"session_id": "forged"}), {}, "host- or agent-controlled"),
+            ("not a turn", {}, "parse_input must return AgentTurn"),
+        ],
+    )
+    async def test_parse_input_contract_failures_are_public(
+        self, turn: Any, payload: dict[str, Any], error: str
+    ) -> None:
+        agent = _make_agent()
+        server = _make_server(agent, parse_input=lambda _request: turn)
+        response = await _post_json(server, {"input": "one shot", "store": False, **payload})
 
         assert response.json()["status"] == "failed"
-        assert "host-controlled" in response.json()["error"]["message"]
+        assert error in response.json()["error"]["message"]
         agent.run.assert_not_called()
 
-    async def test_prepare_options_failure_is_sanitized(
+    async def test_parse_input_failure_is_sanitized(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        private_error_detail = "prepare-options-secret at C:\\sensitive\\prepare_options.py"
+        private_error_detail = "parse-input-secret at C:\\sensitive\\parse_input.py"
 
-        def prepare_options(_request: Any, _options: dict[str, Any]) -> dict[str, Any]:
+        def parse_input(_request: Any) -> AgentTurn:
             raise RuntimeError(private_error_detail)
 
         agent = _make_agent()
-        server = _make_server(agent, prepare_options=prepare_options)
+        server = _make_server(agent, parse_input=parse_input)
 
         with caplog.at_level(logging.ERROR, logger="agent_framework_foundry_hosting._responses_shared"):
             response = await _post_json(server, {"input": "one shot", "store": False})
@@ -2341,15 +2396,7 @@ class TestAgentSessionPersistence:
             max_retries=0,
         ) as openai:
             agent = Agent(client=OpenAIChatClient(model="test-model", async_client=openai))
-            server = _make_server(agent)
-            rejected = await _post_json(
-                server,
-                {"input": "unsafe", "store": False, "extra_body": {"extra_body": {"store": True}}},
-            )
-            assert rejected.json()["status"] == "failed"
-            assert "Nested extra_body" in rejected.json()["error"]["message"]
-            assert outbound == []
-
+            server = _make_server(agent, extra_fields="ignore")
             legacy_default = Agent(
                 client=OpenAIChatClient(model="test-model", async_client=openai),
                 default_options=cast(Any, {"extra_body": {"store": True}}),
@@ -2368,30 +2415,43 @@ class TestAgentSessionPersistence:
         assert unstored.json()["status"] == "completed", unstored.json()
         assert len(outbound) == 1
         assert outbound[0]["store"] is False
-        assert outbound[0]["temperature"] == 0.1
+        assert "temperature" not in outbound[0]
         assert "extra_body" not in outbound[0]
 
-    async def test_unsupported_options_policy_rejects_custom_agent(self) -> None:
+    async def test_parse_input_options_reject_custom_agent(self) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options="error")
+        server = _make_server(
+            agent,
+            history_source="agent_managed",
+            parse_input=lambda _request: AgentTurn(messages="hello", options={"temperature": 0.8}),
+        )
+        response = await _post_json(server, {"input": "hello"})
+
+        assert response.json()["status"] == "failed"
+        assert "Only a RawAgent accepts run options" in response.json()["error"]["message"]
+        assert agent.calls == []
+
+    async def test_extra_fields_error_policy_rejects_request(self) -> None:
+        agent = _StrictCustomAgent()
+        server = _make_server(agent, history_source="agent_managed", extra_fields="error")
         response = await _post_json(server, {"input": "hello", "temperature": 0.8})
 
         assert response.json()["status"] == "failed"
-        assert "does not accept caller runtime options" in response.json()["error"]["message"]
+        assert "temperature. Supply parse_input" in response.json()["error"]["message"]
         assert agent.calls == []
 
     @pytest.mark.parametrize(("policy", "warn"), [("warn", True), ("ignore", False)])
-    async def test_custom_agent_unsupported_options_warning_policy(
+    async def test_custom_agent_extra_fields_warning_policy(
         self, policy: str, warn: bool, caplog: pytest.LogCaptureFixture
     ) -> None:
         agent = _StrictCustomAgent()
-        server = _make_server(agent, history_source="agent_managed", unsupported_options=policy)
+        server = _make_server(agent, history_source="agent_managed", extra_fields=policy)
 
         with caplog.at_level(logging.WARNING):
             response = await _post(server, temperature=0.5)
 
         assert response.json()["status"] == "completed"
-        assert ("Agent doesn't support runtime options" in caplog.text) is warn
+        assert ("not used by the default input parser: temperature" in caplog.text) is warn
 
     @pytest.mark.parametrize(
         ("finish_reason", "expected_status"),
@@ -2559,6 +2619,7 @@ class TestAgentSessionPersistence:
             background_source="inference_service",
             resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            parse_input=_temperature_turn,
         )
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.35)
         context = ResponseContext(response_id="outer-response", mode_flags=MagicMock())
@@ -2794,6 +2855,7 @@ class TestAgentSessionPersistence:
                 background_source="inference_service",
                 resilient_background=True,
                 response_store=FileResponseStore(storage_dir=tmp_path),
+                parse_input=_temperature_turn,
             )
 
         request = CreateResponse(input="hello", store=True, background=True, temperature=0.25)
@@ -3070,6 +3132,7 @@ class TestAgentSessionPersistence:
             background_source="inference_service",
             resilient_background=True,
             response_store=FileResponseStore(storage_dir=tmp_path),
+            parse_input=_temperature_turn,
         )
         context = ResponseContext(response_id="outer-tool-response", mode_flags=MagicMock())
         request = CreateResponse(input="email bob", store=True, background=True, temperature=0.42)
@@ -5131,12 +5194,23 @@ class TestNonStreaming:
         body = resp.json()
         assert body["status"] == "completed"
 
-    async def test_chat_options_forwarded(self) -> None:
+    async def test_parse_input_options_forwarded(self) -> None:
         agent = _make_agent(
             response=AgentResponse(messages=[Message(role="assistant", contents=[Content.from_text("ok")])]),
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(
+            agent,
+            parse_input=lambda request: AgentTurn(
+                messages=request.request["input"],
+                options={
+                    "temperature": request.request["temperature"],
+                    "top_p": request.request["top_p"],
+                    "max_tokens": request.request["max_output_tokens"],
+                    "allow_multiple_tool_calls": request.request["parallel_tool_calls"],
+                },
+            ),
+        )
         resp = await _post(
             server,
             stream=False,
@@ -5173,12 +5247,23 @@ class TestStreaming:
     The opposite case, where the client requested a non-streaming response, is tested in `TestNonStreaming`.
     """
 
-    async def test_chat_options_forwarded(self) -> None:
+    async def test_parse_input_options_forwarded(self) -> None:
         agent = _make_agent(
             stream_updates=[AgentResponseUpdate(contents=[Content.from_text("ok")], role="assistant")],
             raw_agent=True,
         )
-        server = _make_server(agent)
+        server = _make_server(
+            agent,
+            parse_input=lambda request: AgentTurn(
+                messages=request.request["input"],
+                options={
+                    "temperature": request.request["temperature"],
+                    "top_p": request.request["top_p"],
+                    "max_tokens": request.request["max_output_tokens"],
+                    "allow_multiple_tool_calls": request.request["parallel_tool_calls"],
+                },
+            ),
+        )
         resp = await _post(
             server,
             stream=True,
@@ -9368,7 +9453,7 @@ class TestAgentLifecycle:
     @pytest.mark.parametrize("stream", [False, True])
     @pytest.mark.parametrize("async_factory", [False, True])
     @pytest.mark.parametrize("configured_factory", [False, True])
-    async def test_factory_receives_current_request_input_scope_and_options(
+    async def test_factory_receives_current_request_input_scope_and_parsed_options(
         self, stream: bool, async_factory: bool, configured_factory: bool
     ) -> None:
         requests: list[ResponsesRequest] = []
@@ -9377,8 +9462,6 @@ class TestAgentLifecycle:
 
         def create_agent(request: ResponsesRequest) -> MagicMock:
             requests.append(request)
-            assert request.options["temperature"] == 0.7
-            assert request.options["max_tokens"] == 17
             assert request.response_id
             assert request.scope.session_id
             agent = _make_agent(response=AgentResponse(messages=[Message("assistant", request.request["input"])]))
@@ -9408,7 +9491,7 @@ class TestAgentLifecycle:
         )
         server = _make_server(
             factory,
-            prepare_options=lambda request, options: {**options, "temperature": 0.2},
+            parse_input=lambda request: AgentTurn(messages=request.request["input"], options={"temperature": 0.2}),
         )
         for text in ("first", "second"):
             result = await _post(server, input_text=text, temperature=0.7, max_output_tokens=17, stream=stream)
@@ -9427,7 +9510,7 @@ class TestAgentLifecycle:
 
         assert [request.request["input"] for request in requests] == ["first", "second"]
         assert requests[0] is not requests[1]
-        assert [request.options["temperature"] for request in requests] == [0.2, 0.2]
+        assert [agent.run.call_args.kwargs["options"]["temperature"] for agent in agents] == [0.2, 0.2]
         assert input_texts == (["first", "second"] if async_factory else [])
         assert [agent.__aenter__.await_count for agent in agents] == [1, 1]
         assert [agent.__aexit__.await_count for agent in agents] == [1, 1]

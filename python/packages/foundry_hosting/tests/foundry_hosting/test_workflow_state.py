@@ -372,14 +372,10 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
     resolver = WorkflowResolver(create)
     workflow = await resolver.resolve(object())
     run = await _prepare("model-turn", workflow=workflow, fresh_factory=True)
-    turn = run.validate_turn(WorkflowTurn(input=[Message("user", "hello")]))
-    clients, functions = prepare_workflow_kwargs(
-        workflow,
-        turn,
-        run.scope,
-        options={"temperature": 0.6},
-        fresh_factory=True,
+    turn = run.validate_turn(
+        WorkflowTurn(input=[Message("user", "hello")], client_kwargs={"options": {"temperature": 0.6}})
     )
+    clients, functions = prepare_workflow_kwargs(workflow, turn, run.scope, fresh_factory=True)
     await run.claim()
     events = [event async for event in run.events(turn, client_kwargs=clients, function_invocation_kwargs=functions)]
     assert any(event.type == "output" for event in events)
@@ -402,9 +398,8 @@ async def test_shared_real_agent_options_use_the_correct_existing_boundary(raw: 
                         id="model",
                     )
                 ),
-                WorkflowTurn(input=[Message("user", "hello")]),
+                WorkflowTurn(input=[Message("user", "hello")], client_kwargs={"options": {"temperature": 0.6}}),
                 run.scope,
-                options={"temperature": 0.6},
                 fresh_factory=True,
             )
 
@@ -680,9 +675,12 @@ def test_client_kwargs_reject_controls_in_all_namespaces(kwargs: Any) -> None:
 def test_tool_context_stays_separate_from_model_options() -> None:
     clients, functions = prepare_workflow_kwargs(
         _workflow(),
-        WorkflowTurn(input=1, function_invocation_kwargs={"ticket": "application"}),
+        WorkflowTurn(
+            input=1,
+            client_kwargs={"options": {"temperature": 0.5}},
+            function_invocation_kwargs={"ticket": "application"},
+        ),
         _scope(),
-        options={"temperature": 0.5},
     )
     assert functions.global_kwargs == {"ticket": "application"}
     assert clients.global_kwargs["additional_function_arguments"] == {
