@@ -626,7 +626,7 @@ internal sealed partial class AgentFrameworkResponseHandler : ResponseHandler
                 McpConsentContext.Current.Value = previousConsentState;
             }
 
-            // Only after the the agent ran when can check precisely if the session had been used to store messages in the backend for validation.
+            // Only after the agent ran when can check precisely if the session had been used to store messages in the backend for validation.
             if (CheckNotAllowedStoreUsage())
             {
                 notAllowedStoreUsageDetected = true;

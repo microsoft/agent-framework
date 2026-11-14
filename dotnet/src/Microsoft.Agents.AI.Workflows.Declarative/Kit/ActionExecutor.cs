@@ -87,7 +87,7 @@ public abstract class ActionExecutor<TMessage> : Executor<TMessage>, IResettable
     /// Executes the core logic of the action.
     /// </summary>
     /// <param name="context">The workflow execution context providing messaging and state services.</param>
-    /// <param name="message">The the message handled by this executor.</param>
+    /// <param name="message">The message handled by this executor.</param>
     /// <param name="cancellationToken">A token that can be used to observe cancellation.</param>
     /// <returns>A <see cref="ValueTask"/> representing the asynchronous execution operation.</returns>
     protected abstract ValueTask<object?> ExecuteAsync(IWorkflowContext context, TMessage message, CancellationToken cancellationToken = default);
