@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from typing import Any, cast
 
@@ -21,8 +21,6 @@ from starlette.types import Receive, Scope, Send
 
 from ._scope import FoundryRequestScope
 from ._shared import WorkflowBlockedError, WorkflowConflictError
-
-InvocationOptionsHook = Callable[[Request, dict[str, Any]], Mapping[str, Any] | Awaitable[Mapping[str, Any]]]
 
 
 def invocation_partition_key(

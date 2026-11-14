@@ -33,6 +33,7 @@ from agent_framework_foundry import (
 )
 from agent_framework_foundry_hosting import (
     AgentSessionStoreProvider,
+    AgentTurn,
     CheckpointStoreProvider,
     ContextScopedStoreProvider,
     FoundryAgentSessionStore,
@@ -64,6 +65,7 @@ from agent_framework_foundry_local import (
 __all__ = [
     "FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY",
     "AgentSessionStoreProvider",
+    "AgentTurn",
     "AnalysisSection",
     "AnthropicFoundryClient",
     "CheckpointStoreProvider",

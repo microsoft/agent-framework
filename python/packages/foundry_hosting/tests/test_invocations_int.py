@@ -99,7 +99,7 @@ async def _post_invocation(
     When ``session_id`` is provided it is forwarded as the ``agent_session_id``
     query parameter so the server reuses the same conversation session.
     """
-    payload: dict[str, Any] = {"message": message, "stream": stream}
+    payload: dict[str, Any] = {"messages": message, "stream": stream}
     params = {"agent_session_id": session_id} if session_id is not None else None
     transport = httpx.ASGITransport(app=server)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:

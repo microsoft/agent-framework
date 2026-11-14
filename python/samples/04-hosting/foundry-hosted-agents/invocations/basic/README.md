@@ -2,11 +2,11 @@
 
 [`main.py`](main.py) hosts an Agent Framework agent using the Foundry
 Invocations protocol. The sample accepts application JSON with a `prompt`
-field rather than the host's default `message` field. Its `parse_input`
-callback returns `InvocationRun(messages, options, stream)`, and
-`prepare_options` allows only `temperature` and `max_tokens` from the caller.
-The host also rejects platform IDs, `store`, and private continuation options
-even if a hook tries to return them. The agent keeps `store=False` as a
+field rather than the host's default `messages` field. Its `parse_input`
+callback returns `AgentTurn(messages, options, stream)` and accepts only
+`temperature` and `max_tokens` options from the caller. The host also rejects
+platform IDs, `store`, and private continuation options even if a parser
+tries to return them. The agent keeps `store=False` as a
 developer default; caller options cannot enable service-managed history.
 
 **Invocations does not store conversation history.** The sample's

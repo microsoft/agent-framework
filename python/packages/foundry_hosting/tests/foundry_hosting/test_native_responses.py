@@ -660,7 +660,12 @@ async def test_native_agent_executor_applies_options_without_mutating_defaults_o
         return _build(AgentExecutor(agent, id="model"))
 
     async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
-        return WorkflowTurn(input=[Message("user", await request.get_input_text() or "")])
+        options = {"temperature": request.request["temperature"]}
+        if request.request.get("max_output_tokens") is not None:
+            options["max_tokens"] = request.request["max_output_tokens"]
+        return WorkflowTurn(
+            input=[Message("user", await request.get_input_text() or "")], client_kwargs={"options": options}
+        )
 
     server = _server(create, parser=parse)
     first = await _post(server, "one", temperature=0.7, max_output_tokens=12, store=True)
@@ -690,7 +695,13 @@ async def test_registry_backed_executor_gets_native_options_and_resource_lifecyc
         )
         return _build(_RegistryExecutor(agent))
 
-    response = await _post(_server(create, parser=_parse_text), "hello", temperature=0.7)
+    async def parse(request: ResponsesRequest) -> WorkflowTurn[Any]:
+        return WorkflowTurn(
+            input=await request.get_input_text(),
+            client_kwargs={"options": {"temperature": request.request["temperature"]}},
+        )
+
+    response = await _post(_server(create, parser=parse), "hello", temperature=0.7)
 
     assert response["status"] == "completed", response
     assert _texts(response) == ["safe"]
@@ -762,7 +773,14 @@ async def test_raw_agent_fresh_factory_matches_explicit_defaults(stored: bool, s
         agent = RawAgent(
             client=_RecordingClient(calls, lifecycle),
             name="raw",
-            default_options=cast(ChatOptions[Any], {**request.options, "store": False}),
+            default_options=cast(
+                ChatOptions[Any],
+                {
+                    "temperature": request.request["temperature"],
+                    "max_tokens": request.request["max_output_tokens"],
+                    "store": False,
+                },
+            ),
         )
         return _build(AgentExecutor(agent, id="raw"))
 

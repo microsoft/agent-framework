@@ -60,17 +60,13 @@ from ._shared import (
     CheckpointStoreProvider,
     ContextScopedStoreProvider,
     HostedWorkflowRun,
-    OptionsHook,
     ResponsesRequest,
     WorkflowConflictError,
     WorkflowResolver,
     WorkflowSource,
     WorkflowTurn,
     _build_response_server_options,  # pyright: ignore[reportPrivateUsage]
-    prepare_response_options,
     prepare_workflow_kwargs,
-    response_run_options,
-    validate_request_options,
     validate_workflow_source,
     workflow_agents,
 )
@@ -345,7 +341,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         prefix: str = "",
         response_store: ResponseProviderProtocol | None = None,
         checkpoint_store_provider: ContextScopedStoreProvider[CheckpointStorage] | None = None,
-        prepare_options: OptionsHook | None = None,
         allowed_oauth_consent_origins: Sequence[str] | None = None,
         sse_keep_alive_interval_seconds: int | None = None,
         shutdown_grace_period_seconds: int = 10,
@@ -371,9 +366,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             response_store: Backend for caller-facing Responses persistence, not the wire-level `store` flag.
             checkpoint_store_provider: Scoped checkpoint storage. Defaults to `CheckpointStoreProvider`.
                 Native workflow history and pending replies are checkpoint-owned, not agent-session-owned.
-            prepare_options: Sync or async hook receiving the hosted request and a copy of caller model
-                options before parsing/execution. Return the replacement mapping; hosting validates it.
-                This does not enable inner provider background or service-owned history.
             allowed_oauth_consent_origins: Optional exact HTTPS origins for consent links. Omission retains
                 safe-HTTPS validation; an empty sequence rejects all origins.
             sse_keep_alive_interval_seconds: Positive streaming heartbeat interval in seconds.
@@ -396,8 +388,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         validate_workflow_source(workflow)
         if not callable(parse_input):
             raise TypeError("parse_input must be a callable.")
-        if prepare_options is not None and not callable(prepare_options):
-            raise TypeError("prepare_options must be a callable.")
         allowed_origins = _normalize_allowed_oauth_consent_origins(allowed_oauth_consent_origins)
         options = _build_response_server_options(
             sse_keep_alive_interval_seconds=sse_keep_alive_interval_seconds,
@@ -416,7 +406,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
         self._checkpoint_store_provider = (
             CheckpointStoreProvider() if checkpoint_store_provider is None else checkpoint_store_provider
         )
-        self._prepare_options = prepare_options
         self._resilient_background = resilient_background
         self._allowed_origins = allowed_origins
         self._bind_streaming_route(
@@ -512,9 +501,7 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
             scope = FoundryRequestScope.from_context(
                 self.config, platform_context, local_session_id=context.response_id
             )
-            hosted = ResponsesRequest(request, context, scope, response_run_options(request))
-            await prepare_response_options(hosted, self._prepare_options)
-            validate_request_options(hosted.options)
+            hosted = ResponsesRequest(request, context, scope)
             workflow = await self._resolver.resolve(hosted)
             resources = AsyncExitStack()
             await resources.__aenter__()
@@ -571,7 +558,6 @@ class ResponsesWorkflowHostServer(ResponsesAgentServerHost):
                 workflow,
                 turn,
                 scope,
-                options=hosted.options,
                 stored=run.stored,
                 fresh_factory=True,
             )

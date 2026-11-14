@@ -57,10 +57,15 @@ remain experimental. Separate classes do not require separate distribution packa
 
 ### Request adaptation and construction
 
-Use `parse_input` for custom input adaptation across both protocols. Agent parsers return `InvocationRun`;
-workflow parsers return `WorkflowTurn` containing either typed start input or complete pending replies.
+Use `parse_input` for custom input adaptation across both protocols. Agent parsers on both protocols return
+the shared `AgentTurn(messages, options, stream, background)`; workflow parsers return `WorkflowTurn`
+containing either typed start input or complete pending replies.
 Parsing does not replace the host's checkpoint and pending-authority validation.
-Use `ResponsesRequest` for the Responses wrapper, including factory and option-hook inputs.
+Default agent parsers consume only the input and host-owned protocol fields; other request fields are never
+forwarded implicitly as run options. An `extra_fields` policy (`warn` by default, `ignore`, or `error`)
+reports them. Explicit run options come only from a custom parser's `AgentTurn.options` (agents) or
+`WorkflowTurn.client_kwargs` (workflows); there is no separate option hook.
+Use `ResponsesRequest` for the Responses wrapper, including factory inputs.
 Do not retain aliases for the former parser keywords or request-type name.
 
 Agent hosts accept an instance or a sync/async factory implementing a named-request callable protocol.
@@ -70,10 +75,9 @@ positional-only request, and implicit `**kwargs`-only factories rather than gues
 represents request context. Validate the signature before invocation. Never retry a factory-body
 exception with a different call shape: that could duplicate side effects.
 
-Responses agent factories receive trusted scope, current-turn input, and translated caller options
-before `prepare_options`. Invocations agent factories receive the Starlette `Request` after parsing
-and option preparation. Preserve these protocol-specific timings rather than forcing identical signatures
-or inventing a shared options-precedence policy.
+Responses agent factories receive trusted scope and current-turn input; Invocations agent factories
+receive the Starlette `Request`. On both protocols `parse_input` runs before the factory. Keep the
+protocol-specific request types rather than forcing identical factory signatures.
 
 Native workflow factories are request-aware and must allocate fresh workflows, executors, agents,
 clients, providers, and mutable tools. A new graph wrapper around shared executors is not isolation.
