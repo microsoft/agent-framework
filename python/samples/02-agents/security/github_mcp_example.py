@@ -6,10 +6,13 @@ This sample connects an agent directly to the remote GitHub MCP URL
 (`https://api.githubcopilot.com/mcp/`) while enforcing IFC/FIDES security
 locally in your process.
 
-The key idea: wrap the remote MCP URL with `SecureMCPToolProxy(...)` so the MCP
-tools run locally. This lets the security middleware inspect tool results, apply
-IFC labels, hide untrusted content, and enforce policies before the agent uses
-any tool data. The agent is then served through DevUI for interactive use.
+The key idea: wrap the remote MCP URL with `SecureMCPToolProxy(...)` so MCP
+tools and MCP Skills use the same local IFC policy. This lets the security
+middleware inspect results, apply IFC labels, hide untrusted content, and
+enforce policies before the agent uses server data.
+``server_ifc_policy="restrict"`` lets server labels add restrictions without
+granting them authority to relax local policy. The agent is then served through
+DevUI for interactive use.
 
 Prerequisites (environment variables):
     - GITHUB_PAT: GitHub Personal Access Token (required)
@@ -29,9 +32,9 @@ from contextlib import AsyncExitStack, suppress
 from pathlib import Path
 
 import uvicorn
-from agent_framework import Agent
+from agent_framework import Agent, SkillsProvider
 from agent_framework.foundry import FoundryChatClient
-from agent_framework.security import SecureAgentConfig, SecureMCPToolProxy
+from agent_framework.security import IntegrityLabel, SecureAgentConfig, SecureMCPToolProxy
 from agent_framework_devui._server import DevServer
 from azure.identity import AzureCliCredential
 from dotenv import load_dotenv
@@ -70,9 +73,22 @@ async def main() -> None:
                 headers={"Authorization": f"Bearer {github_pat}", **MCP_HEADERS},
                 name="GitHub",
                 description="GitHub MCP server over Streamable HTTP",
+                # This is the local MCP result baseline. It is explicit tool
+                # policy, so it takes precedence over SecureAgentConfig's
+                # default_integrity for these MCP functions.
+                default_integrity=IntegrityLabel.UNTRUSTED,
+                # "ignore": local policy only; "restrict": server labels may only
+                # add restrictions to the local baseline; "authoritative": trust
+                # complete server labels.
+                server_ifc_policy="restrict",
             )
         )
         print(f"Connected to MCP URL: {MCP_URL} ({len(secure_github.tools)} tools loaded)")
+
+        # Reuse the secured connection for MCP Skills. Each SKILL.md, resource,
+        # or archive read applies its own _meta.ifc label after final parsing.
+        # A server without skill://index.json simply contributes no skills.
+        skills_provider = SkillsProvider(secure_github.skills_source())
 
         # SecureAgentConfig is a context provider that applies the IFC/FIDES policy:
         # hide untrusted content, enforce policies, and require approval on violations.
@@ -89,7 +105,7 @@ async def main() -> None:
                 name="GitHubSecureMcpUrlAgent",
                 instructions=_AGENT_INSTRUCTIONS,
                 tools=secure_github.tools,
-                context_providers=[config],
+                context_providers=[skills_provider, config],
             )
         )
 

@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Sockets;
@@ -26,6 +28,250 @@ namespace Microsoft.Agents.AI.Workflows.Declarative.Mcp.UnitTests;
 /// </summary>
 public sealed class DefaultMcpToolHandlerLifetimeTests
 {
+    [Fact]
+    public async Task ResponseLimits_BodylessResponse_IsReturnedUnchangedAsync()
+    {
+        // Arrange
+        using HttpRequestMessage request = new(HttpMethod.Post, "https://mcp.example/api");
+        using HttpResponseMessage response = new(HttpStatusCode.Accepted);
+        Mock<HttpMessageHandler> inner = new() { CallBase = true };
+        inner.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(response);
+        using McpResponseLimitHandler handler = new(inner.Object, 1024, 1024);
+        using HttpMessageInvoker client = new(handler);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        HttpResponseMessage result = await client.SendAsync(request, timeout.Token);
+
+        // Assert
+        Assert.Same(response, result);
+#if !NET
+        Assert.Null(result.Content);
+#endif
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ResponseLimits_OversizedToolResult_IsRejectedAsync(bool useEventStream, bool omitContentLength)
+    {
+        // Arrange
+        using ProtocolStub stub = new()
+        {
+            UseEventStreamResult = useEventStream,
+            ToolResultText = new string('a', (4 * 1024 * 1024) + 1),
+            OmitContentLength = omitContentLength
+        };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2025-11-25");
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(15));
+
+        // Act
+        Exception? error = await Record.ExceptionAsync(() => InvokeAsync(handler, "ping", timeout.Token));
+
+        // Assert
+        Assert.NotNull(error);
+        if (useEventStream)
+        {
+            Assert.IsType<InvalidDataException>(error);
+        }
+
+        Assert.Contains("limit", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(error is OperationCanceledException);
+        Assert.Equal(1, stub.Initializations);
+    }
+
+    [Theory]
+    [InlineData(false, 512, 2048, false)]
+    [InlineData(true, 512, 2048, true)]
+    [InlineData(false, 2048, 512, true)]
+    [InlineData(true, 2048, 512, false)]
+    public async Task ResponseLimits_Configuration_AppliesToSelectedResponseTypeAsync(
+        bool useEventStream, int bodyLimit, int eventLimit, bool accepted)
+    {
+        // Arrange
+        using ProtocolStub stub = new() { UseEventStreamResult = useEventStream, ToolResultText = new string('a', 600) };
+        DefaultMcpToolHandler handler = CreateHandler(stub, "2025-11-25", bodyLimit: bodyLimit, eventLimit: eventLimit);
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        if (accepted)
+        {
+            McpServerToolResultContent result = await InvokeAsync(handler, "ping", timeout.Token);
+
+            // Assert
+            Assert.NotNull(result.Outputs);
+            Assert.Equal(stub.ToolResultText, Assert.IsType<TextContent>(Assert.Single(result.Outputs)).Text);
+        }
+        else
+        {
+            Exception? error = await Record.ExceptionAsync(() => InvokeAsync(handler, "ping", timeout.Token));
+
+            // Assert
+            Assert.NotNull(error);
+            Assert.Contains("limit", error.ToString(), StringComparison.OrdinalIgnoreCase);
+            Assert.False(error is OperationCanceledException);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResponseLimits_CompressedToolResult_UsesDecodedSizeAsync(bool useEventStream)
+    {
+        // Arrange
+        using ProtocolStub stub = new()
+        {
+            UseEventStreamResult = useEventStream,
+            ToolResultText = new string('a', 4096),
+            CompressToolResult = true
+        };
+        await using LoopbackMcpServer server = new(stub);
+        ServiceCollection services = new();
+        services.AddHttpClient("workflow-mcp")
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                CheckCertificateRevocationList = true,
+                AutomaticDecompression = DecompressionMethods.GZip
+            });
+        using ServiceProvider serviceProvider = services.BuildServiceProvider();
+        DefaultMcpToolHandler handler = new(
+            [new Uri(server.Endpoint).Authority], serviceProvider.GetRequiredService<IHttpMessageHandlerFactory>(), "workflow-mcp")
+        {
+            ProtocolVersion = "2025-11-25",
+            MaxResponseBodyBytes = 1024,
+            MaxSseEventBytes = 1024
+        };
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        Exception? error = await Record.ExceptionAsync(() => handler.InvokeToolAsync(
+            server.Endpoint, null, "ping", null, null, null, timeout.Token));
+
+        // Assert
+        Assert.NotNull(error);
+        Assert.Contains("limit", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(error is OperationCanceledException);
+        Assert.InRange(stub.CompressedToolResultBytes, 1, 1024);
+    }
+
+    [Theory]
+    [InlineData("\n", false)]
+    [InlineData("\r", false)]
+    [InlineData("\r\n", false)]
+    [InlineData("\n", true)]
+    [InlineData("\r", true)]
+    [InlineData("\r\n", true)]
+    public async Task ResponseLimits_EventBoundaries_ResetAcrossFragmentedReadsAsync(string newline, bool useAsync)
+    {
+        // Arrange
+        string first = $"data: first{newline}{newline}";
+        string second = $"data: other{newline}{newline}";
+        byte[] bytes = Encoding.UTF8.GetBytes(first + second);
+        using MemoryStream source = new(bytes);
+        using McpResponseLimitHandler.LimitedReadStream limited = new(source, Encoding.UTF8.GetByteCount(first), isEventStream: true);
+        using MemoryStream result = new();
+        byte[] buffer = new byte[1];
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+        int read;
+        while ((read = useAsync
+#if NET
+            ? await limited.ReadAsync(buffer, timeout.Token)
+#else
+            ? await limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token)
+#endif
+            : limited.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            result.Write(buffer, 0, read);
+        }
+
+        // Assert
+        Assert.Equal(bytes, result.ToArray());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResponseLimits_ByteBoundary_AllowsExactSizeAndRejectsNextByteAsync(bool useEventStream)
+    {
+        // Arrange
+        byte[] bytes = Encoding.UTF8.GetBytes(useEventStream ? "data: \u00e9\ndata: b\n\n" : "\u00e9abc");
+        using MemoryStream source = new(bytes);
+        using McpResponseLimitHandler.LimitedReadStream limited = new(source, bytes.Length - 1, useEventStream);
+        byte[] buffer = new byte[bytes.Length - 1];
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+#if NET
+        int read = await limited.ReadAsync(buffer, timeout.Token);
+        Exception error = await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer.AsMemory(0, 1), timeout.Token).AsTask());
+#else
+        int read = await limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token);
+        Exception error = await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer, 0, 1, timeout.Token));
+#endif
+
+        // Assert
+        Assert.Equal(buffer.Length, read);
+        Assert.Contains("limit", error.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, 0)]
+    [InlineData(true, 0)]
+    [InlineData(false, 20)]
+    [InlineData(true, 20)]
+    public async Task ResponseLimits_UnknownLength_StopsReadingAtFirstExcessByteAsync(bool useEventStream, int initialReadCount)
+    {
+        // Arrange
+        using MemoryStream source = new(Encoding.UTF8.GetBytes(new string('a', 500)));
+        using McpResponseLimitHandler.LimitedReadStream limited = new(source, 32, useEventStream);
+        byte[] buffer = new byte[500];
+        using CancellationTokenSource timeout = new(TimeSpan.FromSeconds(10));
+
+        // Act
+#if NET
+        int read = await limited.ReadAsync(buffer.AsMemory(0, initialReadCount), timeout.Token);
+        await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer, timeout.Token).AsTask());
+#else
+        int read = await limited.ReadAsync(buffer, 0, initialReadCount, timeout.Token);
+        await Assert.ThrowsAsync(useEventStream ? typeof(InvalidDataException) : typeof(HttpRequestException),
+            () => limited.ReadAsync(buffer, 0, buffer.Length, timeout.Token));
+#endif
+
+        // Assert
+        Assert.Equal(initialReadCount, read);
+        Assert.Equal(33, source.Position);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    [InlineData(-1, true)]
+    public void ResponseLimits_NonPositiveConfiguration_IsRejected(int limit, bool eventLimit)
+    {
+        // Arrange
+        using ProtocolStub stub = new();
+
+        // Act
+        ArgumentOutOfRangeException error = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            CreateHandler(stub, bodyLimit: eventLimit ? 1024 : limit, eventLimit: eventLimit ? limit : 1024));
+
+        // Assert
+        Assert.Equal("value", error.ParamName);
+        Assert.Empty(stub.Handlers);
+    }
+
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -807,11 +1053,17 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
     }
 
     private static DefaultMcpToolHandler CreateHandler(
-        ProtocolStub stub, string? protocolVersion = null, IEnumerable<string>? allowedHosts = null)
+        ProtocolStub stub, string? protocolVersion = null, IEnumerable<string>? allowedHosts = null,
+        int bodyLimit = 4 * 1024 * 1024, int eventLimit = 4 * 1024 * 1024)
     {
         Mock<IHttpMessageHandlerFactory> factory = new();
         factory.Setup(f => f.CreateHandler("workflow-mcp")).Returns(stub.CreateMessageHandler);
-        return new(allowedHosts ?? ["mcp.example"], factory.Object, "workflow-mcp") { ProtocolVersion = protocolVersion };
+        return new(allowedHosts ?? ["mcp.example"], factory.Object, "workflow-mcp")
+        {
+            ProtocolVersion = protocolVersion,
+            MaxResponseBodyBytes = bodyLimit,
+            MaxSseEventBytes = eventLimit
+        };
     }
 
     private static Task<McpServerToolResultContent> InvokeAsync(
@@ -836,6 +1088,10 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
         public bool FailInitialization { get; set; }
         public bool FailOperation { get; set; }
         public bool UseEventStreamResult { get; set; }
+        public string ToolResultText { get; set; } = "ok";
+        public bool OmitContentLength { get; set; }
+        public bool CompressToolResult { get; set; }
+        public int CompressedToolResultBytes { get; private set; }
         public bool SupportsDiscovery { get; set; }
         public string? InitializationProtocolVersion { get; set; }
         public Uri? RedirectEndpoint { get; set; }
@@ -951,7 +1207,7 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                     "tools/list" => """{"tools":[]}""",
                     "tools/call" when message.GetProperty("params").GetProperty("name").GetString() == "session" =>
                         $$$"""{"content":[{"type":"text","text":"{{{Assert.Single(request.Headers.GetValues("Mcp-Session-Id"))}}}"}]}""",
-                    "tools/call" => """{"content":[{"type":"text","text":"ok"}]}""",
+                    "tools/call" => $$$"""{"content":[{"type":"text","text":{{{JsonSerializer.Serialize(this.ToolResultText)}}}}]}""",
                     _ => throw new InvalidOperationException($"Unexpected MCP method: {method}")
                 };
             }
@@ -965,6 +1221,42 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                     useEventStream ? $"event: message\ndata: {responseBody}\n\n" : responseBody,
                     Encoding.UTF8, useEventStream ? "text/event-stream" : "application/json")
             };
+            if (this.OmitContentLength)
+            {
+                HttpContent originalContent = response.Content;
+#if NET
+                byte[] bytes = await originalContent.ReadAsByteArrayAsync(cancellationToken);
+#else
+                byte[] bytes = await originalContent.ReadAsByteArrayAsync();
+#endif
+                response.Content = new StreamContent(new UnseekableMemoryStream(bytes));
+                response.Content.Headers.ContentType = originalContent.Headers.ContentType;
+                response.Content.Headers.ContentLength = null;
+                originalContent.Dispose();
+            }
+
+            if (this.CompressToolResult && string.Equals(method, "tools/call", StringComparison.Ordinal))
+            {
+                HttpContent originalContent = response.Content;
+#if NET
+                byte[] bytes = await originalContent.ReadAsByteArrayAsync(cancellationToken);
+#else
+                byte[] bytes = await originalContent.ReadAsByteArrayAsync();
+#endif
+                using MemoryStream compressed = new();
+                using (GZipStream gzip = new(compressed, CompressionMode.Compress, leaveOpen: true))
+                {
+                    gzip.Write(bytes, 0, bytes.Length);
+                }
+
+                byte[] compressedBytes = compressed.ToArray();
+                this.CompressedToolResultBytes = compressedBytes.Length;
+                response.Content = new ByteArrayContent(compressedBytes);
+                response.Content.Headers.ContentType = originalContent.Headers.ContentType;
+                response.Content.Headers.ContentEncoding.Add("gzip");
+                originalContent.Dispose();
+            }
+
             if (sessionId is not null)
             {
                 response.Headers.Add("Mcp-Session-Id", sessionId);
@@ -979,6 +1271,11 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                 RequestMessage = request,
                 Content = new ByteArrayContent([])
             };
+    }
+
+    private sealed class UnseekableMemoryStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        public override bool CanSeek => false;
     }
 
     private sealed class LoopbackMcpServer : IAsyncDisposable
@@ -1093,7 +1390,13 @@ public sealed class DefaultMcpToolHandlerLifetimeTests
                         responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
                     }
 
-                    responseHeaders.Append($"Content-Type: {response.Content.Headers.ContentType}\r\nContent-Length: {content.Length}\r\nConnection: close\r\n\r\n");
+                    foreach (KeyValuePair<string, IEnumerable<string>> pair in response.Content.Headers.Where(
+                        header => !string.Equals(header.Key, "Content-Length", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        responseHeaders.Append($"{pair.Key}: {string.Join(", ", pair.Value)}\r\n");
+                    }
+
+                    responseHeaders.Append($"Content-Length: {content.Length}\r\nConnection: close\r\n\r\n");
                     byte[] headerBytes = Encoding.ASCII.GetBytes(responseHeaders.ToString());
 #if NET
                     await stream.WriteAsync(headerBytes, cancellationToken);

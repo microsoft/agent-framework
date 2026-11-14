@@ -9,18 +9,31 @@ Monty-backed CodeAct integrations for Microsoft Agent Framework.
 ## FIDES compatibility
 
 > [!WARNING]
-> **FIDES integration is not supported with CodeAct providers.** Host-tool calls
-> made inside generated code bypass the agent's function middleware, so FIDES
-> policy enforcement and label tracking do not apply to those nested calls or
-> intermediate code values. Checks on the outer `execute_code` invocation do not
-> enforce the policies of individual tools called inside it.
+> **Granular FIDES integration is not supported with CodeAct providers.** CodeAct
+> combines many tool calls inside one generated-code execution and consumes native
+> values with `skip_parsing=True`. Nested calls therefore bypass the normalized
+> `Content` boundary and function middleware where FIDES labels and policies apply.
 >
 > Registering tools with recognized FIDES `additional_properties` logs a warning,
 > but does not block execution. This is a best-effort diagnostic: FIDES also uses
 > defaults for unannotated tools, so no warning does not imply support or safety.
 > Keep tools that require FIDES as direct agent tools, not Monty-managed tools, and
-> enforce authorization and destination restrictions inside host functions.
+> enforce authorization and destination restrictions inside host functions. For
+> coarse-grained handling, pass `additional_properties` to
+> `MontyCodeActProvider` or `MontyExecuteCodeTool`; those properties label the
+> complete outer `execute_code` result, not nested results, intermediate values,
+> or prior side effects.
 > See the [FIDES guide](../../samples/02-agents/security/FIDES_DEVELOPER_GUIDE.md).
+
+```python
+codeact = MontyCodeActProvider(
+    tools=[search, fetch],
+    additional_properties={
+        "source_integrity": "untrusted",
+        "confidentiality": "private",
+    },
+)
+```
 
 ## Error diagnostics
 
@@ -234,6 +247,28 @@ codeact = MontyCodeActProvider(
   `max_memory`, `gc_interval`, `max_recursion_depth`, `max_suspensions`, and
   `max_total_sleep_secs`. These interpreter limits do not independently bound
   host-side post-execution attachment capture.
+- Sandbox code runs in Monty worker processes, so it does not block the event
+  loop, and cancelling an `execute_code` call discards its worker. When
+  `resource_limits` sets neither `max_feed_duration_secs` nor `max_duration_secs`,
+  a **30-second** `max_feed_duration_secs` applies. Set it to another value, or to
+  `None` (`resource_limits={"max_feed_duration_secs": None}`), to change or remove
+  the limit. A call that reaches the limit returns an `Execution error`; with
+  `include_detailed_errors=True` its details name the limit
+  (`TimeoutError: feed time limit exceeded`). Concurrent `execute_code` calls
+  overlap and each starts its own worker process, so bound concurrency in your
+  application when serving many callers.
+- Calls that can write to the same host files take turns, so captured files stay
+  attributed to the right call. A tool with a `read-write` mount (including
+  `workspace_root`) serves one call at a time. This covers every run of one
+  provider and works across event loops and threads. A call waits at most 10
+  minutes for its turn and then returns an error, and a slow host tool holds up
+  the calls behind it. A call that a host tool starts while its own call has the
+  turn, such as a sub-agent that uses the same provider, is part of that call
+  and does not wait; the outer call also returns the files that the inner call
+  wrote. The turn lasts until the call and every call it started have ended,
+  even when a host tool leaves one running in the background. Separate tools or
+  providers that mount the same host directory do not take turns with each
+  other, so give each one its own directory.
 
 ## DSL inside `execute_code`
 
