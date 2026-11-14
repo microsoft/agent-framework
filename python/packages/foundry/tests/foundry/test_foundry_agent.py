@@ -1448,7 +1448,7 @@ async def test_foundry_agent_tools_isolate_service_state_between_children(
     assert len(observed_options) == 3
     assert all("agent_session_id" not in options.get("extra_body", {}) for options in observed_options)
     assert all(options.get("conversation_id") is None for options in observed_options)
-    assert len(updates) == 3
+    assert len([update for update in updates if update.contents]) == 3
     expected_state = {"ordinary": "parent-value"}
     if parent_handle is not None:
         expected_state[FOUNDRY_HOSTED_AGENT_SESSION_ID_KEY] = parent_handle

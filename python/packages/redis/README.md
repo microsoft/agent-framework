@@ -18,8 +18,8 @@ records. Import them from `agent_framework.redis` or `agent_framework_redis`.
 
 ## Install
 
-Requires Python 3.10–3.14. RedisVL currently declares `Requires-Python <3.15`,
-so pip cannot install this connector on Python 3.15 yet:
+Supports Python 3.11–3.15. Python 3.15 requires RedisVL 0.31; earlier Python
+versions can use older compatible RedisVL releases:
 
 ```bash
 pip install agent-framework-redis --pre
@@ -72,8 +72,9 @@ with `SecretString`; use `rediss://` when your server requires TLS.
 `RedisHistoryProvider` can create its own client from a URL or credential
 provider, or borrow a standalone `redis.asyncio.Redis` client configured with
 `decode_responses=True`. A borrowed client lets the application configure
-connection policy such as bounded timeouts and health checks. It remains
-caller-owned and must not be combined with `redis_url` or `credential_provider`.
+connection policy such as bounded timeouts and health checks. It takes
+precedence over `redis_url`, `credential_provider`, and the individual
+connection settings, which are ignored, and remains caller-owned.
 Retry behavior also remains caller-controlled; transcript appends are not
 idempotent if a client replays a write after an ambiguous connection loss.
 

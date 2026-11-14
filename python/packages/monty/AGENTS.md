@@ -30,12 +30,23 @@ from agent_framework.monty import (
 
 `MontyCodeActProvider` and `MontyExecuteCodeTool` both accept:
 - `tools` — host tool callables / `FunctionTool`s
+- `additional_properties` — metadata copied onto the outer `execute_code`
+  FunctionTool and each run snapshot. It can define one coarse FIDES policy
+  for the complete CodeAct result; it does not enforce nested host-tool calls
+  or intermediate values.
 - `approval_mode` — `"never_require"` (default) or `"always_require"`
 - `workspace_root` — host directory auto-mounted at `/input`
   (mirrors `HyperlightCodeActProvider.workspace_root`)
 - `file_mounts` — sequence of `FileMountInput` (str shorthand,
   `(host_path, mount_path)` tuple, or `FileMount`)
-- `resource_limits` — Monty `ResourceLimits` TypedDict
+- `resource_limits` — Monty 1.x `ResourceLimits` keys; legacy `max_duration_secs`
+  maps to `max_feed_duration_secs`, and supplying both is an error. When neither
+  key is set, a 30-second `max_feed_duration_secs` applies at run time (it is not
+  part of the `resource_limits` property or serializable state); `None` removes it.
+- `include_detailed_errors` — keyword-only Boolean, default `False`. Host failures become generic
+  `RuntimeError`s and execution errors omit raw details. Trusted opt-in preserves original diagnostics.
+  The flag is not a code input, is independent of outer-client error/logging settings, and is copied
+  into run snapshots and serializable state.
 - `tool_description_format` — keyword-only
   `Literal["compact", "json"] | Mapping[str, Literal["compact", "json"]] = "compact"`.
   Selects parameter documentation in both the description and instructions.
@@ -67,11 +78,31 @@ Tool-management methods on both classes: `add_tools`, `get_tools`,
 - **`_execute_code_tool.py`** — `MontyExecuteCodeTool` plus tool / mount
   normalization, approval helpers, dynamic `description`/`instructions`
   builders, and the post-execution file-capture flow that surfaces files
-  written to `read-write` mounts as `Content.from_data` items.
+  written to `read-write` mounts as `Content.from_data` items. Captured files
+  are attributed by comparing the mount before and after a run, so calls on a
+  tool with a `read-write` mount take turns through a `MountGate`. The tool
+  hands its gate to every run-scoped copy from `create_run_tool()`, so all runs
+  of one provider share it. Tools and mounts are read once a call has its turn.
+- **`_mount_gate.py`** — `MountGate`, a first-in-first-out turn gate that works
+  across event loops and threads (a lock bound to one event loop would not). A
+  call that a host tool starts while its own call has the turn is part of that
+  turn and does not wait (tracked with a context variable, so it needs no
+  explicit hand-off). A counter on the turn tracks its running calls, and the
+  gate passes the turn on only when the last one has ended, even if a host tool
+  left a call running in the background. A waiting call fails with
+  `MountGateTimeoutError` after `WAIT_TIMEOUT_SECS`, which `_run_code` turns into
+  an error `Content` whose message always shows. The gate does not cap how long
+  a call holds its turn. A copy of a tool shares the gate, and a pickled tool
+  gets a fresh one.
 - **`_monty_bridge.py`** — `InlineCodeBridge` and `generate_type_stubs`,
-  adapted from the reference Monty CodeAct repo. Pauses on `FunctionSnapshot`
-  to dispatch host calls, then resumes; supports direct typed tool calls,
-  the `call_tool` fallback, `asyncio.gather` fan-out, and forwards
+  adapted from the reference Monty CodeAct repo. Runs guest code through the
+  async pool (`AsyncMonty`) so it never blocks the event loop, and awaits every
+  `feed_start` / `resume` / `resume_auto`. Pauses on `AsyncFunctionSnapshot`
+  to dispatch host calls, then resumes; supports direct typed tool calls
+  (keyword arguments only; the generated stubs are keyword-only, omit parameters
+  guest code cannot supply such as an injected context, `self`, `*args` and
+  `**kwargs`, and the bridge rejects positional arguments), the `call_tool`
+  fallback, `asyncio.gather` fan-out, and forwards
   ``limits`` / type-check options via `pool.checkout(...)`, and ``mount`` /
   ``print_callback`` via `session.feed_start(...)`.
 - **`_instructions.py`** — dynamic instruction / tool-description builders

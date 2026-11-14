@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from ._agent import AgentFrameworkAgent
 from ._approval_state import _APPROVAL_SCOPE_INPUT_KEY
 from ._run_common import _is_snapshot_hydration_request
+from ._session_ownership import workflow_agent_tool_error, workflow_agent_tools
 from ._snapshots import (
     _DEFAULT_STATE_INPUT_KEY,
     _SNAPSHOT_SCOPE_INPUT_KEY,
@@ -120,6 +121,20 @@ def _single_user_scope() -> str:
     return f"{_SINGLE_USER_SCOPE_PREFIX}{uuid.uuid4().hex}"
 
 
+def _reject_workflow_agent_tools(protocol_runner: AgentFrameworkAgent | AgentFrameworkWorkflow) -> None:
+    """Refuse a runner that exposes a ``WorkflowAgent`` as a tool, so that the mistake shows at startup."""
+    # A runner subclass that skips the base constructor has nothing to inspect, and a workflow factory builds its
+    # workflow for each request, so a run checks what the factory built.
+    if isinstance(protocol_runner, AgentFrameworkAgent):
+        subject = getattr(protocol_runner, "agent", None)
+    else:
+        subject = getattr(protocol_runner, "workflow", None)
+    tool_names = workflow_agent_tools(subject)
+    if tool_names:
+        runner_name = getattr(protocol_runner, "name", None) or type(protocol_runner).__name__
+        raise ValueError(workflow_agent_tool_error(runner_name, tool_names))
+
+
 def add_agent_framework_fastapi_endpoint(
     app: FastAPI,
     agent: SupportsAgentRun | AgentFrameworkAgent | Workflow | AgentFrameworkWorkflow,
@@ -145,7 +160,9 @@ def add_agent_framework_fastapi_endpoint(
 
     Args:
         app: The FastAPI application
-        agent: The agent to expose (can be raw SupportsAgentRun or wrapped)
+        agent: The agent to expose (can be raw SupportsAgentRun or wrapped). The endpoint raises ``ValueError`` for an
+            agent, or a workflow, that exposes a ``WorkflowAgent`` as a tool (``WorkflowAgent.as_tool()``), and a run
+            ends with a ``WORKFLOW_AGENT_TOOL_UNSUPPORTED`` ``RUN_ERROR`` when a workflow factory builds one.
         path: The endpoint path
         state_schema: Optional state schema for shared state management; accepts dict or Pydantic model/class
         predict_state_config: Optional predictive state update configuration.
@@ -164,7 +181,8 @@ def add_agent_framework_fastapi_endpoint(
             authorization_scope_resolver for new FastAPI applications because it can consume authenticated dependency
             results. This resolver also scopes internal Agent Sessions, in-memory workflow_factory instances, and
             approval state. It must return a non-empty string derived from authorized request context; invalid results
-            fail the request before accessing state or invoking the runner.
+            fail the request before accessing state or invoking the runner. The shared-workflow rule described for
+            authorization_scope_resolver applies to this resolver as well.
         checkpoint_storage: Optional workflow checkpoint storage, applied when the endpoint exposes a workflow.
             When provided, each run creates a checkpoint at the end of every superstep, and a run may resume from
             a persisted checkpoint by supplying its id in the AG-UI forwarded props
@@ -188,13 +206,19 @@ def add_agent_framework_fastapi_endpoint(
         authorization_scope_resolver: Optional FastAPI dependency callable that returns a non-empty authorization
             scope derived from authenticated request context. The callable may declare normal FastAPI dependencies,
             headers, security schemes, or the current Request. Its result scopes snapshots, internal Agent Sessions,
-            workflow instances and checkpoints, detached-run admission, and server-side approval state.
+            workflow instances and checkpoints, detached-run admission, and server-side approval state. An
+            ``AgentExecutor`` owns one ``AgentSession`` (history, pending approvals, standing approval rules), so a
+            shared ``Workflow`` or ``WorkflowAgent`` that holds one serves only the first scope that runs it. A run in
+            another scope ends with a ``WORKFLOW_SCOPE_CONFLICT`` ``RUN_ERROR`` before it reaches the model. Pass
+            ``AgentFrameworkWorkflow(workflow_factory=...)`` with a factory that builds a new workflow, including new
+            ``AgentExecutor`` and ``AgentSession`` instances, for every call to serve several scopes.
         single_user: Explicitly declare that every caller of this endpoint belongs to one authorization principal.
             The endpoint receives one opaque scope that remains stable for that registration and separates equal route
             paths registered by other applications. Use an explicit resolver when scope continuity must survive process
             restarts or when storage is shared beyond one registration. A single-user application can return its own
             stable application scope from authorization_scope_resolver. Never enable this mode for callers with distinct
-            authorization.
+            authorization. A shared workflow keeps one conversation state for every thread of that principal; use
+            ``workflow_factory`` when threads must stay independent.
     """
     _validate_keepalive_seconds(keepalive_seconds)
     _validate_detached_run_options(max_detached_runs, detached_run_timeout_seconds)
@@ -216,6 +240,8 @@ def add_agent_framework_fastapi_endpoint(
         )
     else:
         raise TypeError("agent must be SupportsAgentRun, Workflow, AgentFrameworkAgent, or AgentFrameworkWorkflow.")
+
+    _reject_workflow_agent_tools(protocol_runner)
 
     _validate_authorization_scope_configuration(
         authorization_scope_resolver=authorization_scope_resolver,
@@ -412,7 +438,7 @@ def add_agent_framework_fastapi_endpoint(
                                 reader_started.wait(),
                                 timeout=_DETACHED_READER_START_TIMEOUT_SECONDS,
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             reader_abandoned.set()
                         async for frame in event_generator():
                             if reader_abandoned.is_set():
@@ -459,7 +485,7 @@ def add_agent_framework_fastapi_endpoint(
                             asyncio.shield(producer_task),
                             timeout=detached_run_timeout_seconds,
                         )
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.error(
                             "[%s] Detached run exceeded %.1f seconds after reader disconnect; cancelling",
                             path,

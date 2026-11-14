@@ -19,8 +19,8 @@ namespace Microsoft.Agents.AI.Foundry.Hosting;
 /// Because this mapping lives in the session state bag, it is serialized as part of the
 /// <see cref="AgentSession"/> by the active <c>AgentSessionStore</c> — there is no separate
 /// approval store. Consequently, partitioning the persisted session per agent and per user
-/// (see <c>FileSystemAgentSessionStore</c>) automatically isolates pending tool approvals
-/// per tenant as well: one user can never resolve another user's saved approval request.
+/// automatically isolates pending tool approvals per tenant as well: one user can never resolve
+/// another user's saved approval request.
 /// </remarks>
 internal static class ToolApprovalIdMap
 {

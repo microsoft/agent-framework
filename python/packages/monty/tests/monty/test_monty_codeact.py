@@ -25,7 +25,7 @@ from typing import Annotated, Any, Literal
 from unittest.mock import MagicMock
 
 import pytest
-from agent_framework import Content, FunctionTool, Message, tool
+from agent_framework import Content, FunctionInvocationContext, FunctionTool, Message, tool
 from agent_framework._sessions import SessionContext
 from agent_framework.exceptions import ToolException
 
@@ -53,11 +53,11 @@ class _FakeFunctionSnapshot:
     is_os_function: bool = False
     _script: _FakeScript | None = None
 
-    def resume(self, payload: Any) -> Any:
+    async def resume(self, payload: Any) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume", self, payload))
 
-    def resume_auto(self) -> Any:
+    async def resume_auto(self) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("function_resume_auto", self, None))
 
@@ -67,7 +67,7 @@ class _FakeFutureSnapshot:
     pending_call_ids: list[int]
     _script: _FakeScript | None = None
 
-    def resume(self, payload: Any) -> Any:
+    async def resume(self, payload: Any) -> Any:
         assert self._script is not None, "Snapshot must be attached to a script."
         return self._script.advance(("future_resume", self, payload))
 
@@ -127,8 +127,11 @@ def _get_script() -> _FakeScript:
     return script
 
 
+_checkouts: list[_FakeSession] = []
+
+
 class _FakeSession:
-    """Fake ``MontySession`` matching the pydantic-monty pool/checkout API."""
+    """Fake ``AsyncMontySession`` matching the pydantic-monty async pool/checkout API."""
 
     def __init__(
         self,
@@ -145,13 +148,13 @@ class _FakeSession:
         self.code: str | None = None
         self._script = _get_script()
 
-    def __enter__(self) -> _FakeSession:
+    async def __aenter__(self) -> _FakeSession:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> None:
         return None
 
-    def feed_start(
+    async def feed_start(
         self,
         code: str,
         *,
@@ -171,16 +174,16 @@ class _FakeSession:
 
 
 class _FakeMonty:
-    """Fake ``Monty`` pool: ``with Monty() as pool: with pool.checkout() as session``."""
+    """Fake ``AsyncMonty`` pool: ``async with AsyncMonty() as pool, pool.checkout() as session``."""
 
     def __init__(self, **kwargs: Any) -> None:
         self.pool_kwargs = kwargs
         self.last_session: _FakeSession | None = None
 
-    def __enter__(self) -> _FakeMonty:
+    async def __aenter__(self) -> _FakeMonty:
         return self
 
-    def __exit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: Any) -> None:
         return None
 
     def checkout(
@@ -198,6 +201,7 @@ class _FakeMonty:
             type_check_stubs=type_check_stubs,
             limits=limits,
         )
+        _checkouts.append(self.last_session)
         return self.last_session
 
 
@@ -205,16 +209,18 @@ class _FakeMonty:
 def fake_monty_module(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Install a fake ``pydantic_monty`` module for the duration of each test."""
     fake = types.ModuleType("pydantic_monty")
-    fake.Monty = _FakeMonty  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncMonty = _FakeMonty  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
     fake.MontyComplete = _FakeMontyComplete  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.FunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.FutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
-    fake.NameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncFunctionSnapshot = _FakeFunctionSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncFutureSnapshot = _FakeFutureSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
+    fake.AsyncNameLookupSnapshot = _FakeNameLookupSnapshot  # type: ignore[attr-defined] # ty: ignore[unresolved-attribute]
 
     monkeypatch.setitem(sys.modules, "pydantic_monty", fake)
     _current_script[0] = None
+    _checkouts.clear()
     yield
     _current_script[0] = None
+    _checkouts.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +273,32 @@ def test_tool_construction_defaults() -> None:
 
 
 @pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
+def test_execute_code_additional_properties_are_isolated_across_run_snapshots(
+    entry_point: type[MontyExecuteCodeTool] | type[MontyCodeActProvider],
+) -> None:
+    properties: dict[str, Any] = {
+        "source_integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "agent_framework.security.principals": [{"tenant_id": "tenant-a", "user_id": "user-a"}],
+    }
+    codeact = entry_point(additional_properties=properties)
+    template = codeact if isinstance(codeact, MontyExecuteCodeTool) else codeact._execute_code_tool
+
+    properties["agent_framework.security.principals"][0]["user_id"] = "mutated-input"
+    assert template.additional_properties is not None
+    assert template.additional_properties["agent_framework.security.principals"][0]["user_id"] == "user-a"
+
+    run_tool = template.create_run_tool()
+    template.additional_properties["agent_framework.security.principals"][0]["user_id"] = "mutated-template"
+
+    assert run_tool.additional_properties is not None
+    assert run_tool.additional_properties["source_integrity"] == "untrusted"
+    assert run_tool.additional_properties["agent_framework.security.principals"] == [
+        {"tenant_id": "tenant-a", "user_id": "user-a"}
+    ]
+
+
+@pytest.mark.parametrize("entry_point", [MontyExecuteCodeTool, MontyCodeActProvider])
 @pytest.mark.parametrize("register_later", [False, True])
 @pytest.mark.parametrize(
     "properties",
@@ -279,6 +311,7 @@ def test_tool_construction_defaults() -> None:
         {"standing_guidance": []},
         {"agent_framework.security.principals": []},
         {"_agent_framework_internal_security_tool": object()},
+        {"_mcp_server_ifc_policy": "restrict"},
         {"_mcp_trust_server_ifc": False},
     ],
 )
@@ -743,6 +776,33 @@ def test_resource_limits_round_trip() -> None:
     assert state["resource_limits"] == {"max_duration_secs": 5.0}
 
 
+@pytest.mark.parametrize(
+    ("resource_limits", "expected_limits"),
+    [
+        (None, {"max_feed_duration_secs": 30.0}),
+        ({}, {"max_feed_duration_secs": 30.0}),
+        ({"max_memory": 1024}, {"max_memory": 1024, "max_feed_duration_secs": 30.0}),
+        ({"max_turn_duration_secs": 2.0}, {"max_turn_duration_secs": 2.0, "max_feed_duration_secs": 30.0}),
+        ({"max_feed_duration_secs": 5.0}, {"max_feed_duration_secs": 5.0}),
+        ({"max_duration_secs": 5.0}, {"max_feed_duration_secs": 5.0}),
+        ({"max_feed_duration_secs": None}, {"max_feed_duration_secs": None}),
+        ({"max_duration_secs": None}, {"max_feed_duration_secs": None}),
+    ],
+)
+async def test_guest_execution_limit_defaults_unless_a_feed_duration_is_configured(
+    resource_limits: dict[str, Any] | None, expected_limits: dict[str, Any]
+) -> None:
+    _set_script(_FakeMontyComplete(output=None))
+    monty_tool = MontyExecuteCodeTool(resource_limits=resource_limits)
+
+    await monty_tool._run_code(code="None")
+
+    assert _checkouts[-1].limits == expected_limits
+    # The default applies at run time only; configuration and serialized state keep what the caller supplied.
+    assert monty_tool.resource_limits == (resource_limits or None)
+    assert monty_tool.build_serializable_state()["resource_limits"] == (resource_limits or None)
+
+
 def test_build_instructions_includes_registered_tools() -> None:
     monty_tool = MontyExecuteCodeTool(tools=[add_tool])
     instructions = monty_tool.build_instructions(tools_visible_to_model=False)
@@ -864,6 +924,31 @@ async def test_run_code_direct_typed_call_invokes_registered_tool() -> None:
     assert final_resume[1] == {"return_value": 5}
 
 
+async def test_run_code_direct_typed_call_with_positional_arguments_is_rejected_without_invoking_host() -> None:
+    calls: list[str | None] = []
+
+    @tool
+    def record(label: str | None = None) -> str:
+        """Record the label received by the host."""
+        calls.append(label)
+        return "recorded"
+
+    func_snapshot = _FakeFunctionSnapshot(function_name="record", call_id=5, args=("positional",))
+    script = _set_script(func_snapshot, _FakeMontyComplete(output=None))
+
+    monty_tool = MontyExecuteCodeTool(tools=[record])
+    await monty_tool._run_code(code='await record("positional")')
+
+    payloads = [payload for _, _, payload in script.resume_log]
+    assert payloads == [
+        {
+            "exc_type": "TypeError",
+            "message": "record accepts keyword arguments only. Use keyword arguments for parameters.",
+        }
+    ]
+    assert calls == []
+
+
 async def test_run_code_call_tool_fallback_invokes_registered_tool() -> None:
     func_snapshot = _FakeFunctionSnapshot(
         function_name="call_tool",
@@ -946,7 +1031,10 @@ async def test_run_code_call_tool_with_unregistered_name_returns_error() -> None
     )
 
 
-async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+async def test_run_code_returns_error_content_on_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch, include_detailed_errors: bool
+) -> None:
     class _BoomBridge:
         def __init__(self, tool_map: Any, **_: Any) -> None:
             pass
@@ -956,11 +1044,32 @@ async def test_run_code_returns_error_content_on_runtime_failure(monkeypatch: py
 
     monkeypatch.setattr(execute_code_module, "InlineCodeBridge", _BoomBridge)
 
-    monty_tool = MontyExecuteCodeTool()
+    monty_tool = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
     result = await monty_tool._run_code(code="x = 1")
     assert len(result) == 1
     assert result[0].type == "error"
-    assert "boom" in (result[0].error_details or "")
+    assert ("boom" in (result[0].error_details or "")) is include_detailed_errors
+    assert ("boom" in json.dumps([item.to_dict() for item in result])) is include_detailed_errors
+
+
+@pytest.mark.parametrize("constructor", [MontyExecuteCodeTool, MontyCodeActProvider])
+@pytest.mark.parametrize("value", ["false", 1, None])
+def test_detailed_error_option_rejects_non_boolean_values(constructor: Any, value: Any) -> None:
+    with pytest.raises(TypeError, match="include_detailed_errors must be a bool"):
+        constructor(include_detailed_errors=value)
+
+
+@pytest.mark.parametrize("include_detailed_errors", [False, True])
+def test_detailed_error_policy_is_snapshotted_and_not_a_code_parameter(include_detailed_errors: bool) -> None:
+    codeact = MontyExecuteCodeTool(include_detailed_errors=include_detailed_errors)
+    provider = MontyCodeActProvider(include_detailed_errors=include_detailed_errors)
+
+    assert codeact.create_run_tool().build_serializable_state()["include_detailed_errors"] is include_detailed_errors
+    assert (
+        provider._execute_code_tool.create_run_tool().build_serializable_state()["include_detailed_errors"]
+        is include_detailed_errors
+    )
+    assert set(codeact.parameters()["properties"]) == {"code"}
 
 
 def test_build_execution_contents_handles_truncation_and_non_json_output() -> None:
@@ -1697,8 +1806,48 @@ def test_generate_type_stubs_emits_dsl_and_tool_signatures() -> None:
     stubs = bridge_module.generate_type_stubs({"custom": custom})
 
     assert "async def call_tool(name: str, **kwargs: Any) -> Any:" in stubs
-    assert "async def custom(x: int, y: str = ...) -> bool:" in stubs
+    assert "async def custom(*, x: int, y: str = ...) -> bool:" in stubs
     assert "when_any" not in stubs
+
+
+def test_generate_type_stubs_declares_every_parameter_keyword_only() -> None:
+    def positional_or_keyword(tenant_id: str | None = None, limit: int = 1000) -> int:
+        return limit
+
+    def keyword_only(*, tenant_id: str | None = None) -> int:
+        return 0
+
+    def no_parameters() -> int:
+        return 0
+
+    stubs = bridge_module.generate_type_stubs({
+        "positional_or_keyword": positional_or_keyword,
+        "keyword_only": keyword_only,
+        "no_parameters": no_parameters,
+    })
+
+    assert "async def positional_or_keyword(*, tenant_id: str | None = ..., limit: int = ...) -> int:" in stubs
+    assert "async def keyword_only(*, tenant_id: str | None = ...) -> int:" in stubs
+    # A tool without parameters keeps an empty parameter list.
+    assert "async def no_parameters() -> int:" in stubs
+
+
+def test_generate_type_stubs_omits_parameters_guest_code_cannot_supply() -> None:
+    def wrapper(query: str, *args: int, **kwargs: Any) -> str:
+        return query
+
+    def with_context(query: str, ctx: FunctionInvocationContext) -> str:
+        return query
+
+    stubs = bridge_module.generate_type_stubs(
+        {"wrapper": wrapper, "with_context": with_context},
+        accepted_parameters={"with_context": ["query"]},
+    )
+
+    # ``*args`` and ``**kwargs`` are never declared, with or without an accepted-parameter list.
+    assert "async def wrapper(*, query: str) -> str:" in stubs
+    # Parameters outside the accepted list, such as an injected context, are left out.
+    assert "async def with_context(*, query: str) -> str:" in stubs
 
 
 def test_generate_type_stubs_preserves_none_and_optional() -> None:
@@ -1722,11 +1871,11 @@ def test_generate_type_stubs_preserves_none_and_optional() -> None:
     })
 
     # ``None`` return must round-trip as None, not Any.
-    assert "async def nullable_return(x: int) -> None:" in stubs
+    assert "async def nullable_return(*, x: int) -> None:" in stubs
     # ``Optional[X]`` is ``Union[X, None]`` at runtime; preserve None.
-    assert "async def optional_param(x: int | None = ...) -> bool:" in stubs
+    assert "async def optional_param(*, x: int | None = ...) -> bool:" in stubs
     # Multi-arm union with None.
-    assert "async def union_param(x: int | str | None) -> str:" in stubs
+    assert "async def union_param(*, x: int | str | None) -> str:" in stubs
 
 
 def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
@@ -1754,7 +1903,7 @@ def test_generate_type_stubs_skips_non_identifier_tool_names() -> None:
         "normal": normal,
     })
 
-    assert "async def normal(x: int) -> int:" in stubs
+    assert "async def normal(*, x: int) -> int:" in stubs
     assert "weird-name" not in stubs
     assert "injected" not in stubs
     assert "async def async(" not in stubs
@@ -1836,7 +1985,10 @@ async def test_concurrent_tool_callbacks_share_registered_invocation_limit() -> 
     results = await asyncio.gather(*(bridge._invoke_tool(index, "limited", {}) for index, bridge in enumerate(bridges)))
 
     assert sum(payload == {"return_value": 42} for _, payload in results) == 1
-    assert sum(payload.get("exc_type") == "ToolException" for _, payload in results) == 7
+    assert (
+        sum(payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."} for _, payload in results)
+        == 7
+    )
     assert limited.invocation_count == 1
 
 
@@ -1893,6 +2045,126 @@ async def test_provider_runs_share_registered_tool_invocation_limit() -> None:
         if run_index == 0:
             assert payload == {"return_value": 42}
         else:
-            assert payload["exc_type"] == "ToolException"
-            assert "maximum invocation limit" in payload["message"]
+            assert payload == {"exc_type": "RuntimeError", "message": "Host tool execution failed."}
         assert limited.invocation_count == 1
+
+
+def test_run_snapshot_does_not_repeat_unchanged_fides_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." not in caplog.text
+
+
+def test_run_snapshot_warns_when_fides_metadata_keys_change(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+    annotated_tool.additional_properties["confidentiality"] = "private"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert codeact.get_tools()[0] is annotated_tool
+
+
+def test_run_snapshot_warns_when_fides_metadata_value_changes(caplog: pytest.LogCaptureFixture) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    caplog.clear()
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        run_tool = codeact.create_run_tool()
+
+    assert "FIDES is not supported with CodeAct providers." in caplog.text
+    assert run_tool.get_tools()[0] is annotated_tool
+
+
+def test_fides_warning_cache_pruned_on_tool_removal() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    assert any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+    codeact.remove_tool(first.name)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_warning_cache_pruned_on_clear() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+    codeact.clear_tools()
+
+    assert codeact._fides_warned_metadata == []
+
+
+def test_fides_warning_cache_pruned_on_replacement() -> None:
+    @tool(additional_properties={"source_integrity": "untrusted"})
+    def first(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=first)
+
+    @tool(
+        name=first.name,
+        additional_properties={"source_integrity": "trusted"},
+    )
+    def replacement(value: int) -> int:
+        return value
+
+    codeact.add_tools(replacement)
+
+    assert not any(obj is first for obj, _ in codeact._fides_warned_metadata)
+    assert any(obj is replacement for obj, _ in codeact._fides_warned_metadata)
+
+
+def test_fides_metadata_change_warns_once_across_run_snapshots(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    @tool(additional_properties={"source_integrity": "trusted"})
+    def annotated_tool(value: int) -> int:
+        return value
+
+    codeact = MontyExecuteCodeTool(tools=annotated_tool)
+    assert annotated_tool.additional_properties is not None
+
+    annotated_tool.additional_properties["source_integrity"] = "untrusted"
+    caplog.clear()
+
+    with caplog.at_level("WARNING", logger="agent_framework"):
+        codeact.create_run_tool()
+        codeact.create_run_tool()
+
+    warnings = [
+        record for record in caplog.records if "FIDES is not supported with CodeAct providers." in record.getMessage()
+    ]
+    assert len(warnings) == 1

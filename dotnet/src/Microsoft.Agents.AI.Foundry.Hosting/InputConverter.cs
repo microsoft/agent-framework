@@ -103,7 +103,7 @@ internal static class InputConverter
     public static ChatOptions ConvertToChatOptions(
         CreateResponse request,
         Func<IChatClient, object?>? agentRawRepresentationFactory = null,
-        FoundryResponsesOptions? hostingOptions = null)
+        FoundryResponsesServerOptions? hostingOptions = null)
     {
         var options = new ChatOptions
         {
@@ -116,7 +116,7 @@ internal static class InputConverter
             // clients send placeholder values like "hosted-agent").
         };
 
-        if (hostingOptions?.AllowStoredOutputEnabled is true)
+        if (hostingOptions?.InferenceStoredOutputAllowed is true)
         {
             // The container opted into keeping its own recording, so nothing here touches the setting,
             // not even to pass the agent's own factory along: leaving it unset lets ChatClientAgent fall
@@ -128,40 +128,9 @@ internal static class InputConverter
         DisableStoredOutput(
             options,
             agentRawRepresentationFactory,
-            hostingOptions?.IncludeReasoningEncryptedContent ?? true);
+            includeReasoningEncryptedContent: hostingOptions?.ExcludeReasoningEncryptedContent is not true);
 
         return options;
-    }
-
-    /// <summary>
-    /// Extracts any Foundry Toolbox markers (<c>foundry-toolbox://</c>) from the request's
-    /// MCP tool entries so the handler can resolve them server-side.
-    /// </summary>
-    /// <param name="request">The create response request.</param>
-    /// <returns>A list of (name, optional version) pairs, one per detected marker. Never <see langword="null"/>.</returns>
-    public static List<(string Name, string? Version)> ReadMcpToolboxMarkers(CreateResponse request)
-    {
-        var markers = new List<(string Name, string? Version)>();
-
-        if (request.Tools is null)
-        {
-            return markers;
-        }
-
-        foreach (var tool in request.Tools)
-        {
-            if (tool is not MCPTool mcp || mcp.ServerUrl is null)
-            {
-                continue;
-            }
-
-            if (HostedMcpToolboxAITool.TryParseToolboxAddress(mcp.ServerUrl.ToString(), out var name, out var version))
-            {
-                markers.Add((name!, version));
-            }
-        }
-
-        return markers;
     }
 
     /// <summary>
@@ -231,6 +200,8 @@ internal static class InputConverter
             ItemFunctionToolCall funcCall => ConvertItemFunctionToolCall(funcCall),
             ItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
             MCPApprovalResponse approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            ItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
+            ComputerCallOutputItemParam computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             ItemReferenceParam => null,
             _ => null
         };
@@ -384,6 +355,8 @@ internal static class InputConverter
             OutputItemFunctionToolCallOutput funcOutput => ConvertFunctionToolCallOutput(funcOutput),
             OutputItemMcpApprovalRequest approvalRequest => ConvertMcpApprovalRequest(approvalRequest.Id, approvalRequest.Name, approvalRequest.Arguments, stateBag),
             OutputItemMcpApprovalResponseResource approvalResponse => ConvertMcpApprovalResponse(approvalResponse.ApprovalRequestId, approvalResponse.Approve, stateBag),
+            OutputItemComputerToolCall computerCall => ComputerToolItemConverter.ToChatMessage(computerCall),
+            OutputItemComputerToolCallOutput computerCallOutput => ComputerToolItemConverter.ToChatMessage(computerCallOutput),
             OutputItemReasoningItem => null,
             _ => null
         };

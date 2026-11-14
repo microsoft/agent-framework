@@ -24,7 +24,7 @@ In this case they are here: https://platform.openai.com/docs/api-reference/respo
 """
 
 
-agent = Agent(
+agent = Agent[OpenAIChatOptions](
     client=OpenAIChatClient[OpenAIChatOptions](model="gpt-5"),
     name="MathHelper",
     instructions="You are a personal math tutor. When asked a math question, "

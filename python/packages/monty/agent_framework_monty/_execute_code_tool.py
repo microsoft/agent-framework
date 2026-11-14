@@ -18,6 +18,7 @@ import mimetypes
 import os
 import stat
 from collections.abc import Callable, Iterator, Sequence
+from copy import deepcopy
 from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
@@ -34,6 +35,7 @@ from agent_framework._tools import (
 
 from ._instructions import build_codeact_instructions, build_execute_code_description
 from ._monty_bridge import InlineCodeBridge, generate_type_stubs
+from ._mount_gate import MountGate, MountGateTimeoutError
 from ._types import FileMount, FileMountInput
 
 logger = logging.getLogger("agent_framework")
@@ -49,6 +51,7 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
     "standing_guidance",
     "agent_framework.security.principals",
     "_agent_framework_internal_security_tool",
+    "_mcp_server_ifc_policy",
     "_mcp_trust_server_ifc",
 })
 
@@ -190,8 +193,45 @@ def _make_tool_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
     Returns the raw native value (no ``Content`` wrapping) so the Monty interpreter
     receives real Python objects. ``FunctionTool.invoke`` accepts direct keyword
     arguments and handles both sync and async underlying functions internally.
+    The raw path deliberately bypasses adapters that attach labels after
+    ``Content`` normalization.
     """
     return partial(tool_obj.invoke, skip_parsing=True)
+
+
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools, or label the outer execute_code result "
+                "with CodeAct additional_properties for coarse-grained handling.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
 
 
 class MontyExecuteCodeTool(FunctionTool):
@@ -215,7 +255,12 @@ class MontyExecuteCodeTool(FunctionTool):
     Hyperlight's ``/output`` flow.
 
     ``resource_limits`` is forwarded to Monty's ``ResourceLimits`` to cap CPU
-    time, memory, output size, recursion depth, and GC frequency.
+    time, memory, output size, recursion depth, and GC frequency. When it sets
+    neither ``max_feed_duration_secs`` nor its legacy alias ``max_duration_secs``,
+    guest execution is limited to 30 seconds, not counting time spent waiting on
+    host tools. Set ``max_feed_duration_secs`` to another value, or to ``None`` to
+    remove the limit. ``max_duration_secs`` will be removed soon, because this
+    package is in beta.
 
     ``tool_description_format`` controls parameter documentation in both the
     description and instructions: ``"compact"`` (default) or ``"json"`` globally,
@@ -224,37 +269,69 @@ class MontyExecuteCodeTool(FunctionTool):
     are copied and retain entries for tools registered later.
 
     All mutators (``add_tools``, ``add_file_mounts`` etc.) must be called from
-    the same task/thread that owns the tool. Monty itself runs on the event
-    loop, so no internal locking is needed.
+    the same task/thread that owns the tool; they are not synchronized. Guest
+    code runs in Monty worker processes and does not block the event loop, so
+    concurrent ``execute_code`` calls overlap and each starts its own worker
+    process.
+
+    Calls on a tool that has a read-write mount (including ``workspace_root``)
+    take turns, so that written files are attributed to the right call. This
+    covers every run of one provider and works across event loops and threads.
+    A call waits at most 10 minutes for its turn and then returns an error. A call
+    that a host tool starts while its own call has the turn, such as a sub-agent
+    that uses the same provider, is part of that call and does not wait. The turn
+    lasts until the call and every call it started have ended. Tools and mounts
+    are read when a call gets its turn. Separate tools or providers that mount the
+    same host directory do not take turns with each other, so give each one its
+    own directory.
+
+    Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. The mapping is deep-copied at construction and for each
+            run snapshot. It can define one coarse FIDES policy for the complete
+            CodeAct result; it does not label or enforce nested host-tool calls.
+        include_detailed_errors: Include host exception types/messages and execution error details.
+            Defaults to ``False``. Enable only for a trusted channel; diagnostics can contain secrets.
+            This setting is independent of the outer client's error and sensitive-logging settings.
     """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
         resource_limits: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
+        _mount_gate: MountGate | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
         super().__init__(
             name=EXECUTE_CODE_TOOL_NAME,
             description=EXECUTE_CODE_TOOL_DESCRIPTION,
             approval_mode="never_require",
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
+            additional_properties=deepcopy(additional_properties),
         )
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
         self._tool_description_format: _NormalizedToolDescriptionFormat = _normalize_tool_description_format(
             tool_description_format
         )
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._workspace_root: Path | None = (
             _resolve_existing_directory(workspace_root) if workspace_root is not None else None
         )
         self._file_mounts: dict[str, FileMount] = {}
         self._resource_limits: dict[str, Any] | None = dict(resource_limits) if resource_limits else None
+        self._mount_gate: MountGate = _mount_gate or MountGate()
 
         if tools is not None:
             self.add_tools(tools)
@@ -285,16 +362,12 @@ class MontyExecuteCodeTool(FunctionTool):
         """Add Monty-side tools to this execute_code surface."""
         new_tools = _collect_tools(tools)
         self._managed_tools = _collect_tools(self._managed_tools, new_tools)
-        for tool_obj in new_tools:
-            if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                tool_obj.additional_properties
-            ):
-                logger.warning(
-                    "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                    "through function middleware for calls made inside generated code. "
-                    "Keep FIDES-dependent tools as direct agent tools.",
-                    tool_obj.name,
-                )
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in self._managed_tools)
+        ]
+        _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
         self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -307,11 +380,17 @@ class MontyExecuteCodeTool(FunctionTool):
         if len(remaining_tools) == len(self._managed_tools):
             raise KeyError(f"No managed tool named {name!r} is registered.")
         self._managed_tools = remaining_tools
+        self._fides_warned_metadata[:] = [
+            (registered, metadata)
+            for registered, metadata in self._fides_warned_metadata
+            if any(registered is current for current in remaining_tools)
+        ]
         self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed Monty tools."""
         self._managed_tools = []
+        self._fides_warned_metadata.clear()
         self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -351,7 +430,10 @@ class MontyExecuteCodeTool(FunctionTool):
 
     @property
     def resource_limits(self) -> dict[str, Any] | None:
-        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any."""
+        """Return the configured Monty :class:`pydantic_monty.ResourceLimits`, if any.
+
+        The default guest execution limit applied when no feed duration is configured is not included.
+        """
         return dict(self._resource_limits) if self._resource_limits else None
 
     def build_instructions(self, *, tools_visible_to_model: bool) -> str:
@@ -365,13 +447,19 @@ class MontyExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> MontyExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
+        tools = self.get_tools()
+        _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
         return MontyExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=self._fides_warned_metadata,
+            tools=tools,
+            additional_properties=deepcopy(self.additional_properties),
             approval_mode=self._default_approval_mode,
             workspace_root=self._workspace_root,
             file_mounts=list(self._file_mounts.values()) or None,
             resource_limits=self._resource_limits,
             tool_description_format=self._tool_description_format,
+            include_detailed_errors=self._include_detailed_errors,
+            _mount_gate=self._mount_gate,
         )
 
     def build_serializable_state(self) -> dict[str, Any]:
@@ -384,6 +472,7 @@ class MontyExecuteCodeTool(FunctionTool):
         return {
             "runtime": "monty",
             "approval_mode": approval_mode,
+            "include_detailed_errors": self._include_detailed_errors,
             "tool_names": [tool_obj.name for tool_obj in self._managed_tools],
             "tool_description_format": (
                 dict(self._tool_description_format)
@@ -448,12 +537,25 @@ class MontyExecuteCodeTool(FunctionTool):
         return mounts
 
     async def _run_code(self, *, code: str) -> list[Content]:
+        # Written files are attributed by comparing read-write mounts before and after the run, so calls that can
+        # write to the same host files take turns.
+        if not any(mount.mode == "read-write" for mount in self._effective_mounts()):
+            return await self._execute(code)
+        try:
+            async with self._mount_gate.hold():
+                return await self._execute(code)
+        except MountGateTimeoutError as exc:
+            return [Content.from_error(message=str(exc))]
+
+    async def _execute(self, code: str) -> list[Content]:
+        include_detailed_errors = self._include_detailed_errors
         tools = list(self._managed_tools)
         mounts = self._effective_mounts()
 
         tool_map = self._build_tool_map(tools)
         stub_map = self._build_type_stub_map(tools)
-        type_stubs = generate_type_stubs(stub_map) if stub_map else None
+        accepted_parameters = {tool_obj.name: tool_obj.parameters().get("properties", {}) for tool_obj in tools}
+        type_stubs = generate_type_stubs(stub_map, accepted_parameters=accepted_parameters) if stub_map else None
 
         # Snapshot mtimes of host files in read-write mounts so we can later
         # identify which files the sandbox actually touched.
@@ -464,6 +566,7 @@ class MontyExecuteCodeTool(FunctionTool):
             type_stubs=type_stubs,
             mounts=[_to_monty_mount(mount) for mount in mounts] or None,
             resource_limits=self._resource_limits,
+            include_detailed_errors=include_detailed_errors,
         )
 
         try:
@@ -472,7 +575,7 @@ class MontyExecuteCodeTool(FunctionTool):
             return [
                 Content.from_error(
                     message="Execution error",
-                    error_details=f"{type(exc).__name__}: {exc}",
+                    error_details=f"{type(exc).__name__}: {exc}" if include_detailed_errors else None,
                 ),
             ]
 

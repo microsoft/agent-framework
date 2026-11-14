@@ -46,7 +46,6 @@ import contextlib
 import logging
 import os
 import secrets
-import shutil
 import subprocess  # ruff:ignore[suspicious-subprocess-import]  # nosec B404 - running shell commands is the whole point of this tool
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -59,6 +58,7 @@ from agent_framework._tools import SHELL_TOOL_KIND_VALUE
 from .._feature_usage import FeatureIndex
 from ._capture import _ProcessOutput  # pyright: ignore[reportPrivateUsage] - shared shell capture
 from ._policy import ShellPolicy, ShellRequest
+from ._resolve import require_full_path
 from ._session import ShellSession
 from ._truncate import _validate_output_limit  # pyright: ignore[reportPrivateUsage] - shared limit validation
 from ._types import (
@@ -91,9 +91,19 @@ class DockerNotAvailableError(RuntimeError):
     """Raised when the configured docker binary cannot be reached."""
 
 
-def is_docker_available(binary: str = "docker") -> bool:
-    """Return ``True`` if ``binary`` is on PATH and the daemon responds."""
-    if shutil.which(binary) is None:
+def is_docker_available(binary: str) -> bool:
+    """Return ``True`` if the container runtime at ``binary`` exists and its daemon responds.
+
+    Args:
+        binary: Full path to the ``docker`` (or compatible, such as ``podman``) executable. On
+            Windows it must include the file extension. A short name or relative path returns
+            ``False`` because it could be resolved from the current directory.
+    """
+    try:
+        require_full_path(binary, source="binary")
+    except ValueError:
+        return False
+    if not os.path.isfile(binary):
         return False
     try:
         out = subprocess.run(  # ruff:ignore[subprocess-without-shell-equals-true]  # nosec B603 - argv is built from trusted binary name
@@ -231,6 +241,12 @@ class DockerShellTool:
     docstring for more.
 
     Args:
+        docker_binary: Required full path to the ``docker`` (or compatible,
+            such as ``podman``) executable, for example ``"/usr/bin/docker"``.
+            On Windows it must also include the file extension (``.exe``).
+            Short names and relative paths are rejected because they could be
+            resolved from the current directory. A path shows only that the
+            file is there, not that it can be trusted.
         image: OCI image to run. Defaults to a small Microsoft-maintained
             base image. Override with anything that includes ``bash`` and
             (for persistent mode) ``sleep``.
@@ -278,7 +294,6 @@ class DockerShellTool:
             with the default isolation flags and a trusted runtime — is
             the intended boundary rather than approval.
         on_command: Audit hook fired for every allowed command.
-        docker_binary: Override (e.g. ``"podman"``).
         shell: Shell binary to invoke inside the container. Defaults to
             ``"bash"``; pass ``"sh"`` for minimal images such as Alpine
             that don't ship bash. Anything else must be present on
@@ -288,6 +303,7 @@ class DockerShellTool:
     def __init__(
         self,
         *,
+        docker_binary: str,
         image: str = DEFAULT_IMAGE,
         container_name: str | None = None,
         mode: ShellMode = "persistent",
@@ -307,7 +323,6 @@ class DockerShellTool:
         max_stderr_bytes: int = 64 * 1024,
         approval_mode: Literal["always_require", "never_require"] = "always_require",
         on_command: Callable[[str], None] | None = None,
-        docker_binary: str = "docker",
         shell: str = "bash",
     ) -> None:
         _validate_output_limit(max_stdout_bytes, name="max_stdout_bytes")
@@ -335,7 +350,7 @@ class DockerShellTool:
         self._max_stderr_bytes = max_stderr_bytes
         self._approval_mode: Literal["always_require", "never_require"] = approval_mode
         self._on_command = on_command
-        self._binary = docker_binary
+        self._binary = require_full_path(docker_binary, source="docker_binary")
         self._shell = shell
 
         self._session: ShellSession | None = None
@@ -350,7 +365,11 @@ class DockerShellTool:
     # ------------------------------------------------------------------ lifecycle
 
     async def start(self) -> None:
-        """Pull/start the container and (if persistent) the inner shell session."""
+        """Pull/start the container and (if persistent) the inner shell session.
+
+        Raises:
+            FileNotFoundError: If the container runtime executable does not exist.
+        """
         # Stateless mode never uses the long-lived container — every call goes
         # through ``docker run --rm`` — so start()/close() are no-ops.
         if self._mode == "stateless":
@@ -484,7 +503,7 @@ class DockerShellTool:
         try:
             try:
                 await output.wait(timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 timed_out = True
                 await self._terminate_stateless(proc, per_call_name)
                 await output.finish()
@@ -522,11 +541,11 @@ class DockerShellTool:
             try:
                 try:
                     kill_ok = await asyncio.wait_for(killer.wait(), timeout=5.0) == 0
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     killer.kill()
                     try:
                         await asyncio.wait_for(killer.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning("docker kill client for %s did not exit after termination", name)
             finally:
                 if killer.returncode is None:
@@ -545,7 +564,7 @@ class DockerShellTool:
                 try:
                     try:
                         await diagnostic.wait(5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         reaper.kill()
                         await diagnostic.finish()
                         logger.error("docker rm -f %s timed out; container may be leaked", name)
@@ -616,7 +635,7 @@ class DockerShellTool:
             try:
                 _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
                 return proc.returncode, err.decode("utf-8", errors="replace").strip()
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 proc.kill()
                 with contextlib.suppress(Exception):
                     await proc.wait()

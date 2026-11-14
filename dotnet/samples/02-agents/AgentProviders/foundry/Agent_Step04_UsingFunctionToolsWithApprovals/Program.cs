@@ -42,7 +42,11 @@ while (approvalRequests.Count > 0)
         {
             Console.WriteLine($"The agent would like to invoke the following function, please reply Y to approve: Name {((FunctionCallContent)functionApprovalRequest.ToolCall).Name}");
             bool approved = Console.ReadLine()?.Equals("Y", StringComparison.OrdinalIgnoreCase) ?? false;
-            return new ChatMessage(ChatRole.User, [functionApprovalRequest.CreateResponse(approved)]);
+
+            // When rejecting, tell the model not to retry the call.
+            return new ChatMessage(ChatRole.User, [approved
+                ? functionApprovalRequest.CreateResponse(approved: true)
+                : functionApprovalRequest.CreateResponse(approved: false, reason: "The user rejected this tool call. Do not retry it.")]);
         });
 
     response = await agent.RunAsync(userInputMessages, session);

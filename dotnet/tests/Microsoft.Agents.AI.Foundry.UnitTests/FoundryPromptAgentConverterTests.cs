@@ -7,11 +7,11 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using Azure.AI.Extensions.OpenAI;
 using Azure.AI.Projects;
 using Azure.AI.Projects.Agents;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
+using AgentReference = Azure.AI.Extensions.OpenAI.AgentReference;
 
 #pragma warning disable OPENAI001, CS0618
 

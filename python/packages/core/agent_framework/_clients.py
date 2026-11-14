@@ -21,6 +21,7 @@ from typing import (
     Generic,
     Literal,
     Protocol,
+    Self,
     TypedDict,
     cast,
     overload,
@@ -30,6 +31,8 @@ from typing import (
 from ._docstrings import apply_layered_docstring
 from ._serialization import SerializationMixin
 from ._types import (
+    AgentResponse,
+    AgentResponseUpdate,
     ChatResponse,
     ChatResponseUpdate,
     EmbeddingGenerationOptions,
@@ -46,11 +49,6 @@ if sys.version_info >= (3, 13):
     from typing import TypeVar  # pragma: no cover
 else:
     from typing_extensions import TypeVar  # pragma: no cover
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 
 if TYPE_CHECKING:
@@ -360,9 +358,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
         # Get the base dict from SerializationMixin
         result = super().to_dict(exclude=exclude, exclude_none=exclude_none)
 
-        # Extract additional_properties to root level
-        if self.additional_properties:
-            result.update(self.additional_properties)
+        # Extract additional_properties to root level respecting exclusions and exclude_none
+        if self.additional_properties and (exclude is None or "additional_properties" not in exclude):
+            exclude_set = exclude or set()
+            for key, value in self.additional_properties.items():
+                if key in exclude_set:
+                    continue
+                if exclude_none and value is None:
+                    continue
+                result[key] = value
 
         return result
 
@@ -390,6 +394,15 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             updates,
             output_format_type=response_format,
         )
+
+    def _finalize_agent_response_updates(
+        self,
+        updates: Sequence[AgentResponseUpdate],
+        *,
+        response_format: Any | None = None,
+    ) -> AgentResponse[Any]:
+        """Aggregate mapped agent updates without reapplying per-model-turn processing."""
+        return AgentResponse.from_updates(updates, output_format_type=response_format)
 
     def _build_response_stream(
         self,
@@ -581,6 +594,11 @@ class BaseChatClient(SerializationMixin, ABC, Generic[OptionsCoT]):
             tokenizer=tokenizer,
         )
         merged_client_kwargs = dict(client_kwargs) if client_kwargs is not None else {}
+        evaluation_tool_capture = cast(
+            Callable[[Any], None] | None, merged_client_kwargs.pop("_evaluation_tool_capture", None)
+        )
+        if evaluation_tool_capture is not None:
+            evaluation_tool_capture((options or {}).get("tools"))
 
         if not compaction_overrides:
             return self._inner_get_response(

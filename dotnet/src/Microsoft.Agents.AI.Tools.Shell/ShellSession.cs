@@ -3,12 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Shared.Diagnostics;
 
 namespace Microsoft.Agents.AI.Tools.Shell;
 
@@ -200,6 +202,8 @@ internal sealed class ShellSession : IAsyncDisposable
                     }
                 }
             }
+
+            EnvironmentSanitizer.RestrictExecutableSearch(startInfo.Environment);
 
             this._stdoutBuf.Clear();
             this._stderrBuf.Clear();
@@ -699,7 +703,7 @@ internal sealed class ShellSession : IAsyncDisposable
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
-    private static bool TryFindSetsid(out string fullPath)
+    private static bool TryFindSetsid([NotNullWhen(true)] out string? fullPath)
     {
         // Check well-known locations first to avoid PATH-based lookups when possible.
         foreach (var c in new[] { "/usr/bin/setsid", "/bin/setsid", "/usr/local/bin/setsid" })
@@ -711,25 +715,7 @@ internal sealed class ShellSession : IAsyncDisposable
             }
         }
         // Fall back to PATH.
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (!string.IsNullOrEmpty(pathEnv))
-        {
-            foreach (var dir in pathEnv!.Split(Path.PathSeparator))
-            {
-                if (string.IsNullOrEmpty(dir))
-                {
-                    continue;
-                }
-                var candidate = Path.Combine(dir, "setsid");
-                if (File.Exists(candidate))
-                {
-                    fullPath = candidate;
-                    return true;
-                }
-            }
-        }
-        fullPath = string.Empty;
-        return false;
+        return PathValidation.TryFindOnPath(Environment.GetEnvironmentVariable("PATH"), "setsid", out fullPath);
     }
 
     private static class NativeMethods

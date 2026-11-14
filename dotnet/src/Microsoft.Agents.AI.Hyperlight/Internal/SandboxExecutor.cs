@@ -51,7 +51,9 @@ internal sealed class SandboxExecutor : IDisposable
             this.ModulePath = options.ModulePath;
             this.HeapSize = options.HeapSize;
             this.StackSize = options.StackSize;
+            this.ExecutionTimeout = options.ExecutionTimeout;
             this.HostInputDirectory = options.HostInputDirectory;
+            this.IncludeDetailedErrors = options.IncludeDetailedErrors;
             this.ToolRegistryVersion = toolRegistryVersion;
             this.ConfigFingerprint = ComputeFingerprint(
                 this.Tools,
@@ -62,7 +64,8 @@ internal sealed class SandboxExecutor : IDisposable
                 this.Backend,
                 this.ModulePath,
                 this.HeapSize,
-                this.StackSize);
+                this.StackSize,
+                this.IncludeDetailedErrors);
         }
 
         public IReadOnlyList<AIFunction> Tools { get; }
@@ -79,7 +82,11 @@ internal sealed class SandboxExecutor : IDisposable
 
         public string? StackSize { get; }
 
+        public TimeSpan ExecutionTimeout { get; }
+
         public string? HostInputDirectory { get; }
+
+        public bool IncludeDetailedErrors { get; }
 
         public Guid ToolRegistryVersion { get; }
 
@@ -100,7 +107,8 @@ internal sealed class SandboxExecutor : IDisposable
             SandboxBackend backend = SandboxBackend.JavaScript,
             string? modulePath = null,
             string? heapSize = null,
-            string? stackSize = null)
+            string? stackSize = null,
+            bool includeDetailedErrors = false)
         {
             var buffer = new ArrayBufferWriter<byte>();
             using (var writer = new Utf8JsonWriter(buffer))
@@ -111,6 +119,7 @@ internal sealed class SandboxExecutor : IDisposable
                 writer.WriteString("heapSize", heapSize);
                 writer.WriteString("stackSize", stackSize);
                 writer.WriteString("hostInputDirectory", hostInputDirectory);
+                writer.WriteBoolean("includeDetailedErrors", includeDetailedErrors);
                 writer.WriteString("toolRegistryVersion", toolRegistryVersion);
 
                 writer.WritePropertyName("tools");
@@ -218,34 +227,47 @@ internal sealed class SandboxExecutor : IDisposable
         await this._executionLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            this.EnsureInitialized(snapshot);
-
-            if (this._warmSnapshot is not null)
-            {
-                this._sandbox!.Restore(this._warmSnapshot);
-            }
-
-            ExecutionResult result;
+            using var timeLimit = new CancellationTokenSource(snapshot.ExecutionTimeout);
+            using var executionCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeLimit.Token);
             try
             {
-                result = this._sandbox!.Run(code);
+                this.EnsureInitialized(snapshot, executionCancellation.Token);
+
+                if (this._warmSnapshot is not null)
+                {
+                    this._sandbox!.Restore(this._warmSnapshot);
+                }
+
+                return BuildResult(this._sandbox!.Run(code, executionCancellation.Token));
             }
-#pragma warning disable CA1031 // Surface sandbox execution failures as structured JSON rather than propagating.
-            catch (Exception ex)
-#pragma warning restore CA1031
+            catch (OperationCanceledException) when (timeLimit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                return BuildErrorResult(ex.Message);
+                return BuildErrorResult("Code execution exceeded its time limit.");
+            }
+        }
+#pragma warning disable CA1031 // Return ordinary lifecycle failures as policy-controlled execution errors.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Exception failure = ex;
+            try
+            {
+                this.ClearSandboxState();
+            }
+            catch (Exception cleanupError) when (cleanupError is not OperationCanceledException)
+            {
+                failure = new AggregateException(ex, cleanupError);
             }
 
-            return BuildResult(result);
+            return BuildErrorResult(snapshot.IncludeDetailedErrors ? failure.ToString() : "Code execution failed.");
         }
+#pragma warning restore CA1031
         finally
         {
             this._executionLock.Release();
         }
     }
 
-    private void EnsureInitialized(RunSnapshot snapshot)
+    private void EnsureInitialized(RunSnapshot snapshot, CancellationToken cancellationToken)
     {
         if (this._sandbox is not null && string.Equals(this._lastConfigFingerprint, snapshot.ConfigFingerprint, StringComparison.Ordinal))
         {
@@ -254,15 +276,28 @@ internal sealed class SandboxExecutor : IDisposable
 
         // Configuration changed (or first run) — dispose the previous sandbox
         // so the new one picks up the current capabilities and runtime options.
-        this._warmSnapshot?.Dispose();
-        this._sandbox?.Dispose();
-        this._warmSnapshot = null;
-        this._sandbox = null;
-
-        this.BuildAndWarmUp(snapshot);
+        this.ClearSandboxState();
+        this.BuildAndWarmUp(snapshot, cancellationToken);
     }
 
-    private void BuildAndWarmUp(RunSnapshot snapshot)
+    private void ClearSandboxState()
+    {
+        var warmSnapshot = this._warmSnapshot;
+        var sandbox = this._sandbox;
+        this._warmSnapshot = null;
+        this._sandbox = null;
+        this._lastConfigFingerprint = null;
+        try
+        {
+            warmSnapshot?.Dispose();
+        }
+        finally
+        {
+            sandbox?.Dispose();
+        }
+    }
+
+    private void BuildAndWarmUp(RunSnapshot snapshot, CancellationToken cancellationToken)
     {
         var builder = new SandboxBuilder()
             .WithBackend(snapshot.Backend);
@@ -298,9 +333,10 @@ internal sealed class SandboxExecutor : IDisposable
         }
 
         var sandbox = builder.Build();
+        this._sandbox = sandbox;
 
         // Tools must be registered before the first Run() call.
-        ToolBridge.RegisterAll(sandbox, snapshot.Tools);
+        ToolBridge.RegisterAll(sandbox, snapshot.Tools, snapshot.IncludeDetailedErrors);
 
         foreach (var allowedDomain in snapshot.AllowedDomains)
         {
@@ -312,9 +348,8 @@ internal sealed class SandboxExecutor : IDisposable
         // Backend-specific no-op used to trigger lazy guest runtime initialization
         // before the warm snapshot is captured. Matches the values used by the
         // upstream HyperlightSandbox.Extensions.AI CodeExecutionTool reference.
-        _ = sandbox.Run(snapshot.Backend == SandboxBackend.JavaScript ? "void 0;" : "None");
+        _ = sandbox.Run(snapshot.Backend == SandboxBackend.JavaScript ? "void 0;" : "None", cancellationToken);
         this._warmSnapshot = sandbox.Snapshot();
-        this._sandbox = sandbox;
         this._lastConfigFingerprint = snapshot.ConfigFingerprint;
     }
 
@@ -340,8 +375,13 @@ internal sealed class SandboxExecutor : IDisposable
         }
 
         this._disposed = true;
-        this._warmSnapshot?.Dispose();
-        this._sandbox?.Dispose();
-        this._executionLock.Dispose();
+        try
+        {
+            this.ClearSandboxState();
+        }
+        finally
+        {
+            this._executionLock.Dispose();
+        }
     }
 }

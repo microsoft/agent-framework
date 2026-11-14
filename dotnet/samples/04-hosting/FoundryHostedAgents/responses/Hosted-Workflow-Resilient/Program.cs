@@ -53,7 +53,16 @@ AIAgent agent = new WorkflowBuilder(frenchAgent)
     .AsAIAgent(name: agentName);
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddFoundryResponses(agent, configure: options => options.ResilientBackground = true);
+// Repository builds use the unreleased direct-options API; source ZIPs target published 1.27.
+#if USE_LOCAL_AGENT_FRAMEWORK_SOURCE
+builder.AddFoundryResponses(
+    agent,
+    options: new FoundryResponsesServerOptions { ResilientBackground = true });
+#else
+builder.AddFoundryResponses(
+    agent,
+    configure: options => options.ResilientBackground = true);
+#endif
 
 var app = builder.Build();
 app.MapFoundryResponses();

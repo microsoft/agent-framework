@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+import math
 import mimetypes
 import os
 import shutil
@@ -14,7 +15,7 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from copy import copy
+from copy import copy, deepcopy
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
@@ -46,6 +47,7 @@ _FIDES_TOOL_PROPERTY_KEYS = frozenset({
     "standing_guidance",
     "agent_framework.security.principals",
     "_agent_framework_internal_security_tool",
+    "_mcp_server_ifc_policy",
     "_mcp_trust_server_ifc",
 })
 OUTPUT_FILE_RETRY_ATTEMPTS = 10
@@ -57,6 +59,10 @@ OUTPUT_TRAVERSAL_MIN_ENTRIES = 100
 OUTPUT_TRAVERSAL_ENTRIES_PER_FILE = 10
 OUTPUT_TRAVERSAL_MAX_ENTRIES = 10_000
 OUTPUT_TRAVERSAL_MAX_DEPTH = 32
+DEFAULT_EXECUTION_TIMEOUT_SECONDS = 30.0
+_execution_cancellation: contextvars.ContextVar[threading.Event | None] = contextvars.ContextVar(
+    "hyperlight_execution_cancellation", default=None
+)
 
 EXECUTE_CODE_INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -78,6 +84,75 @@ class _OutputMaterializationError(RuntimeError):
 
 class _OutputCleanupError(RuntimeError):
     """Raised when sandbox output cannot be safely cleaned within configured bounds."""
+
+
+class _GuestExecutionTimeout(TimeoutError):
+    """Raised when the invocation's guest execution budget expires."""
+
+
+class _ExecutionControl:
+    def __init__(self, timeout_seconds: float) -> None:
+        self._remaining_seconds = timeout_seconds
+        self._deadline: float | None = None
+        self._cancelled = _execution_cancellation.get() or threading.Event()
+
+    def start(self) -> float:
+        if self._deadline is None:
+            self._deadline = time.monotonic() + self._remaining_seconds
+        self.check()
+        return self._deadline
+
+    def pause(self) -> None:
+        self.check()
+        if self._deadline is not None:
+            self._remaining_seconds = self._deadline - time.monotonic()
+            self._deadline = None
+
+    def check(self) -> None:
+        if self._cancelled.is_set():
+            raise asyncio.CancelledError
+        if self._deadline is not None and time.monotonic() >= self._deadline:
+            raise _GuestExecutionTimeout("Code execution exceeded its time limit.")
+
+    def run(self, sandbox: Any, code: str) -> Any:
+        deadline = self.start()
+        handle = sandbox.interrupt_handle()
+        self.check()
+        completed = threading.Event()
+        timed_out = threading.Event()
+        interruption_errors: list[str] = []
+
+        def _interrupt() -> None:
+            try:
+                while not completed.is_set():
+                    if time.monotonic() >= deadline:
+                        timed_out.set()
+                    if (self._cancelled.is_set() or timed_out.is_set()) and handle.kill():
+                        return
+                    completed.wait(0.01)
+            except Exception as exc:
+                interruption_errors.append(str(exc))
+
+        # Only the independently owned handle crosses threads, never the sandbox.
+        interruption = threading.Thread(target=_interrupt, name="hl-interrupt")
+        interruption.start()
+        try:
+            self.check()
+            try:
+                result = sandbox.run(code=code)
+            except InterruptedError:
+                if self._cancelled.is_set():
+                    raise asyncio.CancelledError from None
+                if timed_out.is_set():
+                    raise _GuestExecutionTimeout("Code execution exceeded its time limit.") from None
+                raise
+        finally:
+            completed.set()
+            interruption.join()
+        if interruption_errors:
+            raise RuntimeError("Could not interrupt Hyperlight guest execution.")
+        self.check()
+        return result
 
 
 def _output_cleanup_error_content(error: _OutputCleanupError) -> Content:
@@ -112,6 +187,8 @@ class _RunConfig:
     max_output_files: int = DEFAULT_MAX_OUTPUT_FILES
     max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES
     max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES
+    include_detailed_errors: bool = False
+    execution_timeout_seconds: float = DEFAULT_EXECUTION_TIMEOUT_SECONDS
 
     @property
     def mounted_paths(self) -> tuple[str, ...]:
@@ -135,6 +212,7 @@ class _RunConfig:
             self.max_output_files,
             self.max_output_file_bytes,
             self.max_output_total_bytes,
+            self.include_detailed_errors,
         )
 
 
@@ -173,7 +251,8 @@ class _SandboxWorker:
     are dropped on the wrong thread and PyO3 panics. To prevent this, every
     exception raised inside a worker closure is caught on the worker, the
     traceback is dropped while still on the worker thread, and a sanitized
-    copy (preserving message and exception type) is re-raised on the caller.
+    copy is re-raised on the caller. Ordinary failures expose their original
+    type and message only when detailed errors are enabled.
     """
 
     __slots__ = ("_executor", "_initialized", "_reusable", "_sandbox", "_snapshot")
@@ -186,20 +265,24 @@ class _SandboxWorker:
         self._initialized = False
         self._reusable = True
 
-    def _run_on_worker(self, fn: Callable[[], _T]) -> _T:
+    def _run_on_worker(self, fn: Callable[[], _T], *, include_detailed_errors: bool = False) -> _T:
         """Run ``fn`` on the worker thread; sanitize any exception's traceback there.
 
         If ``fn`` raises, the exception's ``__traceback__`` is dropped on the worker
         thread (so any PyO3 unsendable locals captured in frame locals are released
-        on the owner thread) and a fresh exception of the same type is raised on
-        the caller's thread carrying only the original message.
+        on the owner thread). Ordinary failures are replaced with a generic
+        exception unless detailed errors are enabled. Cancellation and other
+        system signals retain their type.
         """
 
         def _wrapped() -> tuple[bool, Any]:
             try:
                 return True, fn()
             except BaseException as exc:
-                exc_type = type(exc)
+                if not isinstance(exc, (asyncio.CancelledError, _GuestExecutionTimeout)):
+                    self._reusable = False
+                exc_type: type[BaseException]
+                exc_args: tuple[str, ...]
                 # Capture args (usually (message,)) so the re-raised exception keeps the
                 # original shape for types whose constructor doesn't accept a single str.
                 # Coerce each arg to ``str`` on the worker thread: if a caller-supplied
@@ -207,7 +290,16 @@ class _SandboxWorker:
                 # unsendable object in args, forwarding it as-is would re-introduce the
                 # same cross-thread Drop hazard the traceback nulling avoids. Strings
                 # are always sendable. Fall back to the str() form if args is empty.
-                exc_args: tuple[str, ...] = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
+                if (
+                    isinstance(exc, Exception)
+                    and not include_detailed_errors
+                    and not isinstance(exc, _GuestExecutionTimeout)
+                ):
+                    exc_type = RuntimeError
+                    exc_args = ("Code execution failed.",)
+                else:
+                    exc_type = type(exc)
+                    exc_args = tuple(str(a) for a in exc.args) if exc.args else (str(exc),)
                 # Drop the traceback on the worker thread so frame locals (which
                 # may include PyO3 unsendable objects) are released here, not on
                 # the caller thread that will receive the wrapped exception.
@@ -216,7 +308,17 @@ class _SandboxWorker:
                 return False, (exc_type, exc_args)
 
         current_context = contextvars.copy_context()
-        ok, payload = self._executor.submit(lambda: current_context.run(_wrapped)).result()
+        execution = self._executor.submit(lambda: current_context.run(_wrapped))
+        cancelled = _execution_cancellation.get()
+        while True:
+            try:
+                ok, payload = execution.result(timeout=0.01 if cancelled is not None else None)
+                break
+            except TimeoutError:
+                # Future.cancel() atomically distinguishes queued work from work
+                # that has started and must finish cleanup on its owning thread.
+                if cancelled is not None and cancelled.is_set() and execution.cancel():
+                    raise asyncio.CancelledError from None
         if ok:
             return cast(_T, payload)
         exc_type, exc_args = cast(tuple[type[BaseException], tuple[str, ...]], payload)
@@ -224,11 +326,12 @@ class _SandboxWorker:
         # If the exception type's constructor rejects the captured args (rare), fall
         # back to a RuntimeError carrying the string form so we never lose the signal.
         try:
-            raise exc_type(*exc_args)
+            error = exc_type(*exc_args)
         except TypeError:
             raise RuntimeError(f"{exc_type.__name__}: {exc_args}") from None
+        raise error
 
-    def initialize(self, build_fn: Callable[[], tuple[Any, Any]]) -> None:
+    def initialize(self, build_fn: Callable[[], tuple[Any, Any]], *, include_detailed_errors: bool = False) -> None:
         """Build and install the sandbox+snapshot on the worker thread.
 
         ``build_fn`` is invoked with no arguments on the worker thread. It must
@@ -244,7 +347,7 @@ class _SandboxWorker:
             # Locals fall out of scope on the worker thread; the worker-local
             # attributes hold the only strong refs from now on.
 
-        self._run_on_worker(_init_on_worker)
+        self._run_on_worker(_init_on_worker, include_detailed_errors=include_detailed_errors)
 
     def execute(
         self,
@@ -255,6 +358,8 @@ class _SandboxWorker:
         max_output_files: int,
         max_output_file_bytes: int,
         max_output_total_bytes: int,
+        control: _ExecutionControl,
+        include_detailed_errors: bool = False,
     ) -> list[Content]:
         """Restore + run + build sendable contents — all on the worker thread.
 
@@ -264,6 +369,7 @@ class _SandboxWorker:
         cleanup_max_entries = _output_traversal_entry_limit(max_output_files)
 
         def _on_worker() -> list[Content]:
+            control.start()
             if not self._reusable:
                 return [_output_cleanup_error_content(_OutputCleanupError("Could not clear sandbox output safely."))]
 
@@ -282,7 +388,7 @@ class _SandboxWorker:
 
             contents: list[Content] | None = None
             try:
-                result = sandbox.run(code=code)
+                result = control.run(sandbox, code)
                 try:
                     contents = build_contents(
                         result=result,
@@ -290,6 +396,7 @@ class _SandboxWorker:
                         max_output_files=max_output_files,
                         max_output_file_bytes=max_output_file_bytes,
                         max_output_total_bytes=max_output_total_bytes,
+                        include_detailed_errors=include_detailed_errors,
                     )
                     if output_dir is not None and not any(item.type == "data" for item in contents):
                         # Isolate any file that becomes visible after the finite discovery window
@@ -313,7 +420,7 @@ class _SandboxWorker:
                     if contents is not None and not any(item.type == "error" for item in contents):
                         contents.append(_output_cleanup_error_content(exc))
 
-        return self._run_on_worker(_on_worker)
+        return self._run_on_worker(_on_worker, include_detailed_errors=include_detailed_errors)
 
     def is_reusable(self) -> bool:
         return self._reusable
@@ -1209,6 +1316,7 @@ def _build_execution_contents(
     max_output_files: int,
     max_output_file_bytes: int,
     max_output_total_bytes: int,
+    include_detailed_errors: bool = False,
 ) -> list[Content]:
     success = bool(getattr(result, "success", False))
     stdout = str(getattr(result, "stdout", "") or "").replace("\r\n", "\n") or None
@@ -1246,7 +1354,7 @@ def _build_execution_contents(
             outputs.append(Content.from_text("Code executed successfully without output."))
         return outputs
 
-    error_details = stderr or "Unknown sandbox error"
+    error_details = (stderr or "Unknown sandbox error") if include_detailed_errors else None
     outputs.append(
         Content.from_error(
             message="Execution error",
@@ -1257,11 +1365,13 @@ def _build_execution_contents(
     return outputs
 
 
-def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
+def _make_sandbox_callback(tool_obj: FunctionTool, *, include_detailed_errors: bool = False) -> Callable[..., Any]:
     sandbox_tool = copy(tool_obj)
 
     def _callback(**kwargs: Any) -> Any:
         async def _invoke() -> Any:
+            # CodeAct needs native values inside generated code. This deliberately
+            # bypasses adapters that attach labels after Content normalization.
             return await sandbox_tool.invoke(arguments=kwargs, skip_parsing=True)
 
         # FunctionTool.invoke() is async. The real Hyperlight backend invokes
@@ -1282,6 +1392,8 @@ def _make_sandbox_callback(tool_obj: FunctionTool) -> Callable[..., Any]:
         worker.start()
         worker.join()
         if error_box:
+            if not include_detailed_errors and isinstance(error_box[0], Exception):
+                raise RuntimeError("Host tool execution failed.") from None
             raise error_box[0]
         # Return the raw value. The Hyperlight FFI marshals primitives (dict, list,
         # str, int, float, bool, None) natively into the guest, and falls back to
@@ -1409,8 +1521,10 @@ class _SandboxRegistry(SandboxRuntime):
         Entries whose output cannot be cleaned safely are evicted before another invocation.
         """
         cache_key = config.cache_key()
-        entry = self._get_or_create_entry(config)
+        control = _ExecutionControl(config.execution_timeout_seconds)
+        entry: _SandboxEntry | None = None
         try:
+            entry = self._get_or_create_entry(config, control=control)
             return entry.worker.execute(
                 code=code,
                 output_dir=entry.output_dir,
@@ -1418,9 +1532,15 @@ class _SandboxRegistry(SandboxRuntime):
                 max_output_files=config.max_output_files,
                 max_output_file_bytes=config.max_output_file_bytes,
                 max_output_total_bytes=config.max_output_total_bytes,
+                control=control,
+                include_detailed_errors=config.include_detailed_errors,
             )
+        except _GuestExecutionTimeout:
+            return [
+                Content.from_error(message="Execution error", error_details="Code execution exceeded its time limit.")
+            ]
         finally:
-            if not entry.worker.is_reusable():
+            if entry is not None and not entry.worker.is_reusable():
                 self._discard_entry(cache_key=cache_key, entry=entry)
 
     def _discard_entry(self, *, cache_key: tuple[Any, ...], entry: _SandboxEntry) -> None:
@@ -1431,12 +1551,14 @@ class _SandboxRegistry(SandboxRuntime):
             entry.worker.dispose()
             self._cleanup_executor.submit(entry.cleanup_temp_dirs)
 
-    def _get_or_create_entry(self, config: _RunConfig) -> _SandboxEntry:
+    def _get_or_create_entry(self, config: _RunConfig, *, control: _ExecutionControl | None = None) -> _SandboxEntry:
         cache_key = config.cache_key()
         with self._entries_lock:
             entry = self._entries.get(cache_key)
             if entry is None:
-                entry = self._create_entry(config)
+                entry = self._create_entry(
+                    config, control=control or _ExecutionControl(config.execution_timeout_seconds)
+                )
                 self._entries[cache_key] = entry
             return entry
 
@@ -1458,7 +1580,7 @@ class _SandboxRegistry(SandboxRuntime):
             # were already moved into the per-worker disposal closure inside dispose().
             del entries
 
-    def _create_entry(self, config: _RunConfig) -> _SandboxEntry:
+    def _create_entry(self, config: _RunConfig, *, control: _ExecutionControl) -> _SandboxEntry:
         input_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
         output_dir_handle = TemporaryDirectory() if config.filesystem_enabled else None
 
@@ -1487,7 +1609,10 @@ class _SandboxRegistry(SandboxRuntime):
 
         def _configure_sandbox(*, sandbox: Any, expand_missing_scheme: bool) -> None:
             for tool_obj in config.tools:
-                sandbox.register_tool(tool_obj.name, _make_sandbox_callback(tool_obj))
+                sandbox.register_tool(
+                    tool_obj.name,
+                    _make_sandbox_callback(tool_obj, include_detailed_errors=config.include_detailed_errors),
+                )
 
             for allowed_domain in config.allowed_domains:
                 for target in _allowed_domain_registration_targets(
@@ -1500,25 +1625,29 @@ class _SandboxRegistry(SandboxRuntime):
                     )
 
         def _build_sandbox() -> tuple[Any, Any]:
+            control.start()
             sandbox = _create_sandbox()
             _configure_sandbox(sandbox=sandbox, expand_missing_scheme=False)
 
             try:
-                sandbox.run("None")
+                control.run(sandbox, "None")
             except RuntimeError as exc:
                 if not _should_retry_allowed_domain_registration(error=exc, allowed_domains=config.allowed_domains):
                     raise
 
                 sandbox = _create_sandbox()
                 _configure_sandbox(sandbox=sandbox, expand_missing_scheme=True)
-                sandbox.run("None")
+                control.run(sandbox, "None")
 
             snapshot = sandbox.snapshot()
+            # Initialization and execution are separate worker submissions; do not
+            # charge the invocation for queue time between them.
+            control.pause()
             return sandbox, snapshot
 
         worker = _SandboxWorker()
         try:
-            worker.initialize(_build_sandbox)
+            worker.initialize(_build_sandbox, include_detailed_errors=config.include_detailed_errors)
         except BaseException:
             worker.dispose()
             raise
@@ -1531,21 +1660,67 @@ class _SandboxRegistry(SandboxRuntime):
         )
 
 
+def _fides_metadata_snapshot(tool_obj: FunctionTool) -> dict[str, str]:
+    """Capture FIDES metadata for compatibility-warning deduplication."""
+    properties = tool_obj.additional_properties or {}
+    return {key: repr(value) for key, value in properties.items() if key in _FIDES_TOOL_PROPERTY_KEYS}
+
+
+def _warn_unsupported_fides_tools(
+    tools: Sequence[FunctionTool],
+    warned_metadata: list[tuple[FunctionTool, dict[str, str]]],
+) -> None:
+    """Warn when newly registered or changed FIDES metadata is observed."""
+    for tool_obj in tools:
+        snapshot = _fides_metadata_snapshot(tool_obj)
+        previous = next(
+            (metadata for registered, metadata in warned_metadata if registered is tool_obj),
+            None,
+        )
+
+        if snapshot and snapshot != previous:
+            logger.warning(
+                "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
+                "through function middleware for calls made inside generated code. "
+                "Keep FIDES-dependent tools as direct agent tools, or label the outer execute_code result "
+                "with CodeAct additional_properties for coarse-grained handling.",
+                tool_obj.name,
+            )
+
+        warned_metadata[:] = [
+            (registered, metadata) for registered, metadata in warned_metadata if registered is not tool_obj
+        ]
+
+        if snapshot:
+            warned_metadata.append((tool_obj, snapshot))
+
+
 class HyperlightExecuteCodeTool(FunctionTool):
     """Execute Python code inside a Hyperlight sandbox.
 
     Keyword Args:
+        additional_properties: Metadata applied only to the outer ``execute_code``
+            FunctionTool. The mapping is deep-copied at construction and for each
+            run snapshot. It can define one coarse FIDES policy for the complete
+            CodeAct result; it does not label or enforce nested host-tool calls.
         tool_description_format: Parameter documentation in ``.description``: ``"compact"`` (default)
             or ``"json"``, globally or mapped by exact, case-sensitive tool name. Missing names use
             compact format. Schemas that cannot be represented faithfully in compact form use JSON Schema.
             Mappings are copied, including entries for tools registered later.
+        include_detailed_errors: Expose host exception and execution diagnostics only for a trusted
+            channel. Defaults to ``False`` and is independent of outer-client error/logging settings.
+        execution_timeout_seconds: Positive finite guest execution budget, in seconds. Defaults to 30.
+            Cancellation and timeout wait for native execution to stop. Runtime initialization and
+            host tool callbacks cannot be interrupted; host tools must enforce their own limits.
     """
 
     def __init__(
         self,
         *,
         tools: FunctionTool | Callable[..., Any] | Sequence[FunctionTool | Callable[..., Any]] | None = None,
+        additional_properties: dict[str, Any] | None = None,
         tool_description_format: _ToolDescriptionFormat = "compact",
+        include_detailed_errors: bool = False,
         approval_mode: ApprovalMode | None = None,
         workspace_root: str | Path | None = None,
         file_mounts: FileMountInput | Sequence[FileMountInput] | None = None,
@@ -1553,11 +1728,19 @@ class HyperlightExecuteCodeTool(FunctionTool):
         max_output_files: int = DEFAULT_MAX_OUTPUT_FILES,
         max_output_file_bytes: int = DEFAULT_MAX_OUTPUT_FILE_BYTES,
         max_output_total_bytes: int = DEFAULT_MAX_OUTPUT_TOTAL_BYTES,
+        execution_timeout_seconds: float = DEFAULT_EXECUTION_TIMEOUT_SECONDS,
         backend: str = DEFAULT_HYPERLIGHT_BACKEND,
         module: str | None = DEFAULT_HYPERLIGHT_MODULE,
         module_path: str | None = None,
         _registry: SandboxRuntime | None = None,
+        _fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] | None = None,
     ) -> None:
+        if not isinstance(include_detailed_errors, bool):
+            raise TypeError("include_detailed_errors must be a bool.")
+        if isinstance(execution_timeout_seconds, bool) or not isinstance(execution_timeout_seconds, (int, float)):
+            raise TypeError("execution_timeout_seconds must be a number.")
+        if not math.isfinite(execution_timeout_seconds) or execution_timeout_seconds <= 0:
+            raise ValueError("execution_timeout_seconds must be positive and finite.")
         normalized_description_format = _normalize_tool_description_format(tool_description_format)
         max_output_files = _validate_positive_integer(name="max_output_files", value=max_output_files)
         max_output_file_bytes = _validate_positive_integer(name="max_output_file_bytes", value=max_output_file_bytes)
@@ -1568,11 +1751,14 @@ class HyperlightExecuteCodeTool(FunctionTool):
             approval_mode="never_require",
             func=self._run_code,
             input_model=EXECUTE_CODE_INPUT_SCHEMA,
+            additional_properties=deepcopy(additional_properties),
         )
         self._state_lock = threading.RLock()
         self._tool_description_format: _NormalizedToolDescriptionFormat = normalized_description_format
         self._registry = _registry or _SandboxRegistry()
         self._default_approval_mode: ApprovalMode = approval_mode or "never_require"
+        self._include_detailed_errors = include_detailed_errors
+        self._execution_timeout_seconds = execution_timeout_seconds
         self._workspace_root = _resolve_workspace_root(workspace_root)
         self._backend: str = backend
         self._module: str | None = module
@@ -1581,6 +1767,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
         self._max_output_file_bytes = max_output_file_bytes
         self._max_output_total_bytes = max_output_total_bytes
         self._managed_tools: list[FunctionTool] = []
+        self._fides_warned_metadata: list[tuple[FunctionTool, dict[str, str]]] = list(_fides_warned_metadata or [])
         self._file_mounts: dict[str, FileMount] = {}
         self._allowed_domains: dict[str, AllowedDomain] = {}
 
@@ -1623,16 +1810,12 @@ class HyperlightExecuteCodeTool(FunctionTool):
             new_tools = _collect_tools(tools)
             combined_tools = _collect_tools(self._managed_tools, new_tools)
             self._managed_tools = combined_tools
-            for tool_obj in new_tools:
-                if tool_obj.additional_properties and not _FIDES_TOOL_PROPERTY_KEYS.isdisjoint(
-                    tool_obj.additional_properties
-                ):
-                    logger.warning(
-                        "FIDES is not supported with CodeAct providers. Metadata on tool '%s' will not be enforced "
-                        "through function middleware for calls made inside generated code. "
-                        "Keep FIDES-dependent tools as direct agent tools.",
-                        tool_obj.name,
-                    )
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in self._managed_tools)
+            ]
+            _warn_unsupported_fides_tools(new_tools, self._fides_warned_metadata)
             self._refresh_approval_mode()
 
     def get_tools(self) -> list[FunctionTool]:
@@ -1647,12 +1830,18 @@ class HyperlightExecuteCodeTool(FunctionTool):
             if len(remaining_tools) == len(self._managed_tools):
                 raise KeyError(f"No managed tool named {name!r} is registered.")
             self._managed_tools = remaining_tools
+            self._fides_warned_metadata[:] = [
+                (registered, metadata)
+                for registered, metadata in self._fides_warned_metadata
+                if any(registered is current for current in remaining_tools)
+            ]
             self._refresh_approval_mode()
 
     def clear_tools(self) -> None:
         """Remove all managed sandbox tools."""
         with self._state_lock:
             self._managed_tools = []
+            self._fides_warned_metadata.clear()
             self._refresh_approval_mode()
 
     def add_file_mounts(self, file_mounts: FileMountInput | Sequence[FileMountInput]) -> None:
@@ -1735,19 +1924,27 @@ class HyperlightExecuteCodeTool(FunctionTool):
 
     def create_run_tool(self) -> HyperlightExecuteCodeTool:
         """Create a run-scoped snapshot of this execute_code surface."""
-        file_mounts = self.get_file_mounts()
-        allowed_domains = self.get_allowed_domains()
+        with self._state_lock:
+            tools = list(self._managed_tools)
+            _warn_unsupported_fides_tools(tools, self._fides_warned_metadata)
+            warned_metadata = list(self._fides_warned_metadata)
+            file_mounts = self.get_file_mounts()
+            allowed_domains = self.get_allowed_domains()
 
         return HyperlightExecuteCodeTool(
-            tools=self.get_tools(),
+            _fides_warned_metadata=warned_metadata,
+            tools=tools,
+            additional_properties=deepcopy(self.additional_properties),
             tool_description_format=self._tool_description_format,
             approval_mode=self._default_approval_mode,
+            include_detailed_errors=self._include_detailed_errors,
             workspace_root=self._workspace_root,
             file_mounts=file_mounts or None,
             allowed_domains=allowed_domains or None,
             max_output_files=self._max_output_files,
             max_output_file_bytes=self._max_output_file_bytes,
             max_output_total_bytes=self._max_output_total_bytes,
+            execution_timeout_seconds=self._execution_timeout_seconds,
             backend=self._backend,
             module=self._module,
             module_path=self._module_path,
@@ -1762,6 +1959,8 @@ class HyperlightExecuteCodeTool(FunctionTool):
             "module": config.module,
             "module_path": config.module_path,
             "approval_mode": config.approval_mode,
+            "include_detailed_errors": config.include_detailed_errors,
+            "execution_timeout_seconds": config.execution_timeout_seconds,
             "max_output_files": config.max_output_files,
             "max_output_file_bytes": config.max_output_file_bytes,
             "max_output_total_bytes": config.max_output_total_bytes,
@@ -1809,6 +2008,7 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files = self._max_output_files
             max_output_file_bytes = self._max_output_file_bytes
             max_output_total_bytes = self._max_output_total_bytes
+            include_detailed_errors = self._include_detailed_errors
             approval_mode = _resolve_execute_code_approval_mode(
                 base_approval_mode=self._default_approval_mode,
                 tools=managed_tools,
@@ -1837,8 +2037,60 @@ class HyperlightExecuteCodeTool(FunctionTool):
             max_output_files=max_output_files,
             max_output_file_bytes=max_output_file_bytes,
             max_output_total_bytes=max_output_total_bytes,
+            include_detailed_errors=include_detailed_errors,
+            execution_timeout_seconds=self._execution_timeout_seconds,
         )
 
     async def _run_code(self, *, code: str) -> list[Content]:
-        config = self._build_run_config()
-        return await asyncio.to_thread(self._registry.execute, config=config, code=code)
+        include_detailed_errors = self._include_detailed_errors
+        try:
+            config = self._build_run_config()
+            cancelled = threading.Event()
+            token = _execution_cancellation.set(cancelled)
+            try:
+                current_context = contextvars.copy_context()
+            finally:
+                _execution_cancellation.reset(token)
+            execution_started = False
+            start_lock = threading.Lock()
+
+            def _execute() -> list[Content]:
+                nonlocal execution_started
+                with start_lock:
+                    if cancelled.is_set():
+                        raise asyncio.CancelledError
+                    execution_started = True
+                return current_context.run(self._registry.execute, config=config, code=code)
+
+            execution = asyncio.get_running_loop().run_in_executor(None, _execute)
+            try:
+                return await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                with start_lock:
+                    cancelled.set()
+                    if not execution_started:
+                        execution.cancel()
+                        raise
+                # Shield the owning worker until native execution and its interruption
+                # thread have finished, including when the caller cancels again.
+                while not execution.done():
+                    try:
+                        await asyncio.shield(execution)
+                    except asyncio.CancelledError:
+                        continue
+                    except Exception:
+                        break
+                try:
+                    execution.result()
+                except asyncio.CancelledError:
+                    # Expected during cancellation cleanup; the outer cancellation is re-raised below.
+                    pass
+                except Exception:
+                    logger.warning(
+                        "Hyperlight execution failed during cancellation cleanup.", exc_info=include_detailed_errors
+                    )
+                raise
+        except Exception:
+            if include_detailed_errors:
+                raise
+            raise RuntimeError("Code execution failed.") from None

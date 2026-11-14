@@ -49,6 +49,7 @@ from agent_framework._middleware import ChatAndFunctionMiddlewareTypes, ChatMidd
 from agent_framework._settings import SecretString
 from agent_framework._telemetry import USER_AGENT_KEY, mark_feature_used
 from agent_framework._tools import (
+    _LOCAL_TOOL_RESULT_KEY,  # pyright: ignore[reportPrivateUsage]
     SHELL_TOOL_KIND_VALUE,
     FunctionInvocationConfiguration,
     FunctionInvocationLayer,
@@ -141,10 +142,6 @@ if sys.version_info >= (3, 12):
     from typing import override  # pragma: no cover
 else:
     from typing_extensions import override  # pragma: no cover
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 _prompt_cache_options_supported = hasattr(response_create_params, "PromptCacheOptions")
 
@@ -630,6 +627,7 @@ class RawOpenAIChatClient(
         "conversation_id",
         "previous_response_id",
         "conversation",
+        "continuation_token",
     )
     SUPPORTS_RICH_FUNCTION_OUTPUT: ClassVar[bool] = True
     _FEATURE_USAGE_INDEX: ClassVar[int | None] = FeatureIndex.OPENAI
@@ -760,9 +758,12 @@ class RawOpenAIChatClient(
         """Initialize a raw OpenAI Chat client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI,
-                or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for Azure.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL`` for
+                Azure. An injected ``AsyncOpenAI`` client has no deployment, so the OpenAI
+                variables still apply.
             api_key: API key override. For OpenAI this maps to ``OPENAI_API_KEY``.
                 For Azure this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,
@@ -2072,7 +2073,10 @@ class RawOpenAIChatClient(
                             args = {"type": "message", "role": message.role}
                         all_messages.append(function_call)
                 case "shell_tool_call" | "shell_tool_result":
-                    if request_uses_service_side_storage:
+                    if request_uses_service_side_storage and not (
+                        content.type == "shell_tool_result"
+                        and content.additional_properties.get(_LOCAL_TOOL_RESULT_KEY) is True
+                    ):
                         continue
                     if "content" in args or "tool_calls" in args:
                         all_messages.append(args)
@@ -2769,6 +2773,22 @@ class RawOpenAIChatClient(
                         raw_representation=item,
                     )
                 )
+                if (
+                    local_shell_tool_name
+                    and is_local_environment
+                    and shell_call_id
+                    and shell_call_item_id
+                    and isinstance(raw_shell_commands, list)
+                    and not raw_shell_commands
+                ):
+                    contents.append(
+                        Content.from_shell_tool_result(
+                            call_id=shell_call_id,
+                            outputs=[],
+                            max_output_length=shell_max_output,
+                            additional_properties={_LOCAL_TOOL_RESULT_KEY: True},
+                        )
+                    )
         elif item_type == "local_shell_call":
             raw_local_call_id = getattr(item, "call_id", None)
             local_call_id = raw_local_call_id if isinstance(raw_local_call_id, str) else ""
@@ -3041,6 +3061,16 @@ class RawOpenAIChatClient(
         expected_type: Literal["shell_call", "shell_call_output", "local_shell_call"],
     ) -> dict[str, Any]:
         """Restore a provider-issued shell transcript item for stateless replay."""
+        if (
+            expected_type == "shell_call_output"
+            and content.raw_representation is None
+            and content.call_id
+            and content.outputs == []
+        ):
+            output: dict[str, Any] = {"type": "shell_call_output", "call_id": content.call_id, "output": []}
+            if content.max_output_length is not None:
+                output["max_output_length"] = content.max_output_length
+            return output
         payload = cls._serialize_provider_payload(content.raw_representation)
         if isinstance(payload, Mapping):
             typed_payload = cast("Mapping[str, Any]", payload)
@@ -4829,10 +4859,12 @@ class OpenAIChatClient(
         """Initialize an OpenAI Responses client.
 
         Keyword Args:
-            model: Model identifier to use for the request. When not provided, the constructor
-                reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL`` for OpenAI
-                routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then
-                ``AZURE_OPENAI_MODEL`` for Azure routing.
+            model: Model identifier to use for the request. An explicit value wins over an
+                injected ``AsyncAzureOpenAI`` deployment, which wins over environment variables.
+                Otherwise the constructor reads ``OPENAI_CHAT_MODEL`` and then ``OPENAI_MODEL``
+                for OpenAI routing, or ``AZURE_OPENAI_CHAT_MODEL`` and then ``AZURE_OPENAI_MODEL``
+                for Azure routing. An injected ``AsyncOpenAI`` client has no deployment, so the
+                OpenAI variables still apply.
             api_key: API key override. For OpenAI routing this maps to ``OPENAI_API_KEY``.
                 For Azure routing this can be used instead of ``AZURE_OPENAI_API_KEY`` for key
                 auth. A callable token provider is also accepted for backwards compatibility,

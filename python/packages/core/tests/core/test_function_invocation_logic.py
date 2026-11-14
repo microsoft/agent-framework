@@ -6753,7 +6753,9 @@ async def test_approval_detects_changes_to_converted_values(
         (
             UUID,
             "12345678-1234-5678-1234-567812345678",
-            lambda value: UUID(str(value), is_safe=SafeUUID.safe),
+            lambda value: UUID(
+                str(value), is_safe=SafeUUID.safe if value.is_safe is not SafeUUID.safe else SafeUUID.unsafe
+            ),
         ),
     ],
     ids=[
@@ -7956,7 +7958,7 @@ def test_replace_approval_contents_with_results_correlates_reused_call_id_pendin
 def test_replace_approval_contents_with_results_resolves_rejected_request() -> None:
     """A rejected pending call produces one terminal result."""
     from agent_framework._tools import _collect_approval_responses, _replace_approval_contents_with_results
-    from agent_framework._types import APPROVAL_REJECTION_RESULT_KEY
+    from agent_framework._types import _APPROVAL_REJECTION_RESULT_KEY
 
     function_call, request, _ = _build_approved_tool_roundtrip(
         call_id="call_rejected",
@@ -7978,7 +7980,7 @@ def test_replace_approval_contents_with_results_resolves_rejected_request() -> N
     results = [content for message in messages for content in message.contents if content.type == "function_result"]
     assert len(results) == 1
     assert results[0].result == "Error: Tool call invocation was rejected by user."
-    assert results[0].additional_properties[APPROVAL_REJECTION_RESULT_KEY] is True
+    assert results[0].additional_properties[_APPROVAL_REJECTION_RESULT_KEY] is True
     assert resolved_contents == results
 
 
@@ -13981,3 +13983,79 @@ class TestPublicFunctionInvocationStreamLifecycle:
         assert source.aclose_calls >= 1
         assert source.aclose_completed == source.aclose_calls
         assert source.closed
+
+
+async def test_whole_loop_finalization_preserves_per_turn_metadata_and_response_format(client: Any) -> None:
+    """Whole-loop aggregation keeps token metadata local and supports clients without BaseChatClient."""
+    from agent_framework import ContinuationToken, UsageDetails
+
+    class CursorToken(ContinuationToken):
+        cursor: str
+
+    class Answer(BaseModel):
+        reply: str
+
+    token = CursorToken(cursor="next")
+    executed: list[str] = []
+
+    @tool(approval_mode="never_require")
+    def echo(value: str) -> str:
+        """Return the requested value."""
+        executed.append(value)
+        return value
+
+    first_logprobs = [{"token": "First", "logprob": -0.1}]
+    last_logprobs = [{"token": "Second", "logprob": -0.2}]
+    client.streaming_responses = [
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="first-message",
+                contents=[Content.from_text("First", additional_properties={"logprobs": first_logprobs})],
+            ),
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="first-message",
+                contents=[Content.from_function_call(call_id="call-1", name="echo", arguments='{"value":"done"}')],
+            ),
+            ChatResponseUpdate(contents=[Content.from_usage(UsageDetails(input_token_count=3, output_token_count=1))]),
+        ],
+        [
+            ChatResponseUpdate(
+                role="assistant",
+                message_id="last-message",
+                response_id="response-2",
+                model="test-model",
+                contents=[
+                    Content.from_text('{"reply":"Second"}', additional_properties={"logprobs": last_logprobs}),
+                    Content.from_usage(UsageDetails(input_token_count=5, output_token_count=2)),
+                ],
+                continuation_token=token,
+                finish_reason="stop",
+                additional_properties={"custom": "kept"},
+            ),
+        ],
+    ]
+    messages = [Message(role="user", contents=["Question"])]
+    response_stream = client.get_response(messages, stream=True, options={"tools": [echo], "response_format": Answer})
+    assert isinstance(response_stream, ResponseStream)
+    updates = [update async for update in response_stream]
+    response = await response_stream.get_final_response()
+
+    assert executed == ["done"]
+    assert client.call_count == 2
+    assert messages[0].text == "Question"
+    assert len(messages) == 1
+    texts = [content for message in response.messages for content in message.contents if content.type == "text"]
+    assert [content.additional_properties["logprobs"] for content in texts] == [first_logprobs, last_logprobs]
+    assert sum(content.type == "function_call" for message in response.messages for content in message.contents) == 1
+    assert sum(content.type == "function_result" for message in response.messages for content in message.contents) == 1
+    assert response.response_id == "response-2"
+    assert response.model == "test-model"
+    assert response.finish_reason == "stop"
+    assert response.continuation_token == token
+    assert response.additional_properties["custom"] == "kept"
+    assert response.usage_details == {"input_token_count": 8, "output_token_count": 3}
+    assert isinstance(response.value, Answer)
+    assert response.value.reply == "Second"
+    assert len(updates) > 0

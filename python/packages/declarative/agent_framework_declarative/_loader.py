@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, TypedDict, cast
 
 import yaml
 from agent_framework import (
     Agent,
+    Content,
     SupportsChatGetResponse,
 )
 from agent_framework import (
@@ -43,11 +43,6 @@ from ._models import (
     _safe_mode_context,  # type: ignore[reportPrivateUsage]
     agent_schema_dispatch,
 )
-
-if sys.version_info >= (3, 11):
-    from typing import TypedDict  # pragma: no cover
-else:
-    from typing_extensions import TypedDict  # pragma: no cover
 
 
 @experimental(feature_id=ExperimentalFeature.DECLARATIVE_AGENTS)
@@ -743,8 +738,9 @@ class AgentFactory:
         additional_properties = options.additionalProperties.copy()
         if (chat_tool_mode := additional_properties.pop("chatToolMode", None)) is not None:
             chat_options["tool_choice"] = chat_tool_mode
-        if additional_properties:
-            chat_options["additional_chat_options"] = additional_properties
+        # Pass the rest through as regular options; the typed fields above win on conflicts.
+        for key, value in additional_properties.items():
+            chat_options.setdefault(key, value)
         return chat_options
 
     def _parse_tools(self, tools: list[Tool] | None) -> list[AFFunctionTool | dict[str, Any]] | None:
@@ -762,11 +758,34 @@ class AgentFactory:
                     for binding in tool_resource.bindings:
                         if binding.name and (func := self.bindings.get(binding.name)):
                             break
+                registered_tool = func if isinstance(func, AFFunctionTool) else None
+                approval_mode: Literal["always_require", "never_require"] | None = None
+                if registered_tool:
+                    if registered_tool.approval_mode == "always_require":
+                        approval_mode = "always_require"
+                    elif registered_tool.approval_mode == "never_require":
+                        approval_mode = "never_require"
+                result_parser = registered_tool.result_parser if registered_tool else None
+                if registered_tool is not None and callable(result_parser):
+                    registered_result_parser = result_parser
+
+                    def preserve_parser_exception_count(result: Any) -> str | list[Content]:
+                        try:
+                            return registered_result_parser(result)
+                        except Exception:
+                            registered_tool.invocation_exception_count += 1
+                            raise
+
+                    result_parser = preserve_parser_exception_count
                 return AFFunctionTool(
                     name=tool_resource.name,  # type: ignore
                     description=tool_resource.description,  # type: ignore
                     input_model=tool_resource.parameters.to_json_schema() if tool_resource.parameters else None,
                     func=func,
+                    approval_mode=approval_mode,
+                    kind=registered_tool.kind if registered_tool else None,
+                    additional_properties=registered_tool.additional_properties if registered_tool else None,
+                    result_parser=result_parser,
                 )
             case WebSearchTool():
                 result: dict[str, Any] = {"type": "web_search_preview"}

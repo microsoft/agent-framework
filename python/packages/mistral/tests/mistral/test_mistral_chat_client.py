@@ -204,8 +204,7 @@ async def test_mistral_chat_close_only_closes_owned_client(client_type) -> None:
     async with owned as entered:
         assert entered is owned
     await owned.close()
-    assert isinstance(owned_http_client, httpx.AsyncClient)
-    assert owned_http_client.is_closed
+    assert getattr(owned_http_client, "is_closed") is True
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
     injected = client_type(model="mistral-large-latest", http_client=http_client)
@@ -227,10 +226,10 @@ async def test_mistral_chat_context_leaves_injected_sdk_client_open() -> None:
     async with client:
         pass
     await client.close()
-    assert isinstance(async_transport, httpx.AsyncClient)
-    assert isinstance(sync_transport, httpx.Client)
-    assert not async_transport.is_closed
-    assert not sync_transport.is_closed
+    assert async_transport is not None
+    assert sync_transport is not None
+    assert getattr(async_transport, "is_closed") is False
+    assert getattr(sync_transport, "is_closed") is False
     await async_transport.aclose()
     sync_transport.close()
 
@@ -238,14 +237,14 @@ async def test_mistral_chat_context_leaves_injected_sdk_client_open() -> None:
 async def test_mistral_chat_closes_sync_transport_when_async_cleanup_fails() -> None:
     client = MistralChatClient(model="test-model", api_key="test-key")
     sync_transport = client.client.sdk_configuration.client
-    assert isinstance(sync_transport, httpx.Client)
+    assert sync_transport is not None
     with (
         patch.object(client.client, "__aexit__", new_callable=AsyncMock, side_effect=RuntimeError("close failed")),
         pytest.raises(RuntimeError, match="close failed"),
     ):
         async with client:
             pass
-    assert sync_transport.is_closed
+    assert getattr(sync_transport, "is_closed") is True
     await client.close()
 
 
@@ -534,6 +533,23 @@ async def test_get_response_rejects_transport_arguments_split_across_options_and
 
 
 @pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
+@pytest.mark.parametrize("server_url", [None, "https://explicit.example"], ids=["env", "explicit"])
+def test_injected_sdk_client_endpoint_wins_over_configured_server_url(
+    client_type: type[RawMistralChatClient],
+    server_url: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client defines the endpoint, so MISTRAL_SERVER_URL or server_url should not change it."""
+    monkeypatch.setenv("MISTRAL_SERVER_URL", "https://env.example")
+    sdk_client = Mistral(api_key="test-key", server_url="https://client.example")
+
+    client = client_type(model="mistral-small-latest", client=sdk_client, server_url=server_url)
+
+    assert client.service_url() == "https://client.example"
+    assert client.client is sdk_client
+
+
+@pytest.mark.parametrize("client_type", [RawMistralChatClient, MistralChatClient])
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("configuration", ["server_url", "http_client", "sdk"])
 async def test_get_response_preserves_configured_transport_and_generation_options(
@@ -555,16 +571,18 @@ async def test_get_response_preserves_configured_transport_and_generation_option
         base_url=endpoint if configuration == "http_client" else "https://unused.example",
         transport=httpx.MockTransport(server.handler),
     ) as http_client:
-        sdk_client = None
+        configured_client = client_type(
+            model="mistral-small-latest",
+            api_key="test-key",
+            server_url=endpoint if configuration in {"server_url", "sdk"} else None,
+            http_client=http_client,
+        )
+        client = configured_client
         if configuration == "sdk":
-            sdk_client = Mistral(api_key="test-key", server_url=endpoint, async_client=http_client)
-            client = client_type(model="mistral-small-latest", client=sdk_client)
-        else:
+            # Reuse the transport adapter supported by both SDK majors.
             client = client_type(
                 model="mistral-small-latest",
-                api_key="test-key",
-                server_url=endpoint if configuration == "server_url" else None,
-                http_client=http_client,
+                client=configured_client.client,
             )
         options: MistralChatOptions = {
             "temperature": 0.5,
@@ -595,9 +613,8 @@ async def test_get_response_preserves_configured_transport_and_generation_option
             assert "allow_multiple_tool_calls" not in server.last_request
         finally:
             await client.close()
-            if sdk_client is not None:
-                await sdk_client.__aexit__(None, None, None)
-                sdk_client.__exit__(None, None, None)
+            if client is not configured_client:
+                await configured_client.close()
 
 
 @pytest.mark.parametrize("stream", [False, True])

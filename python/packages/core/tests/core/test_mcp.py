@@ -11,8 +11,10 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, _AsyncGeneratorContextManager  # type: ignore
 from contextvars import ContextVar
+from copy import copy
+from pathlib import Path
 from textwrap import dedent
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -24,17 +26,21 @@ from pydantic import BaseModel
 
 from agent_framework import (
     Agent,
+    AgentSession,
     ChatResponse,
     ChatResponseUpdate,
     Content,
+    FileSessionStore,
     FunctionInvocationContext,
     FunctionMiddleware,
     FunctionTool,
+    InMemoryHistoryProvider,
     MCPStdioTool,
     MCPStreamableHTTPTool,
     MCPTaskOptions,  # ty: ignore[deprecated]
     MCPWebsocketTool,  # ty: ignore[deprecated]
     Message,
+    SessionContext,
     SupportsChatGetResponse,
 )
 from agent_framework._feature_stage import _WARNED_FEATURES, ExperimentalFeature, ExperimentalWarning
@@ -44,25 +50,32 @@ from agent_framework._mcp import (
     MCPSpecificApproval,
     MCPTool,
     _build_prefixed_mcp_name,
+    _capture_mcp_result,
     _ClientMCPConnection,
     _describe_error,
     _get_input_model_from_mcp_prompt,
     _json_size_exceeds,
+    _make_mcp_prompt_caller,
     _make_mcp_tool_caller,
     _mcp_tool_result_host_payload,
     _mcp_tool_result_meta,
+    _mcp_tool_runtime_context,
+    _MCPResultCapture,
+    _MCPToolRuntimeContext,
     _normalize_additional_tool_argument_names,
     _normalize_mcp_name,
     _should_propagate_cancelled_error,
     logger,
 )
-from agent_framework._middleware import FunctionMiddlewarePipeline
+from agent_framework._middleware import FunctionMiddlewarePipeline, MiddlewareTermination
 from agent_framework._tools import (
     _auto_invoke_function,
     _FunctionResultPayloadBudget,
     normalize_function_invocation_configuration,
 )
 from agent_framework.exceptions import ToolException, ToolExecutionException
+
+from .mcp_approval_helpers import ForwardingMCPTool, approval_request_names, run_function_call
 
 # Integration test skip condition
 skip_if_mcp_integration_tests_disabled = pytest.mark.skipif(
@@ -243,7 +256,10 @@ async def _call_generated_mcp_tool(
     middleware_pipeline: FunctionMiddlewarePipeline | None = None,
     host_payload_budget: _FunctionResultPayloadBudget | None = None,
     mcp_local_label: tuple[str, str] | None = None,
+    mcp_local_principals: list[dict[str, str]] | None = None,
+    invocation_session: AgentSession | None = None,
     trust_server_ifc: bool = False,
+    include_detailed_errors: bool = False,
     **kwargs: Any,
 ) -> Content:
     function_kwargs: dict[str, Any] = {}
@@ -257,7 +273,7 @@ async def _call_generated_mcp_tool(
         **function_kwargs,
     )
     if mcp_local_label is not None:
-        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+        from agent_framework.security import PRINCIPAL_METADATA_KEY, IntegrityLabel, _wrap_mcp_function_for_ifc
 
         source_integrity, confidentiality = mcp_local_label
         function.additional_properties = {
@@ -266,13 +282,64 @@ async def _call_generated_mcp_tool(
             "confidentiality": confidentiality,
             "_mcp_trust_server_ifc": trust_server_ifc,
         }
+        if mcp_local_principals is not None:
+            function.additional_properties[PRINCIPAL_METADATA_KEY] = mcp_local_principals
         _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
     return await _auto_invoke_function(
         Content.from_function_call(call_id=f"call-{tool_name}", name=tool_name, arguments=kwargs),
-        config=normalize_function_invocation_configuration(None),
+        config=normalize_function_invocation_configuration({
+            "include_detailed_errors": include_detailed_errors,
+        }),
         tool_map={tool_name: function},
+        invocation_session=invocation_session,
         middleware_pipeline=middleware_pipeline,
         host_payload_budget=host_payload_budget,
+    )
+
+
+async def _call_generated_mcp_prompt(
+    tool: MCPTool,
+    prompt_name: str,
+    *,
+    result_parser: Any = None,
+    middleware_pipeline: FunctionMiddlewarePipeline | None = None,
+    mcp_local_label: tuple[str, str] | None = None,
+    trust_server_ifc: bool = False,
+    server_ifc_policy: str | None = None,
+    include_detailed_errors: bool = False,
+    **kwargs: Any,
+) -> Content:
+    function_kwargs: dict[str, Any] = {}
+    if result_parser is not None:
+        function_kwargs["result_parser"] = result_parser
+    function = FunctionTool(
+        name=prompt_name,
+        description="",
+        func=_make_mcp_prompt_caller(tool, prompt_name),
+        input_model={"type": "object", "properties": {name: {} for name in kwargs}},
+        additional_properties={"_mcp_remote_name": prompt_name},
+        **function_kwargs,
+    )
+    if mcp_local_label is not None:
+        from agent_framework.security import IntegrityLabel, _wrap_mcp_function_for_ifc
+
+        source_integrity, confidentiality = mcp_local_label
+        assert function.additional_properties is not None
+        function.additional_properties.update({
+            "source_integrity": source_integrity,
+            "confidentiality": confidentiality,
+            "_mcp_trust_server_ifc": trust_server_ifc,
+        })
+        if server_ifc_policy is not None:
+            function.additional_properties["_mcp_server_ifc_policy"] = server_ifc_policy
+        _wrap_mcp_function_for_ifc(function, IntegrityLabel(source_integrity))
+    return await _auto_invoke_function(
+        Content.from_function_call(call_id=f"call-{prompt_name}", name=prompt_name, arguments=kwargs),
+        config=normalize_function_invocation_configuration({
+            "include_detailed_errors": include_detailed_errors,
+        }),
+        tool_map={prompt_name: function},
+        middleware_pipeline=middleware_pipeline,
     )
 
 
@@ -317,6 +384,60 @@ def test_mcp_transport_subclasses_accept_tool_name_prefix() -> None:
     )
 
 
+def test_mcp_transport_subclasses_default_discovery_page_limit() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        tools = [
+            MCPStdioTool(name="stdio", command="python"),
+            MCPStreamableHTTPTool(name="http", url="https://example.com/mcp"),
+            MCPWebsocketTool(name="websocket", url="wss://example.com/mcp"),  # ty: ignore[deprecated]
+        ]
+
+    assert all(tool.max_discovery_pages == 100 for tool in tools)
+    assert all(tool.max_discovery_items == 1_000 for tool in tools)
+
+
+def test_mcp_transport_subclasses_forward_discovery_page_limit() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        tools = [
+            MCPStdioTool(name="stdio", command="python", max_discovery_pages=101, max_discovery_items=1_001),
+            MCPStreamableHTTPTool(
+                name="http",
+                url="https://example.com/mcp",
+                max_discovery_pages=102,
+                max_discovery_items=1_002,
+            ),
+            MCPWebsocketTool(  # ty: ignore[deprecated]
+                name="websocket",
+                url="wss://example.com/mcp",
+                max_discovery_pages=103,
+                max_discovery_items=1_003,
+            ),
+        ]
+
+    assert [tool.max_discovery_pages for tool in tools] == [101, 102, 103]
+    assert [tool.max_discovery_items for tool in tools] == [1_001, 1_002, 1_003]
+
+
+@pytest.mark.parametrize("max_discovery_pages", [0, -1])
+def test_mcp_tool_rejects_non_positive_discovery_page_limit(max_discovery_pages: int) -> None:
+    with pytest.raises(ValueError, match="max_discovery_pages must be positive or None"):
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            max_discovery_pages=max_discovery_pages,
+        )
+
+
+@pytest.mark.parametrize("max_discovery_items", [0, -1])
+def test_mcp_tool_rejects_non_positive_discovery_item_limit(max_discovery_items: int) -> None:
+    with pytest.raises(ValueError, match="max_discovery_items must be positive or None"):
+        MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            max_discovery_items=max_discovery_items,
+        )
+
+
 @pytest.mark.parametrize("configured_name", ["search_docs", "docs_search_docs"])
 async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration(configured_name: str):
     """Prefixed MCP tool names should still honor unprefixed allow/approval configuration."""
@@ -354,9 +475,10 @@ async def test_load_tools_with_tool_name_prefix_preserves_matching_configuration
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"always_require_approval": "docs_search"}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
-    ids=["allowed", "always_require", "never_require"],
+    ids=["allowed", "always_require", "always_require_single_string", "never_require"],
 )
 @pytest.mark.parametrize("remote_names", [("search", "docs_search"), ("docs_search", "search")])
 @pytest.mark.parametrize("paginated", [False, True])
@@ -409,7 +531,7 @@ async def test_load_tools_rejects_ambiguous_policy_names(
     [
         (["docs_search"], None),
         (None, {"always_require_approval": ["docs_search"]}),
-        (None, {"never_require_approval": ["docs_search"]}),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -468,7 +590,7 @@ async def test_ambiguous_policy_reload_preserves_previous_discovery(
     [
         (["docs_search"], None, "never_require"),
         (None, {"always_require_approval": ["docs_search"]}, "always_require"),
-        (None, {"never_require_approval": ["docs_search"]}, "never_require"),
+        (None, {"never_require_approval": ["docs_search"], "default": "never_require"}, "never_require"),
     ],
     ids=["allowed", "always_require", "never_require"],
 )
@@ -508,9 +630,12 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     tool = MCPTool(name="docs", tool_name_prefix="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
     mock_session = AsyncMock()
     tool.session = mock_session
+    initial_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    refreshed_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
     keep = types.Tool(
         name="keep",
         input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+        annotations=initial_annotations,
         _meta={"version": 1},
     )
     removed = types.Tool(
@@ -533,6 +658,7 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
     original_functions = list(original_list)
     original_meta = dict(tool._tool_call_meta_by_name)
     keep.meta = {"version": 2}
+    keep.annotations = refreshed_annotations
 
     async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
         assert tool._functions == original_functions
@@ -556,6 +682,39 @@ async def test_tool_refresh_replaces_snapshot_and_preserves_other_functions(empt
         assert kept_function.result_parser is parser
     assert tool._tool_call_meta_by_name == ({} if empty_snapshot else {"keep": {"version": 2}})
     assert tool._tool_param_names_by_name == ({} if empty_snapshot else {"keep": {"query"}})
+    assert tool._tool_annotations_by_name == ({} if empty_snapshot else {"keep": refreshed_annotations})
+
+
+async def test_failed_tool_refresh_preserves_previous_annotation_snapshot() -> None:
+    tool = MCPTool(name="docs")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    original_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)
+    replacement_annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=True)
+    original = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=original_annotations,
+    )
+    mock_session.list_tools = AsyncMock(return_value=types.ListToolsResult(tools=[original]))
+    await tool.load_tools()
+
+    replacement = types.Tool(
+        name="search",
+        input_schema={"type": "object", "properties": {}},
+        annotations=replacement_annotations,
+    )
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[replacement], next_cursor="second"),
+            RuntimeError("refresh failed"),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="refresh failed"):
+        await tool.load_tools()
+
+    assert tool._tool_annotations_by_name == {"search": original_annotations}
 
 
 async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptureFixture) -> None:
@@ -573,7 +732,7 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
                 ),
                 types.Tool(
                     name="optional",
-                    input_schema={"type": "object", "properties": {}},
+                    input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
                     execution=types.ToolExecution(task_support="optional"),
                     _meta={"mode": "optional"},
                 ),
@@ -595,14 +754,30 @@ async def test_load_tools_skips_only_task_required_tools(caplog: pytest.LogCaptu
 
     assert [function.name for function in tool.functions] == ["optional", "forbidden", "ordinary"]
     assert tool._tool_call_meta_by_name == {"optional": {"mode": "optional"}}
-    assert set(tool._tool_param_names_by_name) == {"optional", "forbidden", "ordinary"}
-    skip_messages = [message for message in caplog.messages if message.startswith("Skipping MCP tool")]
-    assert skip_messages == [
+    assert tool._tool_param_names_by_name == {
+        "optional": {"query"},
+        "forbidden": set(),
+        "ordinary": set(),
+    }
+    assert "required" not in tool._tool_call_meta_by_name
+    assert "required" not in tool._tool_param_names_by_name
+    assert caplog.messages == [
         "Skipping MCP tool 'required' because it requires the Tasks extension, which this client does not support."
     ]
 
-    for function in tool.functions:
-        await function.invoke(arguments={})
+    optional_function = tool.functions[0]
+    optional_result = await optional_function.invoke(arguments={"query": "search term"})
+    assert _mcp_result_to_text(optional_result) == "ok"
+    optional_call = mock_session.call_tool.await_args
+    assert optional_call is not None
+    assert optional_call.args == ("optional",)
+    assert set(optional_call.kwargs) == {"arguments", "meta"}
+    assert optional_call.kwargs["arguments"] == {"query": "search term"}
+    assert optional_call.kwargs["meta"]["mode"] == "optional"
+
+    for function in tool.functions[1:]:
+        result = await function.invoke(arguments={})
+        assert _mcp_result_to_text(result) == "ok"
 
     assert [call.args[0] for call in mock_session.call_tool.await_args_list] == ["optional", "forbidden", "ordinary"]
 
@@ -682,6 +857,7 @@ async def test_overlapping_names_accept_unambiguous_policy(
         approval_mode={
             "always_require_approval": ["search"],
             "never_require_approval": ["search", "docs_docs_search"],
+            "default": "never_require",
         },
     )
     mock_session = AsyncMock()
@@ -1559,6 +1735,38 @@ async def test_direct_mcp_parser_failure_does_not_materialize_host_payload(monke
         await tool.call_tool("widget")
 
 
+def test_mcp_result_capture_is_scoped_to_its_owner() -> None:
+    owner = object()
+    capture = _MCPResultCapture(
+        max_size_bytes=1024,
+        aggregate_budget=None,
+        apply_server_meta_to_model_items=False,
+    )
+    result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    token = _mcp_tool_runtime_context.set(
+        _MCPToolRuntimeContext(
+            owner=owner,
+            runtime_kwargs={},
+            result_capture=capture,
+        )
+    )
+    try:
+        _capture_mcp_result(object(), result)
+        assert capture.recorded is False
+
+        _capture_mcp_result(owner, result)
+        assert capture.recorded is True
+        assert capture.security_meta == {
+            "retained": True,
+            "meta": {"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+        }
+    finally:
+        _mcp_tool_runtime_context.reset(token)
+
+
 async def test_function_tool_result_parser_cannot_discard_mcp_host_payload() -> None:
     mcp_result = types.CallToolResult(
         content=[types.TextContent(type="text", text="server projection")],
@@ -1682,6 +1890,1304 @@ async def test_exhausted_aggregate_budget_rejects_meta_before_copy(monkeypatch: 
     assert function_result.result == "model projection"
     assert "_meta" not in function_result.additional_properties
     assert _MCP_TOOL_RESULT_HOST_PAYLOAD_KEY not in function_result.additional_properties
+
+
+async def test_exhausted_aggregate_budget_preserves_ifc_security_label() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        parse_tool_results=lambda _: "model projection",
+        max_host_payload_size_bytes=128,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert "_meta" not in function_result.additional_properties
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_function_result_parser_preserves_exhausted_budget_ifc_label() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        result_parser=lambda items: items[0].text,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.result == "private result"
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    assert tracker.get_context_label().confidentiality.value == "private"
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+@pytest.mark.parametrize("enable_instrumentation", [False, True], indirect=True)
+@pytest.mark.usefixtures("span_exporter")
+async def test_function_result_parser_failure_preserves_exhausted_budget_ifc_label() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private parser detail")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=128)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    def fail_with_result(items: list[Content]) -> str:
+        raise ValueError(f"parser rejected {items[0].text}")
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        result_parser=fail_with_result,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    assert "private parser detail" in function_result.result
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    assert tracker.get_context_label().confidentiality.value == "private"
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+async def test_mcp_parser_failure_without_tracker_returns_serializable_labeled_error() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private parser detail")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper", parse_tool_results=_raise_result_parser)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        mcp_local_label=("trusted", "public"),
+        include_detailed_errors=True,
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "private",
+    }
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+async def test_function_result_parser_assigned_after_mcp_ifc_setup_preserves_label() -> None:
+    from agent_framework.security import IntegrityLabel, LabelTrackingFunctionMiddleware, _wrap_mcp_function_for_ifc
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private result")],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "widget",
+            "source_integrity": "trusted",
+            "confidentiality": "public",
+            "_mcp_trust_server_ifc": False,
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.TRUSTED)
+    function.result_parser = lambda items: items[0].text
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="call-widget", name="widget", arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={"widget": function},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    assert function_result.result == "private result"
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+
+
+@pytest.mark.parametrize("custom_parsers", [False, True], ids=["default-parsers", "custom-parsers"])
+async def test_generated_mcp_prompt_applies_ifc_after_all_parsers(custom_parsers: bool) -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    prompt_result = types.GetPromptResult(
+        description="Generated prompt",
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(type="text", text="server prompt"),
+            )
+        ],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        parse_prompt_results=(lambda _: "MCP prompt projection") if custom_parsers else None,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_prompt(
+        tool,
+        "summary",
+        result_parser=(lambda result: f"FunctionTool projection: {result}") if custom_parsers else None,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].text == (
+        "FunctionTool projection: MCP prompt projection" if custom_parsers else "server prompt"
+    )
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    assert tracker.get_context_label().confidentiality.value == "private"
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+async def test_generated_mcp_prompt_invalid_identity_ifc_fails_closed() -> None:
+    prompt_result = types.GetPromptResult(
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(type="text", text="identity prompt"),
+            )
+        ],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "user_identity"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    function_result = await _call_generated_mcp_prompt(
+        tool,
+        "summary",
+        mcp_local_label=("trusted", "public"),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "metadata": {"source": "invalid_mcp_ifc"},
+    }
+    json.dumps(function_result.to_dict())
+
+
+async def test_generated_mcp_prompt_can_ignore_server_ifc() -> None:
+    prompt_result = types.GetPromptResult(
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(type="text", text="server prompt"),
+            )
+        ],
+        _meta={"ifc": {"integrity": "untrusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+
+    function_result = await _call_generated_mcp_prompt(
+        tool,
+        "summary",
+        mcp_local_label=("trusted", "public"),
+        server_ifc_policy="ignore",
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "trusted",
+        "confidentiality": "public",
+    }
+
+
+async def test_generated_mcp_prompt_parser_failure_preserves_ifc_label() -> None:
+    from agent_framework.security import LabelTrackingFunctionMiddleware
+
+    prompt_result = types.GetPromptResult(
+        messages=[
+            types.PromptMessage(
+                role="user",
+                content=types.TextContent(type="text", text="private prompt detail"),
+            )
+        ],
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+
+    def fail_with_prompt(result: types.GetPromptResult) -> str:
+        content = cast(types.TextContent, result.messages[0].content)
+        raise ValueError(f"prompt parser rejected {content.text}")
+
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        parse_prompt_results=fail_with_prompt,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.get_prompt = AsyncMock(return_value=prompt_result)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_prompt(
+        tool,
+        "summary",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        include_detailed_errors=True,
+    )
+
+    assert "private prompt detail" in function_result.result
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    assert tracker.get_context_label().confidentiality.value == "private"
+    json.dumps(function_result.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("server_ifc", "expected_integrity", "expected_confidentiality"),
+    [
+        pytest.param(
+            {"integrity": "trusted", "confidentiality": "private"},
+            "trusted",
+            "private",
+            id="restrictive",
+        ),
+        pytest.param(
+            {"integrity": "trusted"},
+            "untrusted",
+            "user_identity",
+            id="invalid",
+        ),
+    ],
+)
+async def test_exhausted_aggregate_budget_enforces_ifc_on_detailed_mcp_error(
+    tmp_path: Path,
+    server_ifc: dict[str, str],
+    expected_integrity: str,
+    expected_confidentiality: str,
+) -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private MCP error instructions")],
+        is_error=True,
+        _meta={"ifc": server_ifc},
+    )
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="helper",
+        max_host_payload_size_bytes=128,
+    )
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    assert budget.reserve(128, 128)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    assert "private MCP error instructions" in function_result.result
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"]["integrity"] == expected_integrity
+    assert (
+        function_result.items[0].additional_properties["security_label"]["confidentiality"] == expected_confidentiality
+    )
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+    store = FileSessionStore(tmp_path / expected_integrity, serialization_format="json")
+    session = AgentSession(session_id=f"mcp-error-{expected_integrity}")
+    session.state["mcp_error_result"] = function_result
+    await store.set(session.session_id, session)
+    restored = await store.get(session.session_id)
+    assert restored is not None
+    restored_result = restored.state["mcp_error_result"]
+    assert isinstance(restored_result, dict)
+    restored_items = restored_result["items"]
+    assert isinstance(restored_items, list)
+    assert restored_items[0]["additional_properties"]["security_label"]["integrity"] == expected_integrity
+    context_label = tracker.get_context_label()
+    assert context_label.integrity.value == expected_integrity
+    assert context_label.confidentiality.value == expected_confidentiality
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="protected_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("MCP error IFC must block the protected public sink"),
+        )
+
+
+async def test_retried_mcp_error_does_not_commit_swallowed_label() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    error_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="private failed attempt")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    success_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="recovered")],
+        is_error=False,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(side_effect=[error_result, success_result])
+
+    class RetryOnceMiddleware(FunctionMiddleware):
+        async def process(self, context: FunctionInvocationContext, call_next: Callable[[], Any]) -> None:
+            del context
+            try:
+                await call_next()
+            except ToolExecutionException:
+                await call_next()
+
+    tracker = LabelTrackingFunctionMiddleware()
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(RetryOnceMiddleware(), tracker),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.result == "recovered"
+    context_label = tracker.get_context_label()
+    assert context_label.integrity.value == "trusted"
+    assert context_label.confidentiality.value == "public"
+
+    executed = False
+
+    def public_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=public_sink,
+        name="public_after_retry_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_public_sink(_: FunctionInvocationContext) -> str:
+        return public_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_public_sink,
+    )
+    assert executed is True
+
+
+async def test_mcp_error_finalizer_updates_invocation_session_scope() -> None:
+    from agent_framework.security import (
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="session-private failure")],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(session_id="mcp-error-session-scope")
+
+    await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        invocation_session=session,
+        trust_server_ifc=True,
+        include_detailed_errors=True,
+    )
+
+    session_label = tracker.get_context_label(session)
+    assert session_label.integrity.value == "trusted"
+    assert session_label.confidentiality.value == "private"
+    default_label = tracker.get_context_label()
+    assert default_label.integrity.value == "trusted"
+    assert default_label.confidentiality.value == "public"
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="session_public_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={}, session=session)
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("The invocation session must retain the MCP error restriction"),
+        )
+
+
+async def test_mcp_error_without_ifc_preserves_local_identity_principals() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped failure")],
+        is_error=True,
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "user_identity"),
+        mcp_local_principals=principals,
+        include_detailed_errors=True,
+    )
+
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "user_identity"
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == principals
+    context_label = tracker.get_context_label()
+    assert context_label.metadata[PRINCIPAL_METADATA_KEY] == principals
+
+    executed = False
+
+    def identity_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    sink_tool = FunctionTool(
+        func=identity_sink,
+        name="identity_after_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    invocation = FunctionInvocationContext(function=sink_tool, arguments={})
+
+    async def execute_identity_sink(_: FunctionInvocationContext) -> str:
+        return identity_sink()
+
+    await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+        invocation,
+        execute_identity_sink,
+    )
+    assert executed is True
+
+
+async def test_restriction_only_mcp_error_preserves_private_argument_fallback() -> None:
+    from agent_framework.security import (
+        ConfidentialityLabel,
+        ContentLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    secret = "private argument echoed by MCP error"
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=secret)],
+        is_error=True,
+        _meta={"ifc": {"integrity": "trusted", "confidentiality": "public"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware()
+    variable_id = tracker.get_variable_store().store(
+        secret,
+        ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.PRIVATE,
+        ),
+    )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "public"),
+        include_detailed_errors=True,
+        value=f"[{variable_id}]",
+    )
+
+    assert secret in function_result.result
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "private"
+    context_label = tracker.get_context_label()
+    assert context_label.integrity == IntegrityLabel.TRUSTED
+    assert context_label.confidentiality == ConfidentialityLabel.PRIVATE
+
+    protected_tool = FunctionTool(
+        func=lambda: "must not run",
+        name="public_after_private_mcp_error_sink",
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    invocation = FunctionInvocationContext(function=protected_tool, arguments={})
+
+    with pytest.raises(MiddlewareTermination):
+        await FunctionMiddlewarePipeline(tracker, PolicyEnforcementFunctionMiddleware()).execute(
+            invocation,
+            lambda _context: pytest.fail("Private MCP error data must block the public sink"),
+        )
+
+
+async def test_oversized_identity_ifc_fails_closed_without_confidentiality_downgrade() -> None:
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": [{"tenant_id": "tenant-a", "user_id": "x" * 5000}],
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        host_payload_budget=_FunctionResultPayloadBudget(),
+        mcp_local_label=("trusted", "public"),
+        trust_server_ifc=True,
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["security_label"] == {
+        "integrity": "untrusted",
+        "confidentiality": "user_identity",
+        "metadata": {"source": "invalid_mcp_ifc"},
+    }
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_mcp_tool_result_security_meta" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+@pytest.mark.parametrize(
+    "server_principals",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param([], id="empty"),
+        pytest.param([{"tenant_id": "tenant-a"}], id="missing-user"),
+        pytest.param([{"tenant_id": "", "user_id": "user-a"}], id="empty-tenant"),
+        pytest.param("tenant-a/user-a", id="not-a-sequence-of-mappings"),
+    ],
+)
+async def test_invalid_identity_ifc_cannot_inherit_local_principals(server_principals: Any) -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        ConfidentialityLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_ifc: dict[str, Any] = {
+        "integrity": "trusted",
+        "confidentiality": "user_identity",
+    }
+    if server_principals is not None:
+        server_ifc["principals"] = server_principals
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={"ifc": server_ifc},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="identity_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "identity_widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "identity_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.TRUSTED)
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=True)
+    policy = PolicyEnforcementFunctionMiddleware()
+
+    result = await _auto_invoke_function(
+        Content.from_function_call(call_id="identity-call", name=function.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={function.name: function},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert result.items is not None
+    assert result.items[0].additional_properties["_variable_reference"] is True
+    context_label = tracker.get_context_label()
+    assert context_label.confidentiality == ConfidentialityLabel.USER_IDENTITY
+    assert PRINCIPAL_METADATA_KEY not in context_label.metadata
+
+    executed = False
+
+    def identity_destination() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    destination = FunctionTool(
+        name="identity_destination",
+        description="Identity-scoped destination",
+        func=identity_destination,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "accepts_untrusted": True,
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: principals,
+        },
+    )
+
+    with pytest.raises(MiddlewareTermination):
+        await _auto_invoke_function(
+            Content.from_function_call(call_id="destination-call", name=destination.name, arguments={}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={destination.name: destination},
+            middleware_pipeline=FunctionMiddlewarePipeline(tracker, policy),
+        )
+
+    assert executed is False
+
+
+@pytest.mark.parametrize("use_result_parser", [False, True], ids=["builtin-parser", "function-parser"])
+@pytest.mark.parametrize("exhaust_budget", [False, True], ids=["available-budget", "exhausted-budget"])
+async def test_restriction_only_identity_ifc_preserves_principals_across_session_restore(
+    tmp_path: Path,
+    use_result_parser: bool,
+    exhaust_budget: bool,
+) -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+    )
+
+    local_principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_principals = [{"tenant_id": "tenant-a", "user_id": "user-b"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": server_principals,
+            }
+        },
+    )
+    tool = MCPTool(name="helper", max_host_payload_size_bytes=512)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    budget = _FunctionResultPayloadBudget()
+    if exhaust_budget:
+        assert budget.reserve(512, 512)
+    tracker = LabelTrackingFunctionMiddleware()
+    session = AgentSession(
+        session_id=f"identity-principals-{'parser' if use_result_parser else 'builtin'}-"
+        f"{'exhausted' if exhaust_budget else 'available'}"
+    )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        result_parser=(lambda items: items[0].text) if use_result_parser else None,
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        host_payload_budget=budget,
+        mcp_local_label=("trusted", "user_identity"),
+        mcp_local_principals=local_principals,
+        invocation_session=session,
+        trust_server_ifc=False,
+    )
+
+    expected_principals = [*local_principals, *server_principals]
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == expected_principals
+    assert tracker.get_context_label(session).metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_security_label_validated_principals" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+    store = FileSessionStore(tmp_path / session.session_id, serialization_format="json")
+    await store.set(session.session_id, session)
+    restored = await store.get(session.session_id)
+    assert restored is not None
+    restored_tracker = LabelTrackingFunctionMiddleware()
+    restored_label = restored_tracker.get_context_label(restored)
+    assert restored_label.metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+
+    executed = False
+
+    def local_identity_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    destination = FunctionTool(
+        name="local_identity_sink",
+        description="Identity-scoped destination for the local principal",
+        func=local_identity_sink,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+        },
+    )
+
+    with pytest.raises(MiddlewareTermination):
+        await _auto_invoke_function(
+            Content.from_function_call(call_id="destination-call", name=destination.name, arguments={}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={destination.name: destination},
+            invocation_session=restored,
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                restored_tracker,
+                PolicyEnforcementFunctionMiddleware(),
+            ),
+        )
+
+    assert executed is False
+
+
+async def test_restriction_only_identity_ifc_preserves_argument_restrictions() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        ConfidentialityLabel,
+        ContentLabel,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+    )
+
+    local_principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_principals = [{"tenant_id": "tenant-a", "user_id": "user-b"}]
+    argument_principals = [{"tenant_id": "tenant-a", "user_id": "user-c"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": server_principals,
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+    variable_id = tracker.get_variable_store().store(
+        "identity-scoped argument",
+        ContentLabel(
+            integrity=IntegrityLabel.TRUSTED,
+            confidentiality=ConfidentialityLabel.USER_IDENTITY,
+            metadata={PRINCIPAL_METADATA_KEY: argument_principals},
+        ),
+    )
+
+    function_result = await _call_generated_mcp_tool(
+        tool,
+        "widget",
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+        mcp_local_label=("trusted", "user_identity"),
+        mcp_local_principals=local_principals,
+        trust_server_ifc=False,
+        value=f"[{variable_id}]",
+    )
+
+    expected_principals = [*local_principals, *server_principals, *argument_principals]
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == "trusted"
+    assert result_label["confidentiality"] == "user_identity"
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == expected_principals
+    context_label = tracker.get_context_label()
+    assert context_label.integrity == IntegrityLabel.TRUSTED
+    assert context_label.metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+
+
+@pytest.mark.parametrize("reuse_outer_context", [False, True], ids=["fresh-inner-context", "reused-outer-context"])
+@pytest.mark.parametrize(
+    ("server_ifc", "trust_server_ifc", "expected_integrity", "expected_confidentiality"),
+    [
+        pytest.param(
+            {"integrity": "trusted"},
+            False,
+            "untrusted",
+            "user_identity",
+            id="invalid-ifc",
+        ),
+        pytest.param(
+            {"integrity": "trusted", "confidentiality": "public"},
+            True,
+            "trusted",
+            "private",
+            id="trusted-authoritative-ifc",
+        ),
+    ],
+)
+async def test_nested_direct_mcp_invocation_strips_unconsumed_authority_marker(
+    reuse_outer_context: bool,
+    server_ifc: dict[str, str],
+    trust_server_ifc: bool,
+    expected_integrity: str,
+    expected_confidentiality: str,
+) -> None:
+    from agent_framework.security import IntegrityLabel, LabelTrackingFunctionMiddleware, _wrap_mcp_function_for_ifc
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="nested result")],
+        _meta={"ifc": server_ifc},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    inner_tool = FunctionTool(
+        name="inner_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "inner_widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "inner_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "public",
+            "_mcp_trust_server_ifc": trust_server_ifc,
+        },
+    )
+    _wrap_mcp_function_for_ifc(inner_tool, IntegrityLabel.TRUSTED)
+
+    async def invoke_nested(context: FunctionInvocationContext) -> list[Content]:
+        inner_context = context if reuse_outer_context else FunctionInvocationContext(function=inner_tool, arguments={})
+        inner_result = await inner_tool.invoke(arguments={}, context=inner_context)
+        assert isinstance(inner_result, list)
+        assert "_security_label_authoritative" not in inner_result[0].additional_properties
+        assert "_security_label_validated_principals" not in inner_result[0].additional_properties
+        json.dumps([item.to_dict() for item in inner_result])
+        return inner_result
+
+    outer_tool = FunctionTool(
+        name="outer_tool",
+        description="Tracked tool that directly invokes an MCP function",
+        func=invoke_nested,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "confidentiality": "private",
+        },
+    )
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="outer-call", name=outer_tool.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={outer_tool.name: outer_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["integrity"] == expected_integrity
+    assert result_label["confidentiality"] == expected_confidentiality
+    assert "_security_label_authoritative" not in function_result.items[0].additional_properties
+    assert "_security_label_validated_principals" not in function_result.items[0].additional_properties
+    json.dumps(function_result.to_dict())
+
+
+@pytest.mark.parametrize("reuse_outer_context", [False, True], ids=["fresh-inner-context", "reused-outer-context"])
+@pytest.mark.parametrize("auto_hide_untrusted", [False, True], ids=["visible", "hidden"])
+async def test_nested_restriction_only_identity_ifc_preserves_server_principal(
+    reuse_outer_context: bool,
+    auto_hide_untrusted: bool,
+) -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    local_principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_principals = [{"tenant_id": "tenant-a", "user_id": "user-b"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped nested result")],
+        _meta={
+            "ifc": {
+                "integrity": "untrusted",
+                "confidentiality": "user_identity",
+                "principals": server_principals,
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    inner_tool = FunctionTool(
+        name="inner_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "inner_widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "inner_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+            "_mcp_server_ifc_policy": "restrict",
+        },
+    )
+    _wrap_mcp_function_for_ifc(inner_tool, IntegrityLabel.TRUSTED)
+
+    async def invoke_nested(context: FunctionInvocationContext) -> list[Content]:
+        inner_context = context if reuse_outer_context else FunctionInvocationContext(function=inner_tool, arguments={})
+        inner_result = await inner_tool.invoke(arguments={}, context=inner_context)
+        assert isinstance(inner_result, list)
+        assert "_security_label_validated_principals" not in inner_result[0].additional_properties
+        json.dumps([item.to_dict() for item in inner_result])
+        return inner_result
+
+    outer_tool = FunctionTool(
+        name="outer_tool",
+        description="Tracked tool that directly invokes an MCP function",
+        func=invoke_nested,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+        },
+    )
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=auto_hide_untrusted)
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="outer-call", name=outer_tool.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={outer_tool.name: outer_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    assert function_result.items is not None
+    expected_principals = [*local_principals, *server_principals]
+    if auto_hide_untrusted:
+        hidden = function_result.items[0]
+        assert hidden.text is not None
+        variable_id = cast(str, json.loads(hidden.text)["variable_id"])
+        _, stored_label = tracker.get_variable_store().retrieve(variable_id)
+        assert stored_label.metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+        assert tracker.get_context_label().integrity == IntegrityLabel.TRUSTED
+    else:
+        result_label = function_result.items[0].additional_properties["security_label"]
+        assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == expected_principals
+        assert tracker.get_context_label().integrity == IntegrityLabel.UNTRUSTED
+
+    assert tracker.get_context_label().metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+
+    executed = False
+
+    def local_identity_sink() -> str:
+        nonlocal executed
+        executed = True
+        return "sent"
+
+    destination = FunctionTool(
+        name="local_identity_sink",
+        description="Identity-scoped destination for the local principal",
+        func=local_identity_sink,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+        },
+    )
+
+    with pytest.raises(MiddlewareTermination):
+        await _auto_invoke_function(
+            Content.from_function_call(call_id="destination-call", name=destination.name, arguments={}),
+            config=normalize_function_invocation_configuration(None),
+            tool_map={destination.name: destination},
+            middleware_pipeline=FunctionMiddlewarePipeline(
+                tracker,
+                PolicyEnforcementFunctionMiddleware(),
+            ),
+        )
+
+    assert executed is False
+
+
+@pytest.mark.parametrize("reuse_outer_context", [False, True], ids=["fresh-inner-context", "reused-outer-context"])
+async def test_nested_mcp_parser_error_preserves_server_principal(reuse_outer_context: bool) -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    local_principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_principals = [{"tenant_id": "tenant-a", "user_id": "user-b"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="identity-scoped parser detail")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": server_principals,
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+
+    def fail_parser(_: Any) -> str:
+        raise ValueError("parser failed")
+
+    inner_tool = FunctionTool(
+        name="inner_widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "inner_widget"),
+        result_parser=fail_parser,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "inner_widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+            "_mcp_server_ifc_policy": "restrict",
+        },
+    )
+    _wrap_mcp_function_for_ifc(inner_tool, IntegrityLabel.TRUSTED)
+
+    async def invoke_nested(context: FunctionInvocationContext) -> str:
+        inner_context = context if reuse_outer_context else FunctionInvocationContext(function=inner_tool, arguments={})
+        with pytest.raises(ValueError, match="parser failed"):
+            await inner_tool.invoke(arguments={}, context=inner_context)
+        return "caught parser failure"
+
+    outer_tool = FunctionTool(
+        name="outer_tool",
+        description="Tracked tool that catches an MCP parser failure",
+        func=invoke_nested,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+        },
+    )
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="outer-call", name=outer_tool.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={outer_tool.name: outer_tool},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    expected_principals = [*local_principals, *server_principals]
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == expected_principals
+    assert tracker.get_context_label().metadata[PRINCIPAL_METADATA_KEY] == expected_principals
+
+
+async def test_copied_mcp_tool_uses_copy_as_result_authority_owner() -> None:
+    from agent_framework.security import (
+        PRINCIPAL_METADATA_KEY,
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    local_principals = [{"tenant_id": "tenant-a", "user_id": "user-a"}]
+    server_principals = [{"tenant_id": "tenant-a", "user_id": "user-b"}]
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="copied tool result")],
+        _meta={
+            "ifc": {
+                "integrity": "trusted",
+                "confidentiality": "user_identity",
+                "principals": server_principals,
+            }
+        },
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    original = FunctionTool(
+        name="widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "widget",
+            "source_integrity": "trusted",
+            "confidentiality": "user_identity",
+            PRINCIPAL_METADATA_KEY: local_principals,
+            "_mcp_server_ifc_policy": "restrict",
+        },
+    )
+    _wrap_mcp_function_for_ifc(original, IntegrityLabel.TRUSTED)
+    copied = copy(original)
+    tracker = LabelTrackingFunctionMiddleware(auto_hide_untrusted=False)
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="copied-call", name=copied.name, arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={copied.name: copied},
+        middleware_pipeline=FunctionMiddlewarePipeline(tracker),
+    )
+
+    assert function_result.items is not None
+    result_label = function_result.items[0].additional_properties["security_label"]
+    assert result_label["metadata"][PRINCIPAL_METADATA_KEY] == [*local_principals, *server_principals]
 
 
 async def test_oversized_mcp_meta_is_omitted_from_host_and_model_items() -> None:
@@ -1974,8 +3480,120 @@ async def test_secure_mcp_builtin_parser_restricts_all_result_shapes(result_shap
         assert hidden_item.additional_properties["_variable_reference"] is True
         assert hidden_item.additional_properties["security_label"]["integrity"] == "untrusted"
         assert hidden_item.additional_properties["security_label"]["confidentiality"] == "private"
-        assert hidden_item.additional_properties["_meta"] == mcp_result.meta
+        assert "_meta" not in hidden_item.additional_properties
     assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+
+async def test_hidden_builtin_mcp_result_replays_without_tainting_context() -> None:
+    """A restored hidden MCP placeholder stays integrity-clean on the next run."""
+    from agent_framework.security import (
+        IntegrityLabel,
+        LabelTrackingFunctionMiddleware,
+        PolicyEnforcementFunctionMiddleware,
+        SecureAgentConfig,
+        _wrap_mcp_function_for_ifc,
+    )
+
+    mcp_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="untrusted MCP payload")],
+        _meta={"ifc": {"integrity": "untrusted", "confidentiality": "private"}},
+    )
+    tool = MCPTool(name="helper")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = Mock()
+    tool.session = mock_session
+    mock_session.call_tool = AsyncMock(return_value=mcp_result)
+    function = FunctionTool(
+        name="widget",
+        description="",
+        func=_make_mcp_tool_caller(tool, "widget"),
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "_mcp_remote_name": "widget",
+            "source_integrity": "untrusted",
+            "confidentiality": "private",
+            "max_allowed_confidentiality": "public",
+        },
+    )
+    _wrap_mcp_function_for_ifc(function, IntegrityLabel.UNTRUSTED)
+    security = SecureAgentConfig()
+    session = AgentSession(session_id="hidden-mcp-replay")
+    first_context = SessionContext(
+        session_id=session.session_id,
+        input_messages=[Message(role="user", contents=["run"])],
+    )
+    await security.before_run(
+        agent=cast(Any, SimpleNamespace(context_providers=[security])),
+        session=session,
+        context=first_context,
+        state=session.state.setdefault(security.source_id, {}),
+    )
+    first_tracker = first_context.get_middleware()[0]
+    assert isinstance(first_tracker, LabelTrackingFunctionMiddleware)
+
+    function_result = await _auto_invoke_function(
+        Content.from_function_call(call_id="call-widget", name="widget", arguments={}),
+        config=normalize_function_invocation_configuration(None),
+        tool_map={"widget": function},
+        invocation_session=session,
+        middleware_pipeline=FunctionMiddlewarePipeline(first_tracker),
+        host_payload_budget=_FunctionResultPayloadBudget(),
+    )
+
+    assert function_result.items is not None
+    assert function_result.items[0].additional_properties["_variable_reference"] is True
+    assert "_meta" not in function_result.items[0].additional_properties
+    assert function_result.additional_properties["_meta"] == mcp_result.meta
+
+    restored = AgentSession.from_dict(json.loads(json.dumps(session.to_dict())))
+    history = InMemoryHistoryProvider()
+    replayed = Message(role="tool", contents=[function_result])
+    second_context = SessionContext(session_id=restored.session_id, input_messages=[])
+    second_context.extend_messages(history.source_id, [replayed])
+    await security.before_run(
+        agent=cast(Any, SimpleNamespace(context_providers=[history, security])),
+        session=restored,
+        context=second_context,
+        state=restored.state.setdefault(security.source_id, {}),
+    )
+    second_middleware = second_context.get_middleware()
+    second_tracker = next(item for item in second_middleware if isinstance(item, LabelTrackingFunctionMiddleware))
+    second_policy = next(item for item in second_middleware if isinstance(item, PolicyEnforcementFunctionMiddleware))
+    restored_label = second_tracker.get_context_label()
+    assert restored_label.integrity.value == "trusted"
+    assert restored_label.confidentiality.value == "private"
+
+    executed = False
+
+    def protected_action() -> str:
+        nonlocal executed
+        executed = True
+        return "done"
+
+    protected_tool = FunctionTool(
+        name="protected_action",
+        description="Run an unrelated protected action",
+        func=protected_action,
+        input_model={"type": "object", "properties": {}},
+        additional_properties={
+            "source_integrity": "trusted",
+            "max_allowed_confidentiality": "private",
+        },
+    )
+    invocation = FunctionInvocationContext(
+        function=protected_tool,
+        arguments={},
+        session=restored,
+    )
+
+    async def execute_protected(_: FunctionInvocationContext) -> list[Content]:
+        return [Content.from_text(protected_action())]
+
+    await FunctionMiddlewarePipeline(second_tracker, second_policy).execute(
+        invocation,
+        execute_protected,
+    )
+
+    assert executed is True
 
 
 async def test_secure_mcp_builtin_parser_honors_locally_trusted_server_ifc() -> None:
@@ -2898,7 +4516,7 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
             self.connect_count = 0
             self.sessions: list[Any] = []
 
-        async def connect(self, *, reset: bool = False) -> None:
+        async def _reconnect_without_loading(self) -> None:
             self.connect_count += 1
             mock_session = Mock(spec=ClientSession)
             _set_framework_owned_session(self, mock_session)
@@ -2910,12 +4528,13 @@ async def test_mcp_tool_reconnects_after_session_terminated_error():
                     return_value=types.CallToolResult(content=[types.TextContent(type="text", text="recovered")])
                 )
             self.is_connected = True
+            self._tools_loaded = self._prompts_loaded = True
 
         def get_mcp_client(self) -> _AsyncGeneratorContextManager[Any, None]:
             return None  # type: ignore[return-value]  # pyrefly: ignore[bad-return]  # ty: ignore[invalid-return-type]
 
     server = TestServer(name="test_server")
-    await server.connect()
+    await server._reconnect_without_loading()
 
     result = await server.call_tool("test_tool", param="test_value")
 
@@ -3125,8 +4744,25 @@ async def test_local_mcp_server_prompt_execution():
             {
                 "always_require_approval": ["tool_one"],
                 "never_require_approval": ["tool_two"],
+                "default": "never_require",
             },
             {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require", "never_require_approval": ["tool_one"]},
+            {"tool_one": "never_require", "tool_two": "always_require"},
+        ),
+        (
+            {"default": "never_require", "always_require_approval": ["tool_one"]},
+            {"tool_one": "always_require", "tool_two": "never_require"},
+        ),
+        (
+            {"default": "always_require"},
+            {"tool_one": "always_require", "tool_two": "always_require"},
         ),
     ],
 )
@@ -3178,15 +4814,259 @@ async def test_mcp_tool_approval_mode(approval_mode, expected_approvals):
 
 
 def test_mcp_tool_approval_mode_returns_none_for_unmatched_names() -> None:
-    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
-        name="test_tool",
-        approval_mode={
-            "always_require_approval": ["tool_one"],
-            "never_require_approval": ["tool_two"],
-        },
-    )
+    with pytest.warns(FutureWarning, match="never_require_approval"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="test_tool",
+            approval_mode={
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_two"],
+            },
+        )
 
     assert tool._determine_approval_mode("tool_three") is None
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_one"]}, None),
+        ({}, None),
+        ({"default": None}, None),
+        ({"default": "always_require"}, "always_require"),
+        ({"default": "never_require"}, "never_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["always_list_only", "empty", "default_none", "default_always", "default_never", "allow_list", "deny_list"],
+)
+def test_mcp_tool_approval_default_applies_to_names_in_neither_list(
+    approval_mode: MCPSpecificApproval, expected: str | None
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_three") == expected
+
+
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "never_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "always_require"),
+        (
+            {
+                "default": "never_require",
+                "always_require_approval": ["tool_one"],
+                "never_require_approval": ["tool_one"],
+            },
+            "always_require",
+        ),
+    ],
+    ids=["never_list_beats_default", "always_list_beats_default", "always_list_beats_never_list"],
+)
+def test_mcp_tool_approval_lists_take_precedence_over_default(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    tool = MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+    assert tool._determine_approval_mode("tool_one") == expected
+
+
+@pytest.mark.parametrize("default", ["sometimes", "always", "", True, 1])
+def test_mcp_tool_rejects_invalid_approval_default(default: Any) -> None:
+    with pytest.raises(ValueError, match="`default` must be"):
+        MCPTool(name="test_tool", approval_mode={"default": default})  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        {"never_require_approval": ["tool_one"]},
+        {"never_require_approval": []},
+        {"always_require_approval": ["tool_one"], "never_require_approval": ["tool_two"]},
+    ],
+    ids=["never_list", "empty_never_list", "both_lists"],
+)
+def test_mcp_tool_warns_when_never_list_has_no_default(approval_mode: MCPSpecificApproval) -> None:
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        MCPStreamableHTTPTool(name="docs", url="https://example.com/mcp", approval_mode=approval_mode)
+
+    assert [warning.category for warning in recorded] == [FutureWarning]
+    assert recorded[0].filename == __file__
+
+
+def test_mcp_tool_approval_warning_points_at_the_constructing_caller() -> None:
+    approval_mode: MCPSpecificApproval = {"never_require_approval": ["tool_one"]}
+    with pytest.warns(FutureWarning, match="without `default`") as recorded:
+        frame = inspect.currentframe()
+        assert frame is not None
+        expected_line = frame.f_lineno + 1
+        ForwardingMCPTool(approval_mode=approval_mode)
+
+    assert recorded[0].filename == __file__
+    assert recorded[0].lineno == expected_line
+
+
+async def test_mcp_tool_approval_warning_is_not_repeated_during_discovery() -> None:
+    with pytest.warns(FutureWarning, match="without `default`"):
+        tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+            name="docs",
+            approval_mode={"never_require_approval": ["search_docs"]},
+        )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object"}),
+                types.Tool(name="delete_records", input_schema={"type": "object"}),
+            ]
+        )
+    )
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize")])
+    )
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        await tool.load_tools()
+        await tool.load_prompts()
+        await tool.message_handler(types.ToolListChangedNotification())
+        await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert [warning for warning in recorded if issubclass(warning.category, FutureWarning)] == []
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "never_require",
+        "summarize": "never_require",
+    }
+
+
+@pytest.mark.parametrize(
+    "approval_mode",
+    [
+        None,
+        "always_require",
+        "never_require",
+        {},
+        {"always_require_approval": ["tool_one"]},
+        {"never_require_approval": None},
+        {"never_require_approval": ["tool_one"], "default": "never_require"},
+        {"never_require_approval": ["tool_one"], "default": "always_require"},
+    ],
+    ids=[
+        "none",
+        "always_string",
+        "never_string",
+        "empty_dict",
+        "always_list",
+        "never_list_none",
+        "never_list_with_never_default",
+        "never_list_with_always_default",
+    ],
+)
+def test_mcp_tool_does_not_warn_when_approval_fallback_is_explicit_or_unused(approval_mode: Any) -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        MCPTool(name="test_tool", approval_mode=approval_mode)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+
+
+def test_mcp_tool_approval_names_given_as_one_string_match_exact_names_only() -> None:
+    deny_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"always_require_approval": "delete_records", "default": "never_require"},
+    )
+    allow_list = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        approval_mode={"never_require_approval": "search_docs", "default": "always_require"},
+    )
+
+    assert deny_list._determine_approval_mode("delete_records") == "always_require"
+    assert deny_list._determine_approval_mode("delete") == "never_require"
+    assert allow_list._determine_approval_mode("search_docs") == "never_require"
+    assert allow_list._determine_approval_mode("search") == "always_require"
+
+
+async def test_tools_added_after_list_changed_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    search_docs = types.Tool(name="search_docs", input_schema={"type": "object"})
+    delete_records = types.Tool(name="delete_records", input_schema={"type": "object"})
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(tools=[search_docs]),
+            types.ListToolsResult(tools=[search_docs, delete_records]),
+        ]
+    )
+
+    await tool.load_tools()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {"search_docs": "never_require"}
+
+    await tool.message_handler(types.ToolListChangedNotification())
+    await asyncio.gather(*tool._pending_reload_tasks)
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "search_docs": "never_require",
+        "delete_records": "always_require",
+    }
+
+
+async def test_prompts_use_approval_default() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["summarize"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        return_value=types.ListPromptsResult(prompts=[types.Prompt(name="summarize"), types.Prompt(name="draft")])
+    )
+
+    await tool.load_prompts()
+
+    assert {function.name: function.approval_mode for function in tool.functions} == {
+        "summarize": "never_require",
+        "draft": "always_require",
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True], ids=["non-streaming", "streaming"])
+async def test_mcp_tool_named_in_neither_list_waits_for_approval_with_default(
+    chat_client_base: Any,
+    streaming: bool,
+) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="docs",
+        approval_mode={"default": "always_require", "never_require_approval": ["search_docs"]},
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        return_value=types.ListToolsResult(
+            tools=[
+                types.Tool(name="search_docs", input_schema={"type": "object", "properties": {}}),
+                types.Tool(name="delete_records", input_schema={"type": "object", "properties": {}}),
+            ]
+        )
+    )
+    mock_session.call_tool = AsyncMock(
+        return_value=types.CallToolResult(content=[types.TextContent(type="text", text="ok")])
+    )
+    await tool.load_tools()
+
+    exempt_response = await run_function_call(chat_client_base, tool.functions, "search_docs", streaming=streaming)
+
+    assert approval_request_names(exempt_response) == []
+    assert mock_session.call_tool.await_count == 1
+
+    gated_response = await run_function_call(chat_client_base, tool.functions, "delete_records", streaming=streaming)
+
+    assert approval_request_names(gated_response) == ["delete_records"]
+    assert mock_session.call_tool.await_count == 1
 
 
 @pytest.mark.parametrize(
@@ -3817,8 +5697,19 @@ async def test_mcp_progressive_resolve_rejects_ambiguous_tool_name() -> None:
     assert result[0].text == "MCP tool name 'shared' is ambiguous."
 
 
-async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> None:
-    server = await _load_progressive_test_server(approval_mode={"always_require_approval": ["tool_two"]})
+@pytest.mark.parametrize(
+    ("approval_mode", "expected"),
+    [
+        ({"always_require_approval": ["tool_two"]}, "always_require"),
+        ({"default": "always_require", "never_require_approval": ["tool_one"]}, "always_require"),
+        ({"default": "never_require", "always_require_approval": ["tool_one"]}, "never_require"),
+    ],
+    ids=["listed", "default_always", "default_never"],
+)
+async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode(
+    approval_mode: MCPSpecificApproval, expected: str
+) -> None:
+    server = await _load_progressive_test_server(approval_mode=approval_mode)
     load_tool = server.functions[1]
     context = FunctionInvocationContext(
         function=load_tool,
@@ -3837,7 +5728,7 @@ async def test_mcp_progressive_loaded_tool_preserves_remote_approval_mode() -> N
             if tool.name == "tool_two"  # type: ignore[union-attr]  # ty: ignore[unresolved-attribute]
         ),
     )
-    assert loaded_tool.approval_mode == "always_require"
+    assert loaded_tool.approval_mode == expected
 
 
 async def test_mcp_progressive_loaded_http_tool_preserves_runtime_kwargs_for_headers() -> None:
@@ -5429,6 +7320,39 @@ async def test_connect_preserves_request_timeout_over_24_hours() -> None:
             assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == 90_000
 
 
+async def test_connect_uses_default_read_timeout_when_request_timeout_is_omitted() -> None:
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
+
+
+async def test_connect_allows_disabling_request_timeout() -> None:
+    tool = MCPStdioTool(
+        name="test",
+        command="test-command",
+        load_tools=False,
+        load_prompts=False,
+        request_timeout=None,
+    )
+
+    with patch("mcp.Client") as mock_client_class:
+        mock_client_class.return_value = _mock_sdk_client(protocol_version="2026-07-28")
+
+        async with tool:
+            assert mock_client_class.call_args.kwargs["read_timeout_seconds"] is None
+
+
 async def test_connect_revalidates_request_timeout_cleared_after_construction() -> None:
     tool = MCPStdioTool(
         name="test",
@@ -6043,7 +7967,6 @@ async def test_connect_cancelled_error_during_initialize_stdio_raises_tool_excep
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_transport_creation_propagates():
     """Test that genuine task cancellation (task.cancelling() > 0) propagates as CancelledError."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6061,7 +7984,6 @@ async def test_connect_genuine_cancellation_during_transport_creation_propagates
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_initialize_propagates():
     """Test that genuine task cancellation during SDK negotiation propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6085,7 +8007,6 @@ async def test_connect_genuine_cancellation_during_initialize_propagates():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 async def test_connect_genuine_cancellation_during_session_creation_propagates():
     """Test that genuine task cancellation during SDK client entry propagates."""
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
@@ -6146,7 +8067,6 @@ def test_should_propagate_cancelled_error_returns_false_when_no_current_task():
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is False
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 1
@@ -6154,7 +8074,6 @@ def test_should_propagate_cancelled_error_returns_true_when_task_is_cancelling()
         assert _should_propagate_cancelled_error(asyncio.CancelledError()) is True
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="task.cancelling() requires Python >= 3.11")
 def test_should_propagate_cancelled_error_returns_false_when_task_not_cancelling():
     mock_task = Mock()
     mock_task.cancelling.return_value = 0
@@ -6185,16 +8104,9 @@ def test_describe_error_keeps_plain_exception_message():
     assert _describe_error(RuntimeError("boom")) == "boom"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 def test_describe_error_unwraps_single_member_exception_group():
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     real = RuntimeError("401 Client Error: Unauthorized")
-    group = exception_group_type("unhandled errors in a TaskGroup", [real])
+    group = ExceptionGroup("unhandled errors in a TaskGroup", [real])
     assert _describe_error(group) == "401 Client Error: Unauthorized"
 
 
@@ -6232,22 +8144,13 @@ async def test_connect_cancelled_error_unmasks_inner_auth_failure():
     await tool.close()
 
 
-@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup is Python >= 3.11")
 async def test_connect_bare_cancel_names_cleanup_error_from_exit_stack():
     """SDK entry raises a bare cancellation and cleanup reveals the actual HTTP failure."""
-    import builtins
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
-
     tool = MCPStreamableHTTPTool(name="test", url="http://example.com")
 
     tool.get_mcp_client = Mock(return_value=Mock())  # type: ignore[method-assign]
 
-    cleanup_group = exception_group_type(
-        "unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")]
-    )
+    cleanup_group = ExceptionGroup("unhandled errors in a TaskGroup", [RuntimeError("401 Client Error: Unauthorized")])
 
     sdk_client = _mock_sdk_client()
     sdk_client.__aenter__.side_effect = asyncio.CancelledError("Cancelled via cancel scope")
@@ -6316,7 +8219,7 @@ def test_mcp_stdio_tool_get_mcp_client_with_env_and_kwargs():
 
 async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
     """Test MCPStreamableHTTPTool.get_mcp_client() with all parameters."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT
+    from agent_framework._mcp import _MCP_DEFAULT_READ_TIMEOUT_SECONDS, MCP_DEFAULT_SSE_READ_TIMEOUT
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -6330,7 +8233,7 @@ async def test_mcp_streamable_http_tool_get_mcp_client_all_params():
             http_client = tool._httpx_client
             assert http_client is not None
             assert http_client.follow_redirects is True
-            assert http_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert http_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert http_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             assert not http_client.event_hooks["request"]
             assert mock_http_client.call_args.kwargs["http_client"]._client is http_client
@@ -6597,6 +8500,150 @@ async def test_load_tools_with_pagination():
     assert [f.name for f in tool._functions] == ["tool_1", "tool_2", "tool_3", "tool_4"]
 
 
+async def test_load_tools_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListToolsResult(
+                tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                next_cursor="second",
+            )
+        if cursor == "second":
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})],
+                next_cursor="third",
+            )
+        raise AssertionError(f"Unexpected tools/list cursor: {cursor!r}")
+
+    mock_session.list_tools = AsyncMock(side_effect=list_tools)
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
+        await tool.load_tools()
+
+    assert mock_session.list_tools.await_count == 2
+    assert tool.functions == []
+
+
+async def test_load_tools_accepts_catalog_completing_at_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_tools = AsyncMock(
+        side_effect=[
+            types.ListToolsResult(
+                tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                next_cursor="second",
+            ),
+            types.ListToolsResult(tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]),
+        ]
+    )
+
+    await tool.load_tools()
+
+    assert mock_session.list_tools.await_count == 2
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+async def test_load_tools_allows_unbounded_pagination_when_limit_is_none() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=None,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    pages_served = 0
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        nonlocal pages_served
+        if pages_served == 0:
+            assert params is None
+        else:
+            assert params is not None
+            assert params.cursor == str(pages_served)
+
+        pages_served += 1
+        next_cursor = str(pages_served) if pages_served < 101 else None
+        return types.ListToolsResult(tools=[], next_cursor=next_cursor)
+
+    mock_session.list_tools = AsyncMock(side_effect=list_tools)
+
+    await tool.load_tools()
+
+    assert pages_served == 101
+    assert mock_session.list_tools.await_count == 101
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_accepts_items_at_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name="first", input_schema={"type": "object", "properties": {}}),
+                    types.Tool(name="second", input_schema={"type": "object", "properties": {}}),
+                ]
+            )
+        )
+        await tool.load_tools()
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(prompts=[types.Prompt(name="first"), types.Prompt(name="second")])
+        )
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_rejects_items_exceeding_limit(catalog_kind: str) -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_items=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+        mock_session.list_tools = AsyncMock(
+            return_value=types.ListToolsResult(
+                tools=[
+                    types.Tool(name=name, input_schema={"type": "object", "properties": {}})
+                    for name in ("first", "second", "third")
+                ]
+            )
+        )
+        load_catalog = tool.load_tools
+    else:
+        mock_session.list_prompts = AsyncMock(
+            return_value=types.ListPromptsResult(
+                prompts=[types.Prompt(name=name) for name in ("first", "second", "third")]
+            )
+        )
+        load_catalog = tool.load_prompts
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_items=2"):
+        await load_catalog()
+
+    assert tool.functions == []
+
+
 async def test_load_tools_adds_properties_to_zero_arg_tool_schema():
     """Test that load_tools normalizes inputSchema for zero-argument MCP tools.
 
@@ -6748,6 +8795,88 @@ async def test_load_prompts_with_pagination():
     assert mock_session.list_prompts.call_count == 2
     assert len(tool._functions) == 3
     assert [f.name for f in tool._functions] == ["prompt_1", "prompt_2", "prompt_3"]
+
+
+async def test_load_prompts_rejects_catalog_exceeding_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        cursor = params.cursor if params is not None else None
+        if cursor is None:
+            return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+        if cursor == "second":
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")], next_cursor="third")
+        raise AssertionError(f"Unexpected prompts/list cursor: {cursor!r}")
+
+    mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+
+    with pytest.raises(ToolExecutionException, match="max_discovery_pages=2"):
+        await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert tool.functions == []
+
+
+async def test_load_prompts_accepts_catalog_completing_at_page_limit() -> None:
+    tool = MCPTool(  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+        name="test_tool",
+        max_discovery_pages=2,
+    )
+    mock_session = AsyncMock()
+    tool.session = mock_session
+    mock_session.list_prompts = AsyncMock(
+        side_effect=[
+            types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second"),
+            types.ListPromptsResult(prompts=[types.Prompt(name="second")]),
+        ]
+    )
+
+    await tool.load_prompts()
+
+    assert mock_session.list_prompts.await_count == 2
+    assert [function.name for function in tool.functions] == ["first", "second"]
+
+
+@pytest.mark.parametrize("catalog_kind", ["tools", "prompts"])
+async def test_catalog_discovery_follows_empty_string_cursor(catalog_kind: str) -> None:
+    tool = MCPTool(name="test_tool")  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    mock_session = AsyncMock()
+    tool.session = mock_session
+
+    if catalog_kind == "tools":
+
+        async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+            if params is None:
+                return types.ListToolsResult(
+                    tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+                    next_cursor="",
+                )
+            assert params.cursor == ""
+            return types.ListToolsResult(
+                tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+            )
+
+        mock_session.list_tools = AsyncMock(side_effect=list_tools)
+        await tool.load_tools()
+        assert mock_session.list_tools.await_count == 2
+    else:
+
+        async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+            if params is None:
+                return types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="")
+            assert params.cursor == ""
+            return types.ListPromptsResult(prompts=[types.Prompt(name="second")])
+
+        mock_session.list_prompts = AsyncMock(side_effect=list_prompts)
+        await tool.load_prompts()
+        assert mock_session.list_prompts.await_count == 2
+
+    assert [function.name for function in tool.functions] == ["first", "second"]
 
 
 async def test_load_tools_pagination_with_duplicates():
@@ -7068,15 +9197,13 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
-            tool._tools_loaded = True
+            tool._tools_loaded = tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7106,9 +9233,8 @@ async def test_mcp_tool_connection_properly_invalidated_after_closed_resource_er
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.call_tool("test_tool", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_awaited_once_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7166,15 +9292,13 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
     original_exit_stack = tool._exit_stack
     tool._exit_stack.aclose = AsyncMock()  # type: ignore[method-assign]
 
-    # Mock connect() to avoid trying to start actual process
-    with patch.object(tool, "connect", new_callable=AsyncMock) as mock_connect:
+    with patch.object(tool, "_reconnect_without_loading", new_callable=AsyncMock) as mock_connect:
 
-        async def restore_session(*, reset=False):
-            if reset:
-                await original_exit_stack.aclose()
+        async def restore_session():
+            await original_exit_stack.aclose()
             _set_framework_owned_session(tool, mock_session)
             tool.is_connected = True
-            tool._prompts_loaded = True
+            tool._tools_loaded = tool._prompts_loaded = True
 
         mock_connect.side_effect = restore_session
 
@@ -7204,9 +9328,8 @@ async def test_mcp_tool_get_prompt_reconnection_on_closed_resource_error():
         # This call should trigger reconnection after ClosedResourceError
         result = await tool.get_prompt("test_prompt", arg1="value2")
         assert result is not None
-        # Verify reconnect was attempted with reset=True
         assert mock_connect.call_count >= 1
-        mock_connect.assert_called_with(reset=True)
+        mock_connect.assert_awaited_once_with()
         # Verify _exit_stack.aclose was called during reconnection
         original_exit_stack.aclose.assert_called()  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
 
@@ -7304,15 +9427,16 @@ async def test_mcp_tool_call_tool_raises_after_reconnection_still_fails() -> Non
         tool,
         Mock(call_tool=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.call_tool("remote_tool")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 
@@ -7324,15 +9448,16 @@ async def test_mcp_tool_get_prompt_raises_after_reconnection_still_fails() -> No
         tool,
         Mock(get_prompt=AsyncMock(side_effect=[ClosedResourceError(), ClosedResourceError()])),
     )
+    tool._tools_loaded = tool._prompts_loaded = True
 
     with (
-        patch.object(tool, "connect", AsyncMock()) as mock_connect,
+        patch.object(tool, "_reconnect_without_loading", AsyncMock()) as mock_connect,
         patch.object(logger, "error") as mock_error,
         pytest.raises(ToolExecutionException, match="connection lost"),
     ):
         await tool.get_prompt("remote_prompt")
 
-    mock_connect.assert_awaited_once_with(reset=True)
+    mock_connect.assert_awaited_once_with()
     mock_error.assert_called_once()
 
 
@@ -7615,12 +9740,7 @@ async def test_mcp_tool_safe_close_handles_cancelled_error():
 
 async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     """Cleanup task groups should not hide the original connect failure."""
-    import builtins
     from contextlib import AsyncExitStack
-
-    exception_group_type = getattr(builtins, "ExceptionGroup", None)
-    if exception_group_type is None:
-        pytest.skip("ExceptionGroup is not available on this Python version")
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -7630,7 +9750,7 @@ async def test_mcp_tool_safe_close_handles_cleanup_exception_group():
     )
 
     mock_exit_stack = AsyncMock(spec=AsyncExitStack)
-    mock_exit_stack.aclose = AsyncMock(side_effect=exception_group_type("cleanup failed", [RuntimeError("reader")]))
+    mock_exit_stack.aclose = AsyncMock(side_effect=ExceptionGroup("cleanup failed", [RuntimeError("reader")]))
     tool._exit_stack = mock_exit_stack
 
     await tool._safe_close_exit_stack()
@@ -8314,7 +10434,7 @@ def test_mcp_streamable_http_rejects_header_provider_with_supplied_client() -> N
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 30),
+        ("request_timeout", 31),
         ("terminate_on_close", False),
         ("http_client", Mock(spec=AsyncClient)),
         ("static_headers", {}),
@@ -8343,7 +10463,7 @@ def test_mcp_streamable_http_lists_all_framework_owned_http_options_with_supplie
         MCPStreamableHTTPTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=30,
+            request_timeout=31,
             terminate_on_close=False,
             http_client=Mock(spec=AsyncClient),
             static_headers={},
@@ -8411,7 +10531,7 @@ def test_mcp_streamable_http_get_mcp_client_requires_framework_owned_url() -> No
 @pytest.mark.parametrize(
     ("option_name", "option_value"),
     [
-        ("request_timeout", 30),
+        ("request_timeout", 31),
         ("args", []),
         ("env", {}),
         ("encoding", ""),
@@ -8443,7 +10563,7 @@ def test_mcp_stdio_lists_all_framework_owned_options_with_supplied_client() -> N
         MCPStdioTool(
             name="test",
             mcp_client=Mock(),
-            request_timeout=30,
+            request_timeout=31,
             args=[],
             env={},
             encoding="",
@@ -9008,6 +11128,77 @@ async def test_load_tools_reconnects_on_closed_resource_when_ping_is_unavailable
     second_session.list_tools.assert_awaited_once()
 
 
+async def test_load_tools_restarts_snapshot_after_closed_resource_on_continuation_page() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListToolsResult(
+        tools=[types.Tool(name="first", input_schema={"type": "object", "properties": {}})],
+        next_cursor="second",
+    )
+
+    async def list_tools(params: types.PaginatedRequestParams | None = None) -> types.ListToolsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=list_tools)
+    _set_framework_owned_session(tool, first_session)
+
+    second_page = types.ListToolsResult(
+        tools=[types.Tool(name="second", input_schema={"type": "object", "properties": {}})]
+    )
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(return_value=second_page)
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_tools = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_tools()
+
+    assert [function.name for function in tool.functions] == ["second"]
+    assert first_session.list_tools.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    restarted_call = second_session.list_tools.await_args
+    assert restarted_call is not None
+    assert restarted_call.kwargs.get("params") is None
+
+
+async def test_load_tools_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_tools=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_tools = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        _set_framework_owned_session(tool, second_session)
+        tool._supports_tools = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="connection changed again"),
+    ):
+        await tool.load_tools()
+
+    first_session.list_tools.assert_awaited_once()
+    assert mock_reconnect.await_count == 2
+    second_session.list_tools.assert_awaited_once()
+    assert tool.functions == []
+
+
 async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailable() -> None:
     from anyio import ClosedResourceError
 
@@ -9035,6 +11226,71 @@ async def test_load_prompts_reconnects_on_closed_resource_when_ping_is_unavailab
     first_session.list_prompts.assert_awaited_once()
     mock_reconnect.assert_awaited_once_with()
     second_session.list_prompts.assert_awaited_once()
+
+
+async def test_load_prompts_restarts_snapshot_after_closed_resource_on_continuation_page() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_page = types.ListPromptsResult(prompts=[types.Prompt(name="first")], next_cursor="second")
+
+    async def list_prompts(params: types.PaginatedRequestParams | None = None) -> types.ListPromptsResult:
+        if params is None:
+            return first_page
+        assert params.cursor == "second"
+        raise ClosedResourceError
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=list_prompts)
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(return_value=types.ListPromptsResult(prompts=[types.Prompt(name="second")]))
+
+    async def reconnect() -> None:
+        tool.session = second_session
+        tool._supports_prompts = True
+
+    with patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect:
+        await tool.load_prompts()
+
+    assert [function.name for function in tool.functions] == ["second"]
+    assert first_session.list_prompts.await_count == 2
+    mock_reconnect.assert_awaited_once_with()
+    restarted_call = second_session.list_prompts.await_args
+    assert restarted_call is not None
+    assert restarted_call.kwargs.get("params") is None
+
+
+async def test_load_prompts_fails_after_closed_resource_retry_is_exhausted() -> None:
+    from anyio import ClosedResourceError
+
+    tool = MCPTool(name="test_tool", load_prompts=True)  # type: ignore[abstract]  # ty: ignore[call-non-callable]
+    tool._ping_available = False
+
+    first_session = Mock()
+    first_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+    _set_framework_owned_session(tool, first_session)
+
+    second_session = Mock()
+    second_session.list_prompts = AsyncMock(side_effect=ClosedResourceError())
+
+    async def reconnect() -> None:
+        _set_framework_owned_session(tool, second_session)
+        tool._supports_prompts = True
+
+    with (
+        patch.object(tool, "_reconnect_without_loading", AsyncMock(side_effect=reconnect)) as mock_reconnect,
+        pytest.raises(ToolExecutionException, match="connection changed again"),
+    ):
+        await tool.load_prompts()
+
+    first_session.list_prompts.assert_awaited_once()
+    assert mock_reconnect.await_count == 2
+    second_session.list_prompts.assert_awaited_once()
+    assert tool.functions == []
 
 
 async def test_mcp_tool_filters_framework_kwargs():
@@ -9652,7 +11908,11 @@ async def test_mcp_streamable_http_tool_without_header_provider():
 
 async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
     """Test that the httpx event hook injects headers from the contextvar."""
-    from agent_framework._mcp import MCP_DEFAULT_SSE_READ_TIMEOUT, MCP_DEFAULT_TIMEOUT, _mcp_call_headers
+    from agent_framework._mcp import (
+        _MCP_DEFAULT_READ_TIMEOUT_SECONDS,
+        MCP_DEFAULT_SSE_READ_TIMEOUT,
+        _mcp_call_headers,
+    )
 
     tool = MCPStreamableHTTPTool(
         name="test",
@@ -9668,7 +11928,7 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
             # The tool should have created an httpx client with the event hook
             assert tool._httpx_client is not None
             assert tool._httpx_client.follow_redirects is True
-            assert tool._httpx_client.timeout.connect == MCP_DEFAULT_TIMEOUT
+            assert tool._httpx_client.timeout.connect == _MCP_DEFAULT_READ_TIMEOUT_SECONDS
             assert tool._httpx_client.timeout.read == MCP_DEFAULT_SSE_READ_TIMEOUT
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1, "Expected one request event hook"
@@ -9679,6 +11939,21 @@ async def test_mcp_streamable_http_tool_header_provider_with_httpx_event_hook():
                 request = _request_for_mcp_tool(tool)
                 await hooks[0](request)
                 assert request.headers.get("X-Custom") == "test-value"
+            finally:
+                _mcp_call_headers.reset(token)
+            token = _mcp_call_headers.set((tool._header_request_owner, {"X-Custom": "later-caller"}))
+            try:
+                redirected = Request(
+                    "POST",
+                    "http://example.com/redirected",
+                    headers=request.headers,
+                    extensions=request.extensions.copy(),
+                )
+                await hooks[0](redirected)
+                assert redirected.headers["X-Custom"] == "test-value"
+                fresh = _request_for_mcp_tool(tool)
+                await hooks[0](fresh)
+                assert fresh.headers["X-Custom"] == "later-caller"
             finally:
                 _mcp_call_headers.reset(token)
     finally:
@@ -9775,9 +12050,8 @@ async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_
             hooks = tool._httpx_client.event_hooks.get("request", [])
             assert len(hooks) == 1
 
-            # Simulate an active call whose provider returned {} (both ContextVar and snapshot set).
+            # Simulate an active call whose provider returned {}.
             token = _mcp_call_headers.set((tool._header_request_owner, {}))
-            tool._active_call_headers = {}
             try:
                 call_count = 0
                 request = _request_for_mcp_tool(tool)
@@ -9785,7 +12059,6 @@ async def test_mcp_streamable_http_tool_header_provider_empty_active_call_skips_
                 assert "Authorization" not in request.headers
                 assert call_count == 0, "ambient fallback must not run during a set-but-empty call"
             finally:
-                tool._active_call_headers = None
                 _mcp_call_headers.reset(token)
     finally:
         if getattr(tool, "_httpx_client", None) is not None:
@@ -10977,13 +13250,15 @@ async def test_mcp_streamable_http_tool_header_provider_applies_across_transport
 
 
 async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_call():
-    """Test that the instance-level header snapshot is set during a call and cleared after."""
+    """An invocation's header context is scoped to the call rather than shared on the instance."""
+    from agent_framework._mcp import _mcp_call_headers
+
     observed_snapshots: list[dict[str, str] | None] = []
     original_call_tool = MCPTool.call_tool
 
     async def spy_call_tool(self, tool_name, **kwargs):
-        # Capture the snapshot value during the super call
-        observed_snapshots.append(self._active_call_headers)
+        context = _mcp_call_headers.get(None)
+        observed_snapshots.append(context[1] if context is not None else None)
         return await original_call_tool(self, tool_name, **kwargs)
 
     class _TestServer(MCPStreamableHTTPTool):
@@ -11021,20 +13296,21 @@ async def test_mcp_streamable_http_tool_header_provider_snapshot_restored_after_
             await server.call_tool("greet", name="Alice", auth_token="bearer-xyz")
 
     assert observed_snapshots == [{"X-Auth": "bearer-xyz"}]
-    assert server._active_call_headers is None
+    assert _mcp_call_headers.get(None) is None
 
 
 async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_calls():
-    """Concurrent call_tool invocations on the same tool must not mix per-call headers.
-
-    The framework executes parallel tool invocations concurrently, so a second call
-    must not overwrite the active header snapshot while the first call's requests
-    are still in flight (that would attach the wrong credentials).
-    """
+    """Different header identities must wait for the preceding operation to finish."""
     release = asyncio.Event()
     in_call = asyncio.Event()
+    observed_headers: list[dict[str, str]] = []
 
     async def blocking_call_tool(tool_name, *, arguments=None, meta=None):
+        from agent_framework._mcp import _mcp_call_headers
+
+        context = _mcp_call_headers.get(None)
+        assert context is not None
+        observed_headers.append(context[1])
         in_call.set()
         await release.wait()
         return types.CallToolResult(content=[types.TextContent(type="text", text="Hello!")])
@@ -11075,20 +13351,17 @@ async def test_mcp_streamable_http_tool_header_provider_serializes_concurrent_ca
         await server.load_tools()
 
         first = asyncio.create_task(server.call_tool("greet", name="A", auth_token="token-a"))
-        await in_call.wait()
-        assert server._active_call_headers == {"X-Auth": "token-a"}
-
-        second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
-        for _ in range(10):
-            await asyncio.sleep(0)
-        # The second call must be waiting on the first; its headers must not have
-        # replaced the snapshot the request hook reads for the in-flight call.
-        assert server._active_call_headers == {"X-Auth": "token-a"}
-
-        release.set()
+        try:
+            await in_call.wait()
+            second = asyncio.create_task(server.call_tool("greet", name="B", auth_token="token-b"))
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert observed_headers == [{"X-Auth": "token-a"}]
+        finally:
+            release.set()
         await asyncio.gather(first, second)
 
-    assert server._active_call_headers is None
+    assert observed_headers == [{"X-Auth": "token-a"}, {"X-Auth": "token-b"}]
 
 
 # endregion

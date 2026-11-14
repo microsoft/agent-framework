@@ -211,12 +211,26 @@ def test_mistral_embedding_service_url_custom() -> None:
     assert client.service_url() == "https://custom.mistral.ai"
 
 
+@pytest.mark.parametrize("server_url", [None, "https://explicit.example"], ids=["env", "explicit"])
+def test_mistral_embedding_injected_sdk_client_endpoint_wins_over_configured_server_url(
+    server_url: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected SDK client defines the endpoint, so MISTRAL_SERVER_URL or server_url should not change it."""
+    monkeypatch.setenv("MISTRAL_SERVER_URL", "https://env.example")
+    sdk_client = Mistral(api_key="test-key", server_url="https://client.example")
+
+    client = MistralEmbeddingClient(model="mistral-embed", client=sdk_client, server_url=server_url)
+
+    assert client.service_url() == "https://client.example"
+    assert client.client is sdk_client
+
+
 async def test_mistral_embedding_close_only_closes_owned_client() -> None:
     owned = MistralEmbeddingClient(model="mistral-embed", api_key="test-key")
     owned_http_client = owned.client.sdk_configuration.async_client
     await owned.close()
-    assert isinstance(owned_http_client, httpx.AsyncClient)
-    assert owned_http_client.is_closed
+    assert getattr(owned_http_client, "is_closed") is True
 
     http_client = httpx.AsyncClient(base_url="https://custom.mistral.ai")
     injected = MistralEmbeddingClient(model="mistral-embed", http_client=http_client)

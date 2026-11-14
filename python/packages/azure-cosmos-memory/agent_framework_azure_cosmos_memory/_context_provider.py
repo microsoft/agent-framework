@@ -12,21 +12,15 @@ import asyncio
 import inspect
 import logging
 import os
-import sys
 from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypedDict, cast
 
 from agent_framework import AgentSession, ContextProvider, Message, SessionContext
 from agent_framework._settings import load_settings
 from agent_framework._telemetry import get_user_agent, mark_feature_used
 
 from ._feature_usage import FeatureIndex
-
-if sys.version_info >= (3, 11):
-    from typing import Self  # pragma: no cover
-else:
-    from typing_extensions import Self  # pragma: no cover
 
 if TYPE_CHECKING:
     from agent_framework._agents import SupportsAgentRun
@@ -285,7 +279,7 @@ class CosmosMemoryContextProvider(ContextProvider):
     # ``timeout`` is an intentional part of the public flush() API and is forwarded to
     # ``asyncio.wait`` (which returns on expiry without raising), so the ASYNC109 suggestion to
     # switch to ``asyncio.timeout`` does not apply here.
-    async def flush(self, timeout: float = 30.0) -> None:  # ruff:ignore[async-function-with-timeout]
+    async def flush(self, timeout: float = 30.0) -> None:
         """Wait for any pending background memory-extraction tasks to complete.
 
         After each stored turn, the Agent Memory Toolkit schedules fact/summary

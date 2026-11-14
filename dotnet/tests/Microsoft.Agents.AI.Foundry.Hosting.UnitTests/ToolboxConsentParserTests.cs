@@ -1,5 +1,8 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 
+using System;
+using System.Collections.Generic;
+
 namespace Microsoft.Agents.AI.Foundry.Hosting.UnitTests;
 
 public class ToolboxConsentParserTests
@@ -150,6 +153,24 @@ public class ToolboxConsentParserTests
     }
 
     [Theory]
+    [InlineData("{\"errors\":[\"CONSENT_REQUIRED\"]}")]
+    [InlineData("{\"errors\":[null,{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent/a\"}}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":\"CONSENT_REQUIRED\"}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":5}}]}")]
+    public void TryParseConsentRequired_PayloadDoesNotMatchFailureShape_ReturnsFalse(string payload)
+    {
+        // Arrange: the payload names CONSENT_REQUIRED but does not have the proxy's failure shape.
+        string message = "tools/list failed " + payload;
+
+        // Act
+        var parsed = ToolboxConsentParser.TryParseConsentRequired("toolbox", message, out var consents);
+
+        // Assert
+        Assert.False(parsed);
+        Assert.Empty(consents);
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     public void TryParseConsentRequired_NullOrEmptyMessage_ReturnsFalse(string? message)
@@ -160,5 +181,78 @@ public class ToolboxConsentParserTests
         // Assert
         Assert.False(parsed);
         Assert.Empty(consents);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_FailureWithoutConsent_ReturnsFalse()
+    {
+        // Arrange: an ordinary failure carries no consent link, so its exception can be logged as is.
+        var exception = new InvalidOperationException("Connection refused.", new TimeoutException("Timed out."));
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.False(described);
+        Assert.Empty(description);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_ValueIsNotAnIdentifier_ReplacesIt()
+    {
+        // Arrange: only plain identifiers from the external payload may reach a log entry.
+        const string Message =
+            "tools/list failed " +
+            "{\"errors\":[{\"name\":\"https://consent.example/login?data=xyz\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent.example/login?data=xyz\"}}," +
+            "{\"name\":\"search\",\"error\":{\"message\":\"Upstream failed.\"}}]}";
+        var exception = new AggregateException(new InvalidOperationException("Other failure."), new InvalidOperationException(Message));
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.Equal("unknown (CONSENT_REQUIRED), search (unknown)", description);
+    }
+
+    [Theory]
+    [InlineData("{\"errors\":[null,{\"name\":\"send_email\",\"error\":{\"code\":\"CONSENT_REQUIRED\",\"message\":\"https://consent.example/a\"}}]}")]
+    [InlineData("{\"errors\":[{\"name\":\"send_email\",\"error\":\"CONSENT_REQUIRED https://consent.example/a\"}]}")]
+    public void TryDescribeConsentFailure_PayloadDoesNotMatchFailureShape_OmitsConsentLink(string payload)
+    {
+        // Arrange
+        var exception = new InvalidOperationException("tools/list failed " + payload);
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.DoesNotContain("consent.example", description, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TryDescribeConsentFailure_UninspectedAggregateBranch_ReturnsSafeDescription()
+    {
+        // Arrange: the consent failure is wrapped in a branch beyond the inspection limit.
+        List<Exception> failures =
+        [
+            new InvalidOperationException(
+                "Wrapped failure.",
+                new InvalidOperationException("CONSENT_REQUIRED https://auth.example.com/authorize")),
+        ];
+        for (int i = 0; i < 32; i++)
+        {
+            failures.Add(new InvalidOperationException("Other failure."));
+        }
+
+        var exception = new AggregateException(failures);
+
+        // Act
+        var described = ToolboxConsentParser.TryDescribeConsentFailure(exception, out var description);
+
+        // Assert
+        Assert.True(described);
+        Assert.Equal("unreadable", description);
     }
 }
